@@ -249,3 +249,46 @@ def test_settings_tab_saves_the_prefix_folder_and_toggles_sources_and_plugins(tm
     assert list_accounts(paths) == []
     assert get_prefix_root(connect(paths.database), root / "p") == tmp_path / "all-prefixes"
     assert (plugin / ".disabled").exists()
+
+
+def test_settings_tab_edits_plugin_settings_and_account_fields(tmp_path, monkeypatch):
+    from ludex.accounts import add_account, get_account
+    from ludex.paths import StatePaths
+    from ludex.plugins import ConfigField, FetchResult, Provider
+    from ludex.provider_settings import get_values
+
+    root = tmp_path / "state"
+    root.mkdir(mode=0o700)
+    monkeypatch.setenv("LUDEX_HOME", str(root))
+    paths = StatePaths(root, root / "library.sqlite3", root / "accounts.json", root / "import.lock")
+    connect(paths.database).close()
+    provider = Provider(
+        "demo", "d",
+        (ConfigField("user", "account user"), ConfigField("key", "API key", secret=True), ConfigField("tag", "label", optional=True)),
+        lambda c: FetchResult([], True, None),
+        settings=(ConfigField("region", "store region", optional=True), ConfigField("token", "API token", secret=True, optional=True)),
+    )
+    add_account(paths, "a", "demo", {"user": "u1", "key": "k1"})
+
+    async def scenario():
+        app = LudexApp(paths.database, {"demo": provider}, prefix_root=root / "p", paths=paths)
+        async with app.run_test(size=(100, 60)) as pilot:
+            await pilot.pause()
+            await pilot.press("tab", "tab", "tab")
+            await pilot.pause()
+            ids = {target[-1].name + ":" + target[0]: i for i, target in app._fields.items()}
+            def edit(name, value):
+                box = app.query_one("#" + ids[name], Input)
+                box.value = value
+                box.focus()
+                return pilot.press("enter")
+            await edit("region:plugin", "eu"); await pilot.pause()
+            await edit("token:plugin", "tok"); await pilot.pause()
+            await edit("user:account", "u2"); await pilot.pause()
+            await edit("key:account", ""); await pilot.pause()  # blank secret leaves it unchanged
+            await edit("tag:account", "x"); await pilot.pause()
+            await edit("user:account", ""); await pilot.pause()  # required: rejected, not removed
+
+    asyncio.run(scenario())
+    assert get_values(paths, "demo") == {"region": "eu", "token": "tok"}
+    assert dict(get_account(paths, "demo:a").config) == {"region": "eu", "token": "tok", "user": "u2", "key": "k1", "tag": "x"}
