@@ -21,3 +21,4 @@ Replace `stable` with `beta` for the beta channel.
 ## License
 
 GPL-3.0-or-later.
+
