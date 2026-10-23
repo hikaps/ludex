@@ -62,6 +62,8 @@ def _parser() -> argparse.ArgumentParser:
     launch.add_argument("id", type=int)
     launch.add_argument("--store", help="store to launch from when several can")
 
+    commands.add_parser("tui", help="browse, search and launch games in the terminal")
+
     review = commands.add_parser("review", help="list title matches that need a decision")
     review.add_argument("--dismiss", type=int, metavar="ID", help="keep this item's game separate and drop it from the list")
 
@@ -296,6 +298,14 @@ def _cmd_launch(args: argparse.Namespace) -> tuple[object, str]:
     return {"id": args.id, "launched": target}, f"launching {target}"
 
 
+def _cmd_tui(args: argparse.Namespace) -> tuple[object, str]:
+    from .tui import LudexApp
+
+    sources, _ = load_sources()
+    LudexApp(state_paths().database, sources).run()
+    return {}, ""
+
+
 def _cmd_review(args: argparse.Namespace) -> tuple[object, str]:
     paths = state_paths()
     with writer_lock(paths.import_lock):
@@ -358,6 +368,7 @@ _HANDLERS = {
     ("ls", None): _cmd_ls,
     ("show", None): _cmd_show,
     ("launch", None): _cmd_launch,
+    ("tui", None): _cmd_tui,
 }
 
 
@@ -377,7 +388,8 @@ def _run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         if args.json:
             _emit_json(True, data)
         else:
-            print(human)
+            if human:
+                print(human)
         return status
     if args.json:
         _emit_json(False, error=error)
