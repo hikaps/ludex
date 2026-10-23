@@ -10,7 +10,8 @@ Removal policy (source of truth):
   updates games but removes nothing. Records of other accounts are never touched.
 - Removal is scoped to one account of one source: a source's games must carry its own name as
   ``store``, and only records with that store are compared (account names repeat across sources).
-- Ownership rows and games are never deleted. ``merge_games`` moves ownership to the kept game and
+- Imports and merges never delete ownership rows or games; the only deletion is
+  ``delete_account_records``, run when a user removes an account. ``merge_games`` moves ownership to the kept game and
   leaves the emptied game row behind; a game with no ownership is not listed.
 - Matching applies only when an ownership record is first created (existing records keep their
   game, so manual merges survive re-imports). The same (store, store_id) under another account
@@ -319,19 +320,20 @@ def export_games(conn: sqlite3.Connection, *, include_removed: bool = False) -> 
     return list(games.values())
 
 
-def remove_account_records(
+def delete_account_records(
     conn: sqlite3.Connection, account: str, *, store: str | None = None, keep_stores: Sequence[str] = ()
 ) -> int:
-    """Mark an account's owned records removed (never deleted; a later import restores them).
+    """Delete an account's ownership records, including ones already marked removed.
 
     ``store`` limits it to one source; ``keep_stores`` spares stores where the same account name is
-    still configured. Returns how many records changed.
+    still configured. Games stay (a game left without ownership is simply not listed). Returns how
+    many records were deleted.
     """
-    marks = ",".join("?" * len(keep_stores))
+    where = "account = ? AND (? IS NULL OR store = ?)" + (
+        f" AND store NOT IN ({','.join('?' * len(keep_stores))})" if keep_stores else ""
+    )
+    params = (account, store, store, *keep_stores)
     with conn:
-        cursor = conn.execute(
-            f"UPDATE ownership SET removed = 1 WHERE account = ? AND removed = 0 AND (? IS NULL OR store = ?)"
-            + (f" AND store NOT IN ({marks})" if keep_stores else ""),
-            (account, store, store, *keep_stores),
-        )
+        conn.execute(f"DELETE FROM review_queue WHERE ownership_id IN (SELECT id FROM ownership WHERE {where})", params)
+        cursor = conn.execute(f"DELETE FROM ownership WHERE {where}", params)
     return cursor.rowcount
