@@ -1,7 +1,18 @@
-"""Contract for ownership-source plugins (entry-point group ``ludex.ownership``).
+"""Contract for providers (entry-point group ``ludex.providers``).
 
-A plugin is a ``SourcePlugin`` instance exported from an entry point. ``fetch`` receives the
-account's configuration (``ConfigField`` names mapped to strings) and returns a ``FetchResult``.
+A plugin is a ``Provider`` instance exported from an entry point. A provider declares the
+capabilities it has by filling the matching field; at least one is required and the core only
+calls what is declared (``Provider.capabilities`` lists them):
+
+- ``owned``: ``fetch``, below.
+- ``launch``: ``launch_url``, below.
+
+An owned-only provider needs nothing else. ``API_VERSION`` changes only when an existing field
+changes meaning; adding a capability field is compatible and does not change it. A provider whose
+``api_version`` differs from the core's is skipped with a reported reason.
+
+Owned: ``fetch`` receives the account's configuration (``ConfigField`` names mapped to strings)
+and returns a ``FetchResult``. Only providers with this capability can have accounts.
 
 Completeness contract: ``FetchResult.complete`` is True only when the plugin is sure ``games`` is
 every game the account owns on that store; only then may the core mark owned games missing from
@@ -25,8 +36,8 @@ from typing import Any
 
 from .errors import LudexError
 
-API_VERSION = 2
-GROUP = "ludex.ownership"
+API_VERSION = 3
+GROUP = "ludex.providers"
 
 
 class SourceError(LudexError):
@@ -58,10 +69,15 @@ class FetchResult:
 
 
 @dataclass(frozen=True, slots=True)
-class SourcePlugin:
+class Provider:
     name: str
     help: str
     config_fields: tuple[ConfigField, ...]
-    fetch: Callable[[Mapping[str, str]], FetchResult]
+    fetch: Callable[[Mapping[str, str]], FetchResult] | None = None
     api_version: int = API_VERSION
     launch_url: Callable[[str], str] | None = None
+
+    @property
+    def capabilities(self) -> tuple[str, ...]:
+        found = (("owned", self.fetch), ("launch", self.launch_url))
+        return tuple(name for name, value in found if value is not None)

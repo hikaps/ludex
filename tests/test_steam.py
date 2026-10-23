@@ -5,7 +5,7 @@ import json
 import httpx
 import pytest
 
-from ludex.plugins import SourceError, SourcePlugin
+from ludex.plugins import SourceError, Provider
 from ludex.sources.steam import MAX_BODY_BYTES, PLUGIN, fetch_owned
 
 KEY = "0123456789abcdef0123456789ABCDEF"
@@ -147,7 +147,7 @@ def test_invalid_config(config):
 
 
 def test_plugin_definition():
-    assert isinstance(PLUGIN, SourcePlugin)
+    assert isinstance(PLUGIN, Provider)
     assert PLUGIN.name == "steam"
     assert [f.name for f in PLUGIN.config_fields if f.secret] == ["api_key"]
 

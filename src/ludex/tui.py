@@ -15,7 +15,7 @@ from textual.widgets import DataTable, Footer, Header, Input, Static
 from .errors import LudexError
 from .launch import launch_game
 from .library import get_game, list_games
-from .plugins import SourcePlugin
+from .plugins import Provider
 from .storage import connect
 
 
@@ -30,7 +30,7 @@ class LudexApp(App[None]):
         Binding("q", "quit", "Quit"),
     ]
 
-    def __init__(self, database: Path, sources: Mapping[str, SourcePlugin]) -> None:
+    def __init__(self, database: Path, sources: Mapping[str, Provider]) -> None:
         super().__init__()
         self._database = database
         self._sources = sources

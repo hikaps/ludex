@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ludex"
-version = "0.15.0"
+version = "0.16.0"
 description = "Headless, scriptable library of the games you own across stores"
 readme = "README.md"
 license = "GPL-3.0-or-later"
@@ -18,7 +18,7 @@ test = ["pytest==9.1.1"]
 [project.scripts]
 ludex = "ludex.cli:main"
 
-[project.entry-points."ludex.ownership"]
+[project.entry-points."ludex.providers"]
 steam = "ludex.sources.steam:PLUGIN"
 epic = "ludex.sources.epic:PLUGIN"
 local = "ludex.sources.local:PLUGIN"

@@ -26,7 +26,7 @@ import httpx
 import vdf
 
 from .. import __version__
-from ..plugins import ConfigField, FetchResult, OwnedGame, SourceError, SourcePlugin
+from ..plugins import ConfigField, FetchResult, OwnedGame, SourceError, Provider
 from .steam_cache import cached_games
 
 DEFAULT_BASE_URL = "https://api.steampowered.com"
@@ -208,7 +208,7 @@ def fetch(config: Mapping[str, str]) -> FetchResult:
     return FetchResult(_local(_steam_dir(config)), False, "local")
 
 
-PLUGIN = SourcePlugin(
+PLUGIN = Provider(
     name="steam",
     help="Steam library: Web API with a key (full, needs public game details), otherwise the local Steam folder (installed and cached licensed games)",
     config_fields=(

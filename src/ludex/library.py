@@ -31,7 +31,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from .errors import LudexError
-from .plugins import FetchResult, OwnedGame, SourcePlugin
+from .plugins import FetchResult, OwnedGame, Provider
 from .storage import normalize_title, utc_now
 
 _MAX_LIMIT = 500
@@ -143,8 +143,10 @@ def import_account(
 
 
 def run_import(
-    conn: sqlite3.Connection, account: str, plugin: SourcePlugin, config: Mapping[str, str]
+    conn: sqlite3.Connection, account: str, plugin: Provider, config: Mapping[str, str]
 ) -> ImportSummary:
+    if plugin.fetch is None:
+        raise LudexError("no_owned_capability", f"provider {plugin.name} cannot list owned games")
     try:
         result = plugin.fetch(config)
         if not isinstance(result, FetchResult) or not isinstance(result.complete, bool):

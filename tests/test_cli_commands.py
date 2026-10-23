@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 from ludex.cli import main
-from ludex.plugins import ConfigField, FetchResult, OwnedGame, SourceError, SourcePlugin
+from ludex.plugins import ConfigField, FetchResult, OwnedGame, SourceError, Provider
 from ludex.storage import writer_lock
 
 SECRET = "hunter2-very-secret"
@@ -40,13 +40,13 @@ def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> World:
     home.chmod(0o700)
     monkeypatch.setenv("LUDEX_HOME", str(home))
     w = World()
-    plugin = SourcePlugin(
+    plugin = Provider(
         name="fake",
         help="Fake store",
         config_fields=(ConfigField("user", "account user"), ConfigField("key", "API key", secret=True)),
         fetch=lambda config: FetchResult(w.fetch(config), True, "fake"),
     )
-    monkeypatch.setattr("ludex.cli.load_sources", lambda: ({"fake": plugin}, {"broken": "failed to import"}))
+    monkeypatch.setattr("ludex.cli.load_providers", lambda: ({"fake": plugin}, {"broken": "failed to import"}))
     return w
 
 
@@ -62,17 +62,18 @@ def add(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, nam
     assert code == 0, err
 
 
-def test_sources_lists_plugins_and_problems(world: World, capsys: pytest.CaptureFixture[str]) -> None:
-    code, out, _ = run(capsys, "--json", "sources")
+def test_providers_lists_plugins_and_problems(world: World, capsys: pytest.CaptureFixture[str]) -> None:
+    code, out, _ = run(capsys, "--json", "providers")
     assert code == 0
     data = json.loads(out)
     assert data == {
         "ok": True,
         "data": {
-            "sources": [
+            "providers": [
                 {
                     "name": "fake",
                     "help": "Fake store",
+                    "capabilities": ["owned"],
                     "fields": [
                         {"name": "user", "help": "account user", "secret": False, "optional": False},
                         {"name": "key", "help": "API key", "secret": True, "optional": False},
@@ -82,7 +83,7 @@ def test_sources_lists_plugins_and_problems(world: World, capsys: pytest.Capture
             "problems": {"broken": "failed to import"},
         },
     }
-    code, out, _ = run(capsys, "sources")
+    code, out, _ = run(capsys, "providers")
     assert code == 0 and "fake" in out and "broken" in out
 
 
@@ -96,7 +97,7 @@ def test_account_add_reads_secret_from_stdin_and_never_echoes_it(
     accounts_file = tmp_path / "home" / "accounts.json"
     assert stat.S_IMODE(accounts_file.stat().st_mode) == 0o600
     assert json.loads(accounts_file.read_text())["fake:main"] == {"source": "fake", "config": {"user": "alice", "key": SECRET}}
-    for argv in (("account", "ls"), ("--json", "account", "ls"), ("--json", "sources")):
+    for argv in (("account", "ls"), ("--json", "account", "ls"), ("--json", "providers")):
         code, out, err = run(capsys, *argv)
         assert code == 0
         assert SECRET not in out + err
@@ -362,8 +363,8 @@ def test_optional_field_may_be_left_blank_and_partial_import_says_so(
         seen.append(dict(config))
         return FetchResult([OwnedGame("fake", "1", "Alpha")], False, "local")
 
-    plugin = SourcePlugin("fake", "Fake", (ConfigField("key", "API key", secret=True, optional=True),), fetch)
-    monkeypatch.setattr("ludex.cli.load_sources", lambda: ({"fake": plugin}, {}))
+    plugin = Provider("fake", "Fake", (ConfigField("key", "API key", secret=True, optional=True),), fetch)
+    monkeypatch.setattr("ludex.cli.load_providers", lambda: ({"fake": plugin}, {}))
     monkeypatch.setattr("sys.stdin", io.StringIO("\n"))
     code, _, err = run(capsys, "account", "add", "fake", "main")
     assert code == 0, err
@@ -412,9 +413,9 @@ def test_setup_rejects_taken_name_before_prompting_for_fields(
 def test_same_name_in_two_sources_is_allowed_and_needs_qualifying(
     world: World, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    other = SourcePlugin("other", "Other", (), lambda config: FetchResult([OwnedGame("other", "1", "Zed")], True, "o"))
-    fake = SourcePlugin("fake", "Fake", (), lambda config: FetchResult([OwnedGame("fake", "1", "Alpha")], True, "f"))
-    monkeypatch.setattr("ludex.cli.load_sources", lambda: ({"fake": fake, "other": other}, {}))
+    other = Provider("other", "Other", (), lambda config: FetchResult([OwnedGame("other", "1", "Zed")], True, "o"))
+    fake = Provider("fake", "Fake", (), lambda config: FetchResult([OwnedGame("fake", "1", "Alpha")], True, "f"))
+    monkeypatch.setattr("ludex.cli.load_providers", lambda: ({"fake": fake, "other": other}, {}))
     for source in ("fake", "other"):
         code, _, err = run(capsys, "account", "add", source, "main")
         assert code == 0, err
@@ -485,3 +486,14 @@ def test_show_accepts_a_title(world: World, capsys: pytest.CaptureFixture[str], 
     assert code == 0 and out.startswith("2  Beta")
     code, _, err = run(capsys, "show", "gamma")
     assert code == 1 and "no game matches" in err
+
+
+def test_provider_without_owned_capability_cannot_have_accounts(
+    world: World, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    searchless = Provider("lookup", "Lookup only", (), launch_url=lambda store_id: "x://" + store_id)
+    monkeypatch.setattr("ludex.cli.load_providers", lambda: ({"lookup": searchless}, {}))
+    code, _, err = run(capsys, "account", "add", "lookup", "a")
+    assert code == 1 and "cannot list owned games" in err
+    code, out, _ = run(capsys, "providers")
+    assert "lookup  [launch]" in out

@@ -5,7 +5,7 @@ import pytest
 import ludex.library as library
 from ludex.errors import LudexError
 from ludex.library import ImportSummary, get_game, import_account, list_games, run_import
-from ludex.plugins import FetchResult, OwnedGame, SourceError, SourcePlugin
+from ludex.plugins import FetchResult, OwnedGame, SourceError, Provider
 from ludex.storage import connect
 
 
@@ -32,7 +32,7 @@ def snapshot(conn):
 
 
 def plugin(fetch):
-    return SourcePlugin("steam", "fake source", (), lambda config: FetchResult(fetch(config), True, "test"))
+    return Provider("steam", "fake source", (), lambda config: FetchResult(fetch(config), True, "test"))
 
 
 def test_first_import_adds_games(conn):
@@ -330,14 +330,14 @@ def test_incomplete_fetch_adds_but_never_removes(conn):
 
 
 def test_run_import_forwards_completeness_and_mode(conn):
-    partial = SourcePlugin("steam", "fake", (), lambda config: FetchResult([g("1", "Alpha")], False, "local"))
+    partial = Provider("steam", "fake", (), lambda config: FetchResult([g("1", "Alpha")], False, "local"))
     summary = run_import(conn, "main", partial, {})
     assert (summary.complete, summary.mode) == (False, "local")
 
 
 def test_run_import_rejects_bare_list(conn):
     with pytest.raises(LudexError) as info:
-        run_import(conn, "main", SourcePlugin("steam", "fake", (), lambda config: [g("1", "Alpha")]), {})
+        run_import(conn, "main", Provider("steam", "fake", (), lambda config: [g("1", "Alpha")]), {})
     assert info.value.code == "source_failed"
 
 
@@ -405,19 +405,19 @@ def test_export_lists_ownership_per_game_and_hides_removed_by_default(conn):
 
 
 def test_same_account_name_in_another_source_is_never_removed(conn):
-    steam = SourcePlugin("steam", "s", (), lambda config: FetchResult([g("1", "Alpha")], True, "api"))
-    local = SourcePlugin("local", "l", (), lambda config: FetchResult([g("d", "Doom", store="local")], True, "directory"))
+    steam = Provider("steam", "s", (), lambda config: FetchResult([g("1", "Alpha")], True, "api"))
+    local = Provider("local", "l", (), lambda config: FetchResult([g("d", "Doom", store="local")], True, "directory"))
     run_import(conn, "main", steam, {})
     summary = run_import(conn, "main", local, {})
     assert summary.removed == 0
     assert conn.execute("SELECT COUNT(*) FROM ownership WHERE removed = 1").fetchone()[0] == 0
-    gone = SourcePlugin("local", "l", (), lambda config: FetchResult([], True, "directory"))
+    gone = Provider("local", "l", (), lambda config: FetchResult([], True, "directory"))
     assert run_import(conn, "main", gone, {}).removed == 1
     assert conn.execute("SELECT removed FROM ownership WHERE store = 'steam'").fetchone()[0] == 0
 
 
 def test_run_import_rejects_games_of_another_store(conn):
-    plugin_ = SourcePlugin("local", "l", (), lambda config: FetchResult([g("1", "Alpha")], True, "x"))
+    plugin_ = Provider("local", "l", (), lambda config: FetchResult([g("1", "Alpha")], True, "x"))
     with pytest.raises(LudexError) as info:
         run_import(conn, "main", plugin_, {})
     assert info.value.code == "source_failed"

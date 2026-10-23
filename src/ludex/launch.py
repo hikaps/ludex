@@ -6,10 +6,10 @@ from collections.abc import Mapping
 
 from .errors import LudexError
 from .library import get_game
-from .plugins import SourcePlugin
+from .plugins import Provider
 
 
-def launch_game(conn, sources: Mapping[str, SourcePlugin], game_id: int, store: str | None = None) -> str:
+def launch_game(conn, sources: Mapping[str, Provider], game_id: int, store: str | None = None) -> str:
     """Open the launch URL of a game; returns ``store:store_id``. ponytail: no installed check, the client reports a game that is not installed; add when launch must pick installed copies."""
     game = get_game(conn, game_id)
     owned = [o for o in game["ownership"] if not o["removed"]]
