@@ -1,8 +1,8 @@
 """Terminal UI: browse, search and launch. All behavior comes from the core library.
 
 ponytail: read-only view of the local database (import with ``ludex import`` outside), no merge or
-review screens, first 500 matches only, store search results are shown but not opened; add when the
-list needs paging, in-app maintenance, or a way to open a store page.
+review screens, first 500 matches only;
+add when the list needs paging or in-app maintenance.
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from textual.binding import Binding
 from textual.widgets import DataTable, Footer, Header, Input, Static, TabbedContent, TabPane
 
 from .errors import LudexError
-from .launch import launch_game
+from .launch import launch_game, open_url
 from .find import find_games, owned_keys
 from .library import get_game, list_games
 from .plugins import Provider
@@ -29,7 +29,7 @@ class LudexApp(App[None]):
         Binding("2", "tab('installed')", "Installed"),
         Binding("3", "tab('search')", "Search stores"),
         Binding("slash", "search", "Filter"),
-        Binding("enter", "launch", "Launch"),
+        Binding("enter", "launch", "Launch / open page"),
         Binding("escape", "clear", "Clear search", show=False),
         Binding("r", "reload", "Reload"),
         Binding("q", "quit", "Quit"),
@@ -163,7 +163,14 @@ class LudexApp(App[None]):
 
     def action_launch(self) -> None:
         if self.query_one(TabbedContent).active == "search":
-            self.notify("search results are store pages; open the link shown below", severity="warning")
+            table = self.query_one("#search-table", DataTable)
+            hit = self._hits.get(table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value or "") if table.row_count else None
+            if hit is not None:
+                try:
+                    open_url(hit["url"], "the store page")
+                    self.notify(f"opened {hit['title']}")
+                except LudexError as exc:
+                    self.notify(exc.message, severity="error")
             return
         game_id = self._current_id()
         if game_id is None:

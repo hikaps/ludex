@@ -9,6 +9,16 @@ from .library import get_game
 from .plugins import Provider
 
 
+def open_url(url: str, what: str) -> None:
+    """Hand ``url`` to the desktop (xdg-open); errors name ``what`` but never the URL."""
+    try:
+        subprocess.run(["xdg-open", url], check=True, timeout=15, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except FileNotFoundError:
+        raise LudexError("launcher_missing", "xdg-open is not installed") from None
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        raise LudexError("launch_failed", f"the system could not open {what}") from None
+
+
 def launch_game(conn, sources: Mapping[str, Provider], game_id: int, store: str | None = None) -> str:
     """Open the launch URL of a game; returns ``store:store_id``. ponytail: no installed check, the client reports a game that is not installed; add when launch must pick installed copies."""
     game = get_game(conn, game_id)
@@ -22,11 +32,5 @@ def launch_game(conn, sources: Mapping[str, Provider], game_id: int, store: str 
     if len(stores) > 1:
         raise LudexError("launch_ambiguous", f"game {game_id} can be launched from {', '.join(stores)}; pass --store")
     record = launchable[0]
-    url = sources[record["store"]].launch_url(record["store_id"])
-    try:
-        subprocess.run(["xdg-open", url], check=True, timeout=15, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except FileNotFoundError:
-        raise LudexError("launcher_missing", "xdg-open is not installed") from None
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
-        raise LudexError("launch_failed", f"the system could not open the {record['store']} client for this game") from None
+    open_url(sources[record["store"]].launch_url(record["store_id"]), f"the {record['store']} client for this game")
     return f"{record['store']}:{record['store_id']}"
