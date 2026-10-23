@@ -21,7 +21,7 @@ from .launch import install_game, launch_game
 from .library import resolve_game, delete_account_records, export_games, dismiss_review, get_game, list_games, list_review, merge_games, run_import
 from .loader import load_providers
 from .paths import state_paths
-from .plugins import Provider
+from .plugins import CommandContext, CommandResult, Provider
 from .storage import connect, writer_lock
 
 
@@ -150,13 +150,17 @@ def _cmd_providers(args: argparse.Namespace) -> tuple[object, str]:
                 "name": plugin.name,
                 "help": plugin.help,
                 "capabilities": list(plugin.capabilities),
+                "commands": [{"name": c.name, "help": c.help} for c in plugin.commands],
                 "fields": [{"name": f.name, "help": f.help, "secret": f.secret, "optional": f.optional} for f in plugin.config_fields],
             }
             for _, plugin in sorted(sources.items())
         ],
         "problems": dict(sorted(problems.items())),
     }
-    lines = [f"{p['name']}  [{', '.join(p['capabilities'])}]  {p['help']}" for p in data["providers"]]
+    lines = []
+    for p in data["providers"]:
+        lines.append(f"{p['name']}  [{', '.join(p['capabilities'])}]  {p['help']}")
+        lines += [f"  ludex {p['name']} {c['name']}  {c['help']}" for c in p["commands"]]
     lines += [f"problem: {name}: {reason}" for name, reason in data["problems"].items()]
     return data, "\n".join(lines) if lines else "no providers available"
 
@@ -462,9 +466,13 @@ _HANDLERS = {
 
 def _run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     handler = _HANDLERS[(args.command, getattr(args, "account_command", None))]
+    return _execute(args.json, lambda: handler(args))
+
+
+def _execute(as_json: bool, call: Any) -> int:
     status = 0
     try:
-        outcome = handler(args)
+        outcome = call()
         data, human = outcome[0], outcome[1]
         if len(outcome) == 3:
             status = outcome[2]
@@ -473,20 +481,63 @@ def _run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     except PermissionError as exc:
         error = LudexError("state_unavailable", str(exc))
     else:
-        if args.json:
+        if as_json:
             _emit_json(True, data)
         else:
             if human:
                 print(human)
         return status
-    if args.json:
+    if as_json:
         _emit_json(False, error=error)
     else:
         print(f"error: {error.message}", file=sys.stderr)
     return 1
 
 
+def _plugin_command(argv: list[str]) -> int | None:
+    """Run ``ludex <provider> <command> ...`` when the first word names a provider with commands."""
+    as_json = bool(argv) and argv[0] == "--json"
+    words = argv[1:] if as_json else argv
+    if not words or words[0].startswith("-") or words[0] in {key[0] for key in _HANDLERS}:
+        return None
+    providers, _ = load_providers()
+    provider = providers.get(words[0])
+    if provider is None or not provider.commands:
+        return None
+
+    def call() -> tuple[object, str]:
+        commands = {c.name: c for c in provider.commands}
+        if len(words) < 2 or words[1] not in commands:
+            raise LudexError("unknown_command", f"{provider.name} commands: {', '.join(sorted(commands))}")
+        command = commands[words[1]]
+        paths = state_paths()
+        with writer_lock(paths.import_lock):
+            conn = connect(paths.database)
+            try:
+                result = command.run(CommandContext(conn, providers), words[2:])
+            except (LudexError, SystemExit):
+                raise
+            except Exception as exc:
+                raise LudexError("command_failed", f"{provider.name} {command.name} failed ({type(exc).__name__})") from None
+            finally:
+                conn.close()
+        if not isinstance(result, CommandResult):
+            raise LudexError("command_failed", f"{provider.name} {command.name} returned an invalid result")
+        return result.data, result.text
+
+    previous_umask = os.umask(0o077)
+    try:
+        return _execute(as_json, call)
+    except SystemExit as exc:  # the plugin's own argparse: -h exits 0, usage errors 2
+        return exc.code if isinstance(exc.code, int) else 2
+    finally:
+        os.umask(previous_umask)
+
+
 def main(argv: list[str] | None = None) -> int:
+    handled = _plugin_command(list(sys.argv[1:] if argv is None else argv))
+    if handled is not None:
+        return handled
     parser = _parser()
     args = parser.parse_args(argv)
     if args.command is None:
