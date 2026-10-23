@@ -26,7 +26,7 @@ import httpx
 import vdf
 
 from .. import __version__
-from ..plugins import ConfigField, FetchResult, OwnedGame, SourceError, Provider
+from ..plugins import ConfigField, FetchResult, OwnedGame, Provider, SearchHit, SourceError
 from .steam_cache import cached_games
 
 DEFAULT_BASE_URL = "https://api.steampowered.com"
@@ -215,6 +215,46 @@ def _local(steam_dir: Path) -> list[OwnedGame]:
     return list(games.values())
 
 
+STORE_SEARCH_URL = "https://store.steampowered.com/api/storesearch/"
+
+
+def search(query: str, *, url: str = STORE_SEARCH_URL, client: httpx.Client | None = None) -> list[SearchHit]:
+    """Steam store catalog search (public endpoint, no key). Prices are US storefront prices."""
+    own = client is None
+    client = client or httpx.Client(timeout=10.0, headers={"User-Agent": f"ludex/{__version__}"})
+    try:
+        with client.stream("GET", url, params={"term": query, "l": "english", "cc": "us"}) as response:
+            if response.status_code == 429:
+                raise SourceError("steam_rate_limited", "Steam rate limit reached; try again later")
+            if response.status_code != 200:
+                raise SourceError("steam_unavailable", "Steam is unavailable")
+            body = _read_body(response)
+    except httpx.HTTPError:
+        raise SourceError("steam_unavailable", "Steam is unavailable") from None
+    finally:
+        if own:
+            client.close()
+    try:
+        items = json.loads(body)["items"]
+    except (ValueError, KeyError, TypeError):
+        raise _bad_response() from None
+    if not isinstance(items, list):
+        raise _bad_response()
+    hits: list[SearchHit] = []
+    for item in items:
+        if not isinstance(item, dict) or item.get("type") != "app" or not isinstance(item.get("name"), str):
+            continue
+        app_id = item.get("id")
+        if not isinstance(app_id, int) or isinstance(app_id, bool) or app_id <= 0:
+            continue
+        price = item.get("price")
+        label = None
+        if isinstance(price, dict) and isinstance(price.get("final"), int) and isinstance(price.get("currency"), str):
+            label = f"{price['final'] / 100:.2f} {price['currency']}"
+        hits.append(SearchHit("steam", str(app_id), item["name"], f"https://store.steampowered.com/app/{app_id}", label))
+    return hits
+
+
 def fetch(config: Mapping[str, str]) -> FetchResult:
     if config.get("api_key"):
         steam_id = config.get("steam_id")
@@ -237,5 +277,6 @@ PLUGIN = Provider(
     ),
     fetch=fetch,
     installed=installed,
+    search=search,
     launch_url=lambda store_id: f"steam://rungameid/{quote(store_id, safe='')}",
 )
