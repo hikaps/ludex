@@ -23,3 +23,17 @@ def test_missing_or_empty_directory_raises_instead_of_removing_everything(tmp_pa
     with pytest.raises(SourceError) as info:
         PLUGIN.fetch({"path": str(target)})
     assert info.value.code == ("directory_empty" if make else "directory_unreadable")
+
+
+def test_glob_path_searches_every_matching_folder_and_qualifies_ids(tmp_path):
+    for parent, game in [("A", "Hades"), ("B", "Hades"), ("B", "Celeste")]:
+        (tmp_path / parent / game).mkdir(parents=True)
+    (tmp_path / "notes.txt").write_text("x")
+    result = PLUGIN.fetch({"path": str(tmp_path / "*")})
+    assert [(g.store_id, g.title) for g in result.games] == [("A/Hades", "Hades"), ("B/Celeste", "Celeste"), ("B/Hades", "Hades")]
+
+
+def test_glob_matching_nothing_raises(tmp_path):
+    with pytest.raises(SourceError) as info:
+        PLUGIN.fetch({"path": str(tmp_path / "nope*")})
+    assert info.value.code == "directory_unreadable"

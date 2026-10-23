@@ -43,6 +43,7 @@ class ConfigField:
     help: str
     secret: bool = False
     optional: bool = False
+    path: bool = False  # value is a filesystem path; interactive prompts offer tab completion
 
 
 @dataclass(frozen=True, slots=True)
