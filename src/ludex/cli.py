@@ -26,7 +26,7 @@ from .acquire import acquire_game
 from .launch import install_game, launch_game, prepare_launch
 from .library import resolve_game, delete_account_records, export_games, dismiss_review, get_game, list_games, list_review, merge_games, run_import
 from .loader import load_providers
-from .metadata import game_metadata
+from .metadata import game_metadata, get_auto_details, set_auto_details
 from .paths import state_paths
 from .plugins import CommandContext, CommandResult, Provider
 from .storage import connect, writer_lock
@@ -542,7 +542,7 @@ def _cmd_config(args: argparse.Namespace) -> tuple[object, str]:
     default = paths.root / "prefixes"
     sources, _ = load_providers()
     key = args.key
-    core = {"prefix_dir", *SWITCHES}
+    core = {"prefix_dir", "auto_details", *SWITCHES}
     changing = bool(args.value or args.reset or args.secret)
     if changing and not key:
         raise LudexError("invalid_setting", "name the setting to change")
@@ -563,26 +563,30 @@ def _cmd_config(args: argparse.Namespace) -> tuple[object, str]:
             raise LudexError("invalid_setting", f"{key} is not a secret setting")
         if args.reset and key in SWITCHES:
             raise LudexError("invalid_setting", f"{key} has no default to reset to; set yes or no")
-        if args.value and key in SWITCHES and args.value.lower() not in _YES_NO:
+        if args.value and (key in SWITCHES or key == "auto_details") and args.value.lower() not in _YES_NO:
             raise LudexError("invalid_setting", f"{key} takes yes or no")
     with writer_lock(paths.import_lock):
         conn = connect(paths.database)
         try:
             if changing and key == "prefix_dir":
                 set_prefix_root(conn, None if args.reset else args.value)
+            elif changing and key == "auto_details":
+                set_auto_details(conn, None if args.reset else _YES_NO[args.value.lower()])
             elif changing and key in SWITCHES:
                 set_switch(paths, conn, sources, key, _YES_NO[args.value.lower()])
             folder = get_prefix_root(conn, default)
+            auto = get_auto_details(conn)
         finally:
             conn.close()
     plugin_values = {name: describe(paths, plugin) for name, plugin in sorted(sources.items()) if plugin.settings}
     data: dict[str, Any] = {
         "prefix_dir": str(folder),
+        "auto_details": auto,
         **{k: get_switch(paths, k) for k in sorted(SWITCHES)},
         "plugins": plugin_values,
     }
     shown = {"prefix_dir": f"prefix_dir: {folder}" + (" (default)" if folder == default else "")}
-    shown.update({k: f"{k}: {'yes' if data[k] else 'no'}" for k in sorted(SWITCHES)})
+    shown.update({k: f"{k}: {'yes' if data[k] else 'no'}" for k in ("auto_details", *sorted(SWITCHES))})
     for name, values in plugin_values.items():
         shown.update({f"{name}.{k}": f"{name}.{k}: {v if v is not None else '(not set)'}" for k, v in values.items()})
     return data, "\n".join(shown.values() if key is None else [shown[key]])
