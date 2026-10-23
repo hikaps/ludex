@@ -93,7 +93,7 @@ def test_account_add_reads_secret_from_stdin_and_never_echoes_it(
     assert SECRET not in out + err
     accounts_file = tmp_path / "home" / "accounts.json"
     assert stat.S_IMODE(accounts_file.stat().st_mode) == 0o600
-    assert json.loads(accounts_file.read_text())["main"] == {"source": "fake", "config": {"user": "alice", "key": SECRET}}
+    assert json.loads(accounts_file.read_text())["fake:main"] == {"source": "fake", "config": {"user": "alice", "key": SECRET}}
     for argv in (("account", "ls"), ("--json", "account", "ls"), ("--json", "sources")):
         code, out, err = run(capsys, *argv)
         assert code == 0
@@ -119,7 +119,7 @@ def test_account_add_prompts_for_every_missing_field_from_stdin(
     code, _, err = run(capsys, "account", "add", "fake", "main")
     assert code == 0, err
     stored = json.loads((tmp_path / "home" / "accounts.json").read_text())
-    assert stored["main"]["config"] == {"user": "bob", "key": SECRET}
+    assert stored["fake:main"]["config"] == {"user": "bob", "key": SECRET}
 
 
 def test_account_add_uses_getpass_for_secret_on_tty(
@@ -134,7 +134,7 @@ def test_account_add_uses_getpass_for_secret_on_tty(
     code, out, err = run(capsys, "account", "add", "fake", "main", "--set", "user=alice")
     assert code == 0
     assert SECRET not in out + err
-    assert json.loads((tmp_path / "home" / "accounts.json").read_text())["main"]["config"]["key"] == SECRET
+    assert json.loads((tmp_path / "home" / "accounts.json").read_text())["fake:main"]["config"]["key"] == SECRET
 
 
 def test_secret_field_via_set_is_refused(world: World, capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
@@ -192,7 +192,7 @@ def test_import_ls_show(world: World, capsys: pytest.CaptureFixture[str], monkey
     add(capsys, monkeypatch, "main", "alice")
     code, out, _ = run(capsys, "--json", "import", "main")
     assert code == 0
-    assert json.loads(out) == {"ok": True, "data": {"account": "main", "added": 2, "restored": 0, "removed": 0, "total": 2, "complete": True, "mode": "fake"}}
+    assert json.loads(out) == {"ok": True, "data": {"account": "main", "source": "fake", "added": 2, "restored": 0, "removed": 0, "total": 2, "complete": True, "mode": "fake"}}
     assert world.seen_config[-1] == {"user": "alice", "key": SECRET}
 
     code, out, _ = run(capsys, "--json", "ls")
@@ -283,9 +283,9 @@ def test_import_all_mixed_results(world: World, capsys: pytest.CaptureFixture[st
     assert code == 1
     results = json.loads(out)["data"]["results"]
     assert results == [
-        {"account": "aaa", "ok": True, "added": 1, "restored": 0, "removed": 0, "total": 1, "complete": True, "mode": "fake"},
-        {"account": "bbb", "ok": False, "error": {"code": "fetch_incomplete", "message": "profile is private"}},
-        {"account": "ccc", "ok": True, "added": 0, "restored": 0, "removed": 0, "total": 0, "complete": True, "mode": "fake"},
+        {"account": "aaa", "source": "fake", "ok": True, "added": 1, "restored": 0, "removed": 0, "total": 1, "complete": True, "mode": "fake"},
+        {"account": "bbb", "source": "fake", "ok": False, "error": {"code": "fetch_incomplete", "message": "profile is private"}},
+        {"account": "ccc", "source": "fake", "ok": True, "added": 0, "restored": 0, "removed": 0, "total": 0, "complete": True, "mode": "fake"},
     ]
     games = json.loads(run(capsys, "--json", "ls")[1])["data"]["games"]
     assert [g["title"] for g in games] == ["Half-Life"]
@@ -393,7 +393,7 @@ def test_setup_failed_import_keeps_account_and_says_how_to_retry(
     monkeypatch.setattr("sys.stdin", io.StringIO(f"me\n{SECRET}\n"))
     code, _, err = run(capsys, "setup", "fake", "--name", "main")
     assert code == 1
-    assert "profile is private" in err and "ludex import main" in err
+    assert "profile is private" in err and "ludex import fake:main" in err
     code, out, _ = run(capsys, "account", "ls")
     assert "main" in out
 
@@ -405,4 +405,25 @@ def test_setup_rejects_taken_name_before_prompting_for_fields(
     monkeypatch.setattr("sys.stdin", io.StringIO(""))
     code, _, err = run(capsys, "setup", "fake", "--name", "main")
     assert code == 1
-    assert "already exists (source fake)" in err and "pick another" in err
+    assert "already exists for source fake" in err
+
+
+def test_same_name_in_two_sources_is_allowed_and_needs_qualifying(
+    world: World, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    other = SourcePlugin("other", "Other", (), lambda config: FetchResult([OwnedGame("other", "1", "Zed")], True, "o"))
+    fake = SourcePlugin("fake", "Fake", (), lambda config: FetchResult([OwnedGame("fake", "1", "Alpha")], True, "f"))
+    monkeypatch.setattr("ludex.cli.load_sources", lambda: ({"fake": fake, "other": other}, {}))
+    for source in ("fake", "other"):
+        code, _, err = run(capsys, "account", "add", source, "main")
+        assert code == 0, err
+    code, _, err = run(capsys, "import", "main")
+    assert code == 1 and "fake:main" in err and "other:main" in err
+    code, out, err = run(capsys, "import", "other:main")
+    assert code == 0 and "1 added" in out, err
+    code, out, _ = run(capsys, "import", "--all")
+    assert code == 0 and out.count("main:") == 2
+    code, _, _ = run(capsys, "account", "rm", "fake:main")
+    assert code == 0
+    code, out, _ = run(capsys, "account", "ls")
+    assert out.split() == ["main", "other"]

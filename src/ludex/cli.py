@@ -153,8 +153,8 @@ def _cmd_account_rm(args: argparse.Namespace) -> tuple[object, str]:
 def _import_one(conn: Any, paths: Any, sources: dict[str, SourcePlugin], problems: dict[str, str], name: str) -> dict[str, Any]:
     account = get_account(paths, name)
     plugin = _plugin(sources, problems, account.source)
-    summary = run_import(conn, name, plugin, account.config)
-    return {"account": name, "ok": True, **summary.as_dict()}
+    summary = run_import(conn, account.name, plugin, account.config)
+    return {"account": account.name, "source": account.source, "ok": True, **summary.as_dict()}
 
 
 def _cmd_import(args: argparse.Namespace) -> tuple[object, str, int]:
@@ -167,14 +167,14 @@ def _cmd_import(args: argparse.Namespace) -> tuple[object, str, int]:
                 result = _import_one(conn, paths, sources, problems, args.account)
                 return {k: v for k, v in result.items() if k != "ok"}, _import_line(result), 0
             results: list[dict[str, Any]] = []
-            for name, _ in list_accounts(paths):
+            for name, source in list_accounts(paths):
                 try:
-                    results.append(_import_one(conn, paths, sources, problems, name))
+                    results.append(_import_one(conn, paths, sources, problems, f"{source}:{name}"))
                 except LudexError as exc:
-                    results.append({"account": name, "ok": False, "error": {"code": exc.code, "message": exc.message}})
+                    results.append({"account": name, "source": source, "ok": False, "error": {"code": exc.code, "message": exc.message}})
         finally:
             conn.close()
-    lines = [_import_line(r) if r["ok"] else f"{r['account']}: error: {r['error']['message']}" for r in results]
+    lines = [_import_line(r) if r["ok"] else f"{r['source']}:{r['account']}: error: {r['error']['message']}" for r in results]
     status = 1 if any(not r["ok"] for r in results) else 0
     return {"results": results}, "\n".join(lines) if lines else "no accounts", status
 
@@ -192,15 +192,14 @@ def _cmd_setup(args: argparse.Namespace) -> tuple[object, str]:
     source = args.source or _ask(f"source ({', '.join(names)}) [{names[0]}]: ", names[0])
     plugin = _plugin(sources, problems, source)
     name = args.name or _ask(f"account name [{source}]: ", source)
-    taken = dict(list_accounts(state_paths()))
-    if name in taken:
-        raise LudexError("account_exists", f"account {name} already exists (source {taken[name]}); account names are shared by all sources, pick another")
+    if (name, source) in list_accounts(state_paths()):
+        raise LudexError("account_exists", f"account {name} already exists for source {source}")
     print(f"{plugin.help}\nEnter skips optional fields.", file=sys.stderr)
     added = _cmd_account_add(argparse.Namespace(source=source, name=name, fields=[]))
     try:
-        data, human, _ = _cmd_import(argparse.Namespace(account=name, all=False))
+        data, human, _ = _cmd_import(argparse.Namespace(account=f"{source}:{name}", all=False))
     except LudexError as exc:
-        raise LudexError(exc.code, f"{exc.message}; account {name} was saved, fix the cause and run: ludex import {name}") from None
+        raise LudexError(exc.code, f"{exc.message}; account {name} was saved, fix the cause and run: ludex import {source}:{name}") from None
     return data, f"{added[1]}\n{human}"
 
 
@@ -209,7 +208,7 @@ def _import_line(result: dict[str, Any]) -> str:
     if not result["complete"]:
         note += " partial: nothing removed"
     return (
-        f"{result['account']}: {result['added']} added, {result['restored']} restored, "
+        f"{result['source']}:{result['account']}: {result['added']} added, {result['restored']} restored, "
         f"{result['removed']} removed, {result['total']} total{note}"
     )
 
