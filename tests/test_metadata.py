@@ -8,12 +8,12 @@ import pytest
 
 from ludex.errors import LudexError
 from ludex.library import import_account
-from ludex.metadata import cached_metadata, game_metadata
+from ludex.metadata import cached_metadata, game_metadata, get_auto_details, set_auto_details
 from ludex.plugins import Metadata, OwnedGame, Provider, SourceError
 from ludex.sources import steam
 from ludex.storage import connect
 from ludex.tui import LudexApp
-from textual.widgets import Static
+from textual.widgets import Static, Switch
 
 
 def ask(payload, status=200, appid="10"):
@@ -67,20 +67,46 @@ def test_a_game_nobody_can_describe_is_an_error_or_none(conn):
     assert game_metadata(conn, {"s": Provider("s", "x", (), metadata=lambda i: None)}, 1) is None
 
 
-def test_details_key_fetches_and_the_pane_shows_it(tmp_path):
+def _library(tmp_path):
     db = tmp_path / "db.sqlite3"
     c = connect(db)
-    import_account(c, "m", [OwnedGame("s", "1", "Hades")], store="s")
+    import_account(c, "m", [OwnedGame("s", "1", "Hades"), OwnedGame("s", "2", "Zelda")], store="s")
     c.close()
+    return db
+
+
+def test_highlighting_a_game_fetches_its_details_after_a_pause_and_shows_them(tmp_path):
+    db, calls = _library(tmp_path), []
 
     async def scenario():
-        app = LudexApp(db, {"s": provider([])})
+        app = LudexApp(db, {"s": provider(calls)})
+        app.DETAILS_DELAY = 0.1
         async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("m")
+            await pilot.pause(0.5)
             await app.workers.wait_for_complete()
             await pilot.pause()
-            text = str(app.query_one("#detail", Static).render())
-            assert "About" in text and "RPG" in text
+            assert "About" in str(app.query_one("#detail", Static).render()) and calls == ["1"]
+            await pilot.press("down", "up", "down")  # passing over games asks nothing until the cursor rests
+            await pilot.pause(0.5)
+            await app.workers.wait_for_complete()
+            assert calls == ["1", "2"]
 
     asyncio.run(scenario())
+
+
+def test_the_switch_turns_fetching_off_and_the_choice_is_kept(tmp_path):
+    db, calls = _library(tmp_path), []
+    conn = connect(db)
+    set_auto_details(conn, False)
+    conn.close()
+
+    async def scenario():
+        app = LudexApp(db, {"s": provider(calls)})
+        app.DETAILS_DELAY = 0.05
+        async with app.run_test() as pilot:
+            await pilot.pause(0.4)
+            assert calls == []
+            assert app.query_one("#opt-auto_details", Switch).value is False
+
+    asyncio.run(scenario())
+    assert get_auto_details(connect(db)) is False

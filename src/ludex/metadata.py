@@ -44,3 +44,18 @@ def game_metadata(conn: sqlite3.Connection, sources: Mapping[str, Provider], gam
     if not any(sources.get(store) is not None and sources[store].metadata for store, _ in copies):
         raise LudexError("metadata_unavailable", "no installed plugin supplies metadata for this game's stores")
     return None
+
+
+def get_auto_details(conn: sqlite3.Connection) -> bool:
+    """Whether the TUI fetches details for the highlighted game by itself (default yes)."""
+    row = conn.execute("SELECT value FROM meta WHERE key = 'auto_details'").fetchone()
+    return row is None or row["value"] != "0"
+
+
+def set_auto_details(conn: sqlite3.Connection, on: bool | None) -> None:
+    """Turn it on or off; ``None`` goes back to the default (on)."""
+    with conn:
+        if on is None or on:
+            conn.execute("DELETE FROM meta WHERE key = 'auto_details'")
+        else:
+            conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('auto_details', '0')")

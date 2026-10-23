@@ -19,7 +19,7 @@ from textual.widgets import ContentSwitcher, DataTable, Footer, Input, Label, St
 from .accounts import get_account, list_accounts, update_account
 from .errors import LudexError
 from .game_settings import get_prefix_root, get_settings, set_prefix_root, update_settings
-from .metadata import cached_metadata, game_metadata
+from .metadata import cached_metadata, game_metadata, get_auto_details, set_auto_details
 from .launch import install_game, launch_game, open_url
 from .find import find_games, owned_keys
 from .library import get_game, list_games
@@ -56,6 +56,7 @@ def _stores_text(stores) -> Text:
 
 class LudexApp(App[None]):
     TITLE = "ludex"
+    DETAILS_DELAY = 0.5  # seconds the cursor must rest on a game before its details are fetched
     CSS = """
     Screen { background: $background; }
     #main { height: 1fr; }
@@ -101,7 +102,6 @@ class LudexApp(App[None]):
         Binding("l", "launch", "Launch"),
         Binding("e", "edit", "Game settings"),
         Binding("i", "install", "Install"),
-        Binding("m", "details", "Details"),
         Binding("s", "settings", "Settings"),
         Binding("r", "reload", "Reload"),
         Binding("q", "quit", "Quit"),
@@ -127,6 +127,9 @@ class LudexApp(App[None]):
         self._paths = paths
         self._keys: set[tuple[str, str]] = set()
         self._hits: dict[str, dict] = {}
+        self._auto = True
+        self._tried: set[int] = set()
+        self._details_timer = None
         self._searched = ""
         self._fields: dict[str, tuple] = {}  # settings Input id -> what it edits
         self._conn = None
@@ -153,6 +156,9 @@ class LudexApp(App[None]):
         self.query_one("#detail").border_title = "Detail"
         self.theme = "tokyo-night"  # colourful default; ctrl+p opens the theme picker
         self._conn = connect(self._database)
+        self._auto = get_auto_details(self._conn)
+        with self.prevent(Switch.Changed):
+            self.query_one("#opt-auto_details", Switch).value = self._auto
         for table in self.query(DataTable):
             table.add_columns(*(("store", "title", "price", "owned") if table.id == "search-table" else ("", "title", "stores")))
         self.query_one("#folder", Input).value = str(get_prefix_root(self._conn, self._default_prefix()))
@@ -163,8 +169,8 @@ class LudexApp(App[None]):
         # tab, arrows and paging belong to the list only on the main screen; forms keep their own
         if len(self.screen_stack) > 1 and action not in {"quit"}:
             return False
-        tab_actions = {"owned": {"install", "edit", "details"}, "installed": {"launch", "edit", "details"}, "search": {"install"}}
-        if action in {"launch", "edit", "install", "details"}:  # what you can do depends on the tab
+        tab_actions = {"owned": {"install", "edit"}, "installed": {"launch", "edit"}, "search": {"install"}}
+        if action in {"launch", "edit", "install"}:  # what you can do depends on the tab
             return action in tab_actions.get(self._active(), set())
         if self._active() == "settings" and action in {"focus_filter", "settings"}:
             return False
@@ -293,7 +299,7 @@ class LudexApp(App[None]):
             return
         self._show_game(int(key))  # the event's own row, not the active tab's cursor
 
-    def _show_game(self, game_id: int) -> None:
+    def _show_game(self, game_id: int, note: str | None = None) -> None:
         game = get_game(self._conn, game_id)
         lines = [f"[b #7aa2f7]{escape(game['title'])}[/]"] + [
             f"  [{_store_color(o['store'])}]{escape(o['store'])}[/]:{escape(str(o['store_id']))}  [dim]{escape(str(o['account']))}[/]  "
@@ -307,30 +313,43 @@ class LudexApp(App[None]):
             lines += [""] + ([escape(found.description)] if found.description else [])
             lines += [f"[dim]{label}:[/] {escape(', '.join(values))}" for label, values in (("genres", found.genres), ("by", found.developers), ("released", (found.released,) if found.released else ())) if values]
         self.query_one("#detail", Static).update("\n".join(lines))
+        if note:
+            lines += ["", note]
+        if found is None and note is None:
+            self._queue_details(game_id)
 
-    def action_details(self) -> None:
-        game_id = self._current_id()
-        if game_id is None:
+    def _queue_details(self, game_id: int) -> None:
+        """Ask for details once the cursor rests on a game (and only once per game per run)."""
+        if self._details_timer is not None:
+            self._details_timer.stop()
+            self._details_timer = None
+        if self._auto and game_id not in self._tried:
+            self._details_timer = self.set_timer(self.DETAILS_DELAY, lambda: self._start_details(game_id))
+
+    def _start_details(self, game_id: int) -> None:
+        self._details_timer = None
+        if self._active() not in {"owned", "installed"} or self._current_id() != game_id or game_id in self._tried:
             return
-        self.notify("asking the store for details...")
+        self._tried.add(game_id)
         self.run_worker(lambda: self._fetch_details(game_id), thread=True, exclusive=True, group="details")
 
     def _fetch_details(self, game_id: int) -> None:
         conn = connect(self._database)  # a worker thread needs its own connection
         try:
-            found = game_metadata(conn, self._sources, game_id)
+            found, problem = game_metadata(conn, self._sources, game_id), None
         except LudexError as exc:
-            self.call_from_thread(self.notify, exc.message, severity="error")
-            return
+            found, problem = None, None if exc.code == "metadata_unavailable" else exc.message
         finally:
             conn.close()
-        self.call_from_thread(self._details_ready, game_id, found is not None)
+        self.call_from_thread(self._details_ready, game_id, found is not None, problem)
 
-    def _details_ready(self, game_id: int, found: bool) -> None:
-        if not found:
-            self.notify("no store has details for this game", severity="warning")
-        elif self._current_id() == game_id:
+    def _details_ready(self, game_id: int, found: bool, problem: str | None) -> None:
+        if self._active() not in {"owned", "installed"} or self._current_id() != game_id:
+            return
+        if found:
             self._show_game(game_id)
+        elif problem:
+            self._show_game(game_id, f"[dim]no details: {escape(problem)}[/]")
 
     def action_clear(self) -> None:
         self.query_one("#filter", Input).value = ""
@@ -367,6 +386,10 @@ class LudexApp(App[None]):
         yield Label("Default prefix folder", classes="section")
         yield Label("Each game gets its own prefix inside it. Enter saves, Right arrow completes, blank resets.", classes="hint")
         yield PathInput("", suggester=PathSuggester(dirs_only=True), id="folder")
+        yield Label("Game details", classes="section")
+        with Horizontal(classes="row"):
+            yield Switch(True, id="opt-auto_details")
+            yield Label(" Fetch description, genres and developer for the highlighted game (the store sees the game id)")
         if self._paths is None:
             return
         yield Label("Sources", classes="section")
@@ -453,6 +476,9 @@ class LudexApp(App[None]):
                     else f"{_SOURCE_LABELS[name]}: removed {count[0]} records; turn it on to bring the games back"
                 )
                 self.action_reload()
+            elif kind == "opt":
+                self._write(lambda: set_auto_details(self._conn, event.value))
+                self._auto = event.value
             elif kind == "plg":
                 self._write(lambda: set_plugin_enabled(name, event.value))
                 self.notify(f"{name} {'enabled' if event.value else 'disabled'}; applies the next time ludex starts")
