@@ -55,6 +55,19 @@ def test_add_update_remove_roundtrip_and_loader_picks_the_plugin_up(managed):
     assert pm.list_plugins() == [] and not [p for p in pm.plugins_dir().iterdir()]
 
 
+def test_a_disabled_plugin_is_not_loaded_and_stays_disabled_after_an_update(managed):
+    pm.add_plugin("ludex-fakeplug==1.0")
+    assert pm.set_plugin_enabled("fakeprov", False)["enabled"] is False
+    assert pm.list_plugins()[0]["enabled"] is False
+    sys.path[:] = [p for p in sys.path if "plugins" not in p]
+    sys.modules.pop("ludex_fakeplug_mod", None)
+    assert "fakeprov" not in load_providers()[0]
+    pm.update_plugins()
+    assert pm.list_plugins()[0]["enabled"] is False
+    pm.set_plugin_enabled("ludex-fakeplug", True)
+    assert "fakeprov" in load_providers()[0]
+
+
 def test_a_package_without_a_ludex_entry_point_is_rejected_and_leaves_nothing(managed):
     with pytest.raises(LudexError) as info:
         pm.add_plugin("plain-lib")
@@ -117,3 +130,22 @@ def test_update_core_refuses_when_the_channel_or_install_kind_is_unknown(core, m
     with pytest.raises(LudexError) as info:
         pm.update_core("beta", dry_run=True)
     assert info.value.code == "development_install"
+
+
+@pytest.mark.parametrize(
+    "given, passed",
+    [
+        ("https://github.com/owner/repo", "git+https://github.com/owner/repo"),
+        ("https://gitlab.com/owner/repo.git", "git+https://gitlab.com/owner/repo.git"),
+        ("https://github.com/owner/repo/", "git+https://github.com/owner/repo/"),
+        ("git+https://github.com/owner/repo@v1", "git+https://github.com/owner/repo@v1"),
+        ("https://github.com/owner/repo/archive/main.zip", "https://github.com/owner/repo/archive/main.zip"),
+        ("https://example.com/owner/repo", "https://example.com/owner/repo"),
+    ],
+)
+def test_a_pasted_repository_link_gets_the_git_prefix_and_nothing_else_is_rewritten(managed, given, passed):
+    try:
+        pm.add_plugin(given)
+    except LudexError:
+        pass  # the fake installer registers nothing for these specs; only the spec handed over matters
+    assert managed[-1][-1] == passed

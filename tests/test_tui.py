@@ -32,8 +32,7 @@ def test_search_narrows_the_list_and_enter_launches(tmp_path, monkeypatch):
             app.query_one(Input).value = "hades"
             await pilot.pause()
             assert table.row_count == 1
-            table.focus()
-            await pilot.press("enter")
+            await pilot.press("enter")  # the filter box always has focus; Enter launches the highlighted game
             await pilot.pause()
 
     asyncio.run(scenario())
@@ -52,16 +51,11 @@ def test_search_tab_queries_providers_marks_owned_and_enter_opens_the_page(tmp_p
     async def scenario():
         app = LudexApp(db, {"steam": store})
         async with app.run_test() as pilot:
-            tabs = app.query_one("TabbedContent")
-            for _ in range(50):  # the initial Owned activation can land after the first switch
-                tabs.active = "search"
-                await pilot.pause()
-                if tabs.active == "search":
-                    await pilot.pause()
-                    break
-            assert tabs.active == "search"
-            app.query_one(Input).value = "ha"
-            app.query_one(Input).focus()
+            await pilot.pause()
+            await pilot.press("tab", "tab")  # Owned -> Installed -> Search
+            await pilot.pause()
+            assert app.query_one("Tabs").active == "search" and app.focused is app.query_one(Input)
+            await pilot.press("h", "a")  # typing goes straight into the filter box
             await pilot.press("enter")
             await app.workers.wait_for_complete()
             await pilot.pause()
@@ -77,10 +71,10 @@ def test_search_tab_queries_providers_marks_owned_and_enter_opens_the_page(tmp_p
     assert opened == [["xdg-open", "https://x/2"]]
 
 
-def test_edit_screen_saves_runner_prefix_env_and_the_prefix_folder(tmp_path, monkeypatch):
+def test_edit_screen_saves_runner_prefix_executable_args_and_env(tmp_path, monkeypatch):
     from textual.widgets import Select, TextArea
 
-    from ludex.game_settings import get_prefix_root, get_settings
+    from ludex.game_settings import get_settings
     from ludex.plugins import Provider
     from ludex.runners import Runner
 
@@ -101,7 +95,7 @@ def test_edit_screen_saves_runner_prefix_env_and_the_prefix_folder(tmp_path, mon
         app = LudexApp(db, {"local": local}, config_for=lambda s, a: {}, prefix_root=tmp_path / "default")
         async with app.run_test() as pilot:
             await pilot.pause()
-            await pilot.press("e")
+            await pilot.press("f2")
             await pilot.pause()
             screen = app.screen
             screen.query_one("#runner", Select).value = "GE"
@@ -112,7 +106,7 @@ def test_edit_screen_saves_runner_prefix_env_and_the_prefix_folder(tmp_path, mon
             await pilot.press("ctrl+s")
             await pilot.pause()
             assert app.screen is not screen, str(screen.query_one("#form-error").render())  # closed
-            await pilot.press("s")
+            await pilot.press("f4")
             await pilot.pause()
             app.screen.query_one("#folder", Input).value = str(tmp_path / "all-prefixes")
             await pilot.press("ctrl+s")
@@ -123,7 +117,6 @@ def test_edit_screen_saves_runner_prefix_env_and_the_prefix_folder(tmp_path, mon
     assert get_settings(conn, "local", "g").as_dict() == {
         "runner": "GE", "prefix": str(tmp_path / "pfx"), "executable": "Hades.exe", "args": ["-w", "a b"], "env": {"A": "1", "B": "x=y"},
     }
-    assert get_prefix_root(conn, tmp_path / "default") == tmp_path / "all-prefixes"
 
 
 def test_edit_screen_reports_invalid_input_and_stays_open(tmp_path):
@@ -142,7 +135,7 @@ def test_edit_screen_reports_invalid_input_and_stays_open(tmp_path):
         app = LudexApp(db, {"local": local}, config_for=lambda s, a: {}, prefix_root=tmp_path / "default")
         async with app.run_test() as pilot:
             await pilot.pause()
-            await pilot.press("e")
+            await pilot.press("f2")
             await pilot.pause()
             screen = app.screen
             screen.query_one("#env", TextArea).text = "no equals sign"
@@ -191,7 +184,7 @@ def test_tab_completes_a_path_then_moves_on(tmp_path):
         app = LudexApp(db, {"local": local}, config_for=lambda s, a: {}, prefix_root=tmp_path / "default")
         async with app.run_test() as pilot:
             await pilot.pause()
-            await pilot.press("e")
+            await pilot.press("f2")
             await pilot.pause()
             assert app.focused is app.screen.query_one("#runner")  # the form opens ready to use
             prefix = app.screen.query_one("#prefix", Input)
@@ -209,40 +202,50 @@ def test_tab_completes_a_path_then_moves_on(tmp_path):
     asyncio.run(scenario())
 
 
-def test_settings_switch_needs_confirmation_before_removing_games(tmp_path):
+def test_settings_tab_saves_the_prefix_folder_and_toggles_sources_and_plugins(tmp_path, monkeypatch):
     from textual.widgets import Switch
 
     from ludex.accounts import add_account, list_accounts
+    from ludex.game_settings import get_prefix_root
+    from ludex.library import run_import
     from ludex.paths import StatePaths
     from ludex.plugins import FetchResult, Provider
-    from ludex.library import run_import
 
     root = tmp_path / "state"
     root.mkdir(mode=0o700)
+    monkeypatch.setenv("LUDEX_HOME", str(root))
     paths = StatePaths(root, root / "library.sqlite3", root / "accounts.json", root / "import.lock")
     provider = Provider("shortcuts", "s", (), lambda c: FetchResult([OwnedGame("shortcuts", "1", "Hades")], True, None))
     add_account(paths, "default", "shortcuts", {})
     conn = connect(paths.database)
     run_import(conn, "default", provider, {})
     conn.close()
+    plugin = root / "plugins" / "ludex-fake"
+    (plugin / "ludex_fake-1.0.dist-info").mkdir(parents=True)
+    (plugin / "ludex_fake-1.0.dist-info" / "METADATA").write_text("Name: ludex-fake\nVersion: 1.0\n")
+    (plugin / "ludex_fake-1.0.dist-info" / "entry_points.txt").write_text("[ludex.providers]\nfake = x:y\n")
 
     async def scenario():
         app = LudexApp(paths.database, {"shortcuts": provider}, prefix_root=root / "p", paths=paths)
         async with app.run_test() as pilot:
             await pilot.pause()
             assert app.query_one("#owned-table", DataTable).row_count == 1
-            await pilot.press("s")
+            await pilot.press("tab", "tab", "tab")  # Owned -> Installed -> Search -> Settings
             await pilot.pause()
-            screen = app.screen
-            assert screen.query_one("#steam_shortcuts", Switch).value is True
-            screen.query_one("#steam_shortcuts", Switch).value = False
-            await pilot.press("ctrl+s")
+            assert app.query_one("Tabs").active == "settings" and app.focused is app.query_one("#folder")
+            assert not app.query_one("#filter").display
+            app.query_one("#folder", Input).value = str(tmp_path / "all-prefixes")
+            await pilot.press("enter")
             await pilot.pause()
-            assert app.screen is screen and list_accounts(paths)  # asked first, nothing deleted
-            await pilot.press("ctrl+s")
+            await pilot.press("down")  # arrows move between the settings
             await pilot.pause()
-            assert app.screen is not screen
+            assert app.focused is app.query_one("#src-steam_shortcuts", Switch)
+            app.query_one("#src-steam_shortcuts", Switch).value = False  # off: account and games go, no dialog
+            app.query_one("#plg-ludex-fake", Switch).value = False
+            await pilot.pause()
             assert app.query_one("#owned-table", DataTable).row_count == 0
 
     asyncio.run(scenario())
     assert list_accounts(paths) == []
+    assert get_prefix_root(connect(paths.database), root / "p") == tmp_path / "all-prefixes"
+    assert (plugin / ".disabled").exists()

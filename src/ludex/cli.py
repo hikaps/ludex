@@ -16,7 +16,7 @@ from . import __version__
 from .accounts import add_account, get_account, list_accounts, remove_account
 from .errors import LudexError
 from .game_settings import get_prefix_root, get_settings, pick_copy, set_prefix_root, update_settings
-from .plugin_manager import CHANNELS, add_plugin, list_plugins, remove_plugin, update_core, update_plugins
+from .plugin_manager import CHANNELS, add_plugin, list_plugins, remove_plugin, set_plugin_enabled, update_core, update_plugins
 from .runners import find_runners
 from .find import find_games, owned_keys
 from .installed import installed_keys
@@ -55,6 +55,8 @@ def _parser() -> argparse.ArgumentParser:
     plugin_commands.add_parser("ls", help="list installed plugins")
     plugin_rm = plugin_commands.add_parser("rm", help="remove a plugin (its accounts and games stay until 'account rm')")
     plugin_rm.add_argument("name")
+    for action, text in (("enable", "load a disabled plugin again"), ("disable", "keep a plugin installed but do not load it")):
+        plugin_commands.add_parser(action, help=text).add_argument("name")
     plugin_up = plugin_commands.add_parser("update", help="reinstall plugins from the spec they were added with")
     plugin_up.add_argument("name", nargs="?", help="one plugin (default: all)")
 
@@ -430,7 +432,10 @@ def _cmd_plugin_add(args: argparse.Namespace) -> tuple[object, str]:
 
 def _cmd_plugin_ls(args: argparse.Namespace) -> tuple[object, str]:
     plugins = list_plugins()
-    lines = [f"{p['name']} {p['version']}  providers: {', '.join(p['providers'])}" for p in plugins]
+    lines = [
+        f"{p['name']} {p['version']}  providers: {', '.join(p['providers'])}" + ("" if p["enabled"] else "  (disabled)")
+        for p in plugins
+    ]
     return {"plugins": plugins}, "\n".join(lines) if lines else "no plugins installed by ludex"
 
 
@@ -438,6 +443,11 @@ def _cmd_plugin_rm(args: argparse.Namespace) -> tuple[object, str]:
     removed = remove_plugin(args.name)
     note = f"; accounts for {', '.join(removed['providers'])} stay until 'ludex account rm'" if removed["providers"] else ""
     return removed, f"removed plugin {removed['name']}{note}"
+
+
+def _cmd_plugin_enable(args: argparse.Namespace) -> tuple[object, str]:
+    done = set_plugin_enabled(args.name, args.plugin_command == "enable")
+    return done, f"{'enabled' if done['enabled'] else 'disabled'} plugin {done['name']}"
 
 
 def _cmd_plugin_update(args: argparse.Namespace) -> tuple[object, str, int]:
@@ -636,6 +646,8 @@ _HANDLERS = {
     ("plugin", "add"): _cmd_plugin_add,
     ("plugin", "ls"): _cmd_plugin_ls,
     ("plugin", "rm"): _cmd_plugin_rm,
+    ("plugin", "enable"): _cmd_plugin_enable,
+    ("plugin", "disable"): _cmd_plugin_enable,
     ("plugin", "update"): _cmd_plugin_update,
     ("update", None): _cmd_update,
     ("import", None): _cmd_import,
@@ -735,7 +747,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "account" and args.account_command is None:
         parser.error("account requires an action: add, ls or rm")
     if args.command == "plugin" and args.plugin_command is None:
-        parser.error("plugin requires an action: add, ls, rm or update")
+        parser.error("plugin requires an action: add, ls, rm, enable, disable or update")
     if args.command == "game" and args.game_command is None:
         parser.error("game requires an action: show or set")
     if args.command == "import" and not args.all and not args.account:
