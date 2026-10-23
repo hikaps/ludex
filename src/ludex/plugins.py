@@ -6,6 +6,7 @@ calls what is declared (``Provider.capabilities`` lists them):
 
 - ``owned``: ``fetch``, below.
 - ``launch``: ``launch_url``, below.
+- ``installed``: ``installed``, below.
 
 An owned-only provider needs nothing else. ``API_VERSION`` changes only when an existing field
 changes meaning; adding a capability field is compatible and does not change it. A provider whose
@@ -20,6 +21,10 @@ the result as removed. A source that can only see part of the library (for examp
 returns ``complete=False``, and the core adds and updates games but removes nothing. A plugin that
 cannot tell whether a result is partial (a private profile, a truncated page, a rate limit) MUST
 raise ``SourceError`` instead of returning it.
+
+Installed (optional): ``installed(config)`` returns the store ids of the account's games that are
+installed on this machine right now (an iterable of strings). It is read live, never stored, and
+must not touch the network. Raise ``SourceError`` when the answer cannot be determined.
 
 Launching (optional): ``launch_url(store_id)`` returns the URL that makes the store's own client
 start the game (for example ``steam://rungameid/<id>``). The core opens it with ``xdg-open``; the
@@ -76,8 +81,9 @@ class Provider:
     fetch: Callable[[Mapping[str, str]], FetchResult] | None = None
     api_version: int = API_VERSION
     launch_url: Callable[[str], str] | None = None
+    installed: Callable[[Mapping[str, str]], Iterable[str]] | None = None
 
     @property
     def capabilities(self) -> tuple[str, ...]:
-        found = (("owned", self.fetch), ("launch", self.launch_url))
+        found = (("owned", self.fetch), ("installed", self.installed), ("launch", self.launch_url))
         return tuple(name for name, value in found if value is not None)

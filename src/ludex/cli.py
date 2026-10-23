@@ -13,6 +13,7 @@ from typing import Any
 from . import __version__
 from .accounts import add_account, get_account, list_accounts, remove_account
 from .errors import LudexError
+from .installed import installed_keys
 from .launch import launch_game
 from .library import resolve_game, delete_account_records, export_games, dismiss_review, get_game, list_games, list_review, merge_games, run_import
 from .loader import load_providers
@@ -52,6 +53,7 @@ def _parser() -> argparse.ArgumentParser:
     listing.add_argument("--store")
     listing.add_argument("--account")
     listing.add_argument("--removed", action="store_true", help="include removed games")
+    listing.add_argument("--installed", action="store_true", help="only games installed on this machine")
     listing.add_argument("--limit", type=int, default=50)
     listing.add_argument("--offset", type=int, default=0)
 
@@ -270,10 +272,17 @@ def _cmd_ls(args: argparse.Namespace) -> tuple[object, str]:
     if args.limit < 1 or args.offset < 0:
         raise LudexError("invalid_paging", "--limit must be at least 1 and --offset must not be negative")
     paths = state_paths()
+    only = None
+    if args.installed:
+        providers, _ = load_providers()
+        only, problems = installed_keys(paths, providers)
+        for ref, reason in sorted(problems.items()):
+            print(f"warning: {ref}: {reason}", file=sys.stderr)
     conn = connect(paths.database)
     try:
         games = list_games(
             conn,
+            only=only,
             query=args.query,
             store=args.store,
             account=args.account,
@@ -324,7 +333,8 @@ def _cmd_tui(args: argparse.Namespace) -> tuple[object, str]:
     from .tui import LudexApp
 
     sources, _ = load_providers()
-    LudexApp(state_paths().database, sources).run()
+    paths = state_paths()
+    LudexApp(paths.database, sources, lambda: installed_keys(paths, sources)[0]).run()
     return {}, ""
 
 

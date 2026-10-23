@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -177,9 +177,11 @@ def list_games(
     store: str | None = None,
     account: str | None = None,
     include_removed: bool = False,
+    only: Collection[tuple[str, str]] | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> list[dict[str, Any]]:
+    """``only``: restrict to games owning one of these (store, store_id) pairs."""
     if not 1 <= limit <= _MAX_LIMIT:
         raise LudexError("invalid_pagination", f"limit must be between 1 and {_MAX_LIMIT}")
     if offset < 0:
@@ -194,6 +196,10 @@ def list_games(
     if account is not None:
         own_clauses.append("o.account = ?")
         params.append(account)
+    if only is not None:
+        # ponytail: one bound parameter per pair, fine for an installed list; use a temp table if it grows large
+        own_clauses.append(f"(o.store || char(31) || o.store_id) IN ({','.join('?' * len(only)) or 'NULL'})")
+        params.extend(f"{store}\x1f{store_id}" for store, store_id in only)
     where = [f"EXISTS (SELECT 1 FROM ownership o WHERE {' AND '.join(own_clauses)})"]
     if query is not None:
         where.append("g.normalized_title LIKE ? ESCAPE '\\'")
