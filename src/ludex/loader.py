@@ -8,7 +8,7 @@ from collections.abc import Iterable
 from importlib.metadata import EntryPoint, entry_points as _entry_points
 
 from .paths import plugins_dir
-from .plugins import API_VERSION, GROUP, Command, Provider
+from .plugins import API_VERSION, GROUP, Command, ConfigField, Provider
 
 _NAME = re.compile(r"[a-z][a-z0-9-]{0,31}\Z")
 
@@ -36,6 +36,20 @@ def _add_managed_plugins() -> None:
     for folder in folders:
         if str(folder) not in sys.path:
             sys.path.append(str(folder))
+
+
+def _valid_settings(plugin: Provider) -> bool:
+    try:
+        if not all(isinstance(f, ConfigField) for f in plugin.settings):
+            return False
+    except TypeError:
+        return False
+    names = [f.name for f in plugin.settings]
+    return (
+        len(set(names)) == len(names)
+        and all(re.fullmatch(r"[a-z][a-z0-9_]*", n) for n in names)
+        and not set(names) & {f.name for f in plugin.config_fields}
+    )
 
 
 def load_providers(
@@ -78,6 +92,8 @@ def load_providers(
                 problems[name] = "declares no capability"
             elif not _valid_commands(value.commands):
                 problems[name] = "has an invalid command (need unique lowercase names and a callable run)"
+            elif not _valid_settings(value):
+                problems[name] = "has invalid settings (need unique lowercase names that are not account fields)"
             else:
                 loaded[name] = value
     return loaded, problems

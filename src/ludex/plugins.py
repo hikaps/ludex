@@ -1,5 +1,12 @@
 """Contract for providers (entry-point group ``ludex.providers``).
 
+Plugin-wide settings: ``Provider.settings`` (a tuple of ``ConfigField``, names ``[a-z][a-z0-9_]*``,
+distinct from ``config_fields``) are values the user sets once for the whole plugin, in the
+Settings tab or with ``ludex config <plugin>.<name> VALUE`` (secret ones are prompted for and never
+printed). They are merged under the account fields in the config mapping every plugin function
+receives, and a plugin command reads them from ``ctx.settings``. ``search`` and ``install_url``
+take no config, so settings do not reach them.
+
 A plugin is a ``Provider`` instance exported from an entry point. Users install one with
 ``ludex plugin add`` (see ``ludex.plugin_manager``) or any Python installer; do not declare ludex
 as a dependency. A provider declares the
@@ -147,6 +154,7 @@ class AcquireResult:
 class CommandContext:
     conn: sqlite3.Connection
     providers: Mapping[str, Provider]
+    settings: Mapping[str, str] = field(default_factory=dict)  # this plugin's ``Provider.settings`` values
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,6 +192,7 @@ class Provider:
     installed: Callable[[Mapping[str, str]], Iterable[str]] | None = None
     search: Callable[[str], Sequence[SearchHit]] | None = None
     commands: Sequence[Command] = ()
+    settings: tuple[ConfigField, ...] = ()
 
     @property
     def capabilities(self) -> tuple[str, ...]:

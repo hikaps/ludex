@@ -13,7 +13,8 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
-from .accounts import add_account, get_account, list_accounts, remove_account
+from .accounts import add_account, get_account, list_accounts, remove_account, update_account
+from .provider_settings import describe, field_for, get_values, set_value
 from .errors import LudexError
 from .game_settings import get_prefix_root, get_settings, pick_copy, set_prefix_root, update_settings
 from .plugin_manager import CHANNELS, add_plugin, list_plugins, remove_plugin, set_plugin_enabled, update_core, update_plugins
@@ -44,6 +45,11 @@ def _parser() -> argparse.ArgumentParser:
     add.add_argument("source")
     add.add_argument("name")
     add.add_argument("--set", dest="fields", action="append", default=[], metavar="KEY=VALUE", help="non-secret field value")
+    change = account_commands.add_parser("set", help="change an account's settings (its games are kept; import again afterwards)")
+    change.add_argument("name")
+    change.add_argument("--set", dest="fields", action="append", default=[], metavar="KEY=VALUE", help="non-secret field value")
+    change.add_argument("--secret", dest="secrets", action="append", default=[], metavar="KEY", help="read this secret field from the prompt or stdin")
+    change.add_argument("--unset", dest="unset", action="append", default=[], metavar="KEY", help="remove an optional field")
     account_commands.add_parser("ls", help="list accounts")
     remove = account_commands.add_parser("rm", help="remove an account")
     remove.add_argument("name")
@@ -107,11 +113,13 @@ def _parser() -> argparse.ArgumentParser:
     config = commands.add_parser(
         "config",
         help="show or change global settings: prefix_dir (folder for default Wine prefixes), "
-        "steam_shortcuts and heroic_sideload (yes/no; no removes those games from the library)",
+        "steam_shortcuts and heroic_sideload (yes/no; no removes those games from the library), "
+        "and <plugin>.<setting> for plugins that declare settings",
     )
-    config.add_argument("key", nargs="?", choices=sorted(_SETTINGS), help="setting to show or change")
-    config.add_argument("value", nargs="?", help="new value: an absolute folder, or yes/no")
-    config.add_argument("--reset", action="store_true", help="go back to the built-in value")
+    config.add_argument("key", nargs="?", help="setting to show or change")
+    config.add_argument("value", nargs="?", help="new value: an absolute folder, yes/no, or text")
+    config.add_argument("--reset", action="store_true", help="go back to the built-in value (removes a plugin setting)")
+    config.add_argument("--secret", action="store_true", help="read a secret plugin setting from the prompt or stdin")
 
     game = commands.add_parser("game", help="per-game launch settings (runner, prefix, executable, environment)")
     game_commands = game.add_subparsers(dest="game_command", metavar="action")
@@ -201,6 +209,7 @@ def _cmd_providers(args: argparse.Namespace) -> tuple[object, str]:
                 "capabilities": list(plugin.capabilities),
                 "commands": [{"name": c.name, "help": c.help} for c in plugin.commands],
                 "fields": [{"name": f.name, "help": f.help, "secret": f.secret, "optional": f.optional} for f in plugin.config_fields],
+                "settings": [{"name": f.name, "help": f.help, "secret": f.secret, "optional": f.optional} for f in plugin.settings],
             }
             for _, plugin in sorted(sources.items())
         ],
@@ -243,6 +252,30 @@ def _cmd_account_add(args: argparse.Namespace) -> tuple[object, str]:
             config[field.name] = value
     add_account(paths, args.name, plugin.name, config)
     return {"account": args.name, "source": plugin.name}, f"added account {args.name} ({plugin.name})"
+
+
+def _cmd_account_set(args: argparse.Namespace) -> tuple[object, str]:
+    if not (args.fields or args.secrets or args.unset):
+        raise LudexError("nothing_to_change", "give --set KEY=VALUE, --secret KEY or --unset KEY")
+    sources, problems = load_providers()
+    paths = state_paths()
+    account = get_account(paths, args.name)
+    plugin = _plugin(sources, problems, account.source)
+    by_name = {f.name: f for f in plugin.config_fields}
+    values: dict[str, str] = {}
+    for item in args.fields:
+        key, separator, value = item.partition("=")
+        if not separator:
+            raise LudexError("invalid_field", "--set expects KEY=VALUE")
+        if key in by_name and by_name[key].secret:
+            raise LudexError("secret_via_argv", f"field {key} is secret; use --secret {key}")
+        values[key] = value
+    for key in args.secrets:
+        if key not in by_name:
+            raise LudexError("unknown_field", f"source {plugin.name} has no field {key}")
+        values[key] = _read_value(f"{key} ({by_name[key].help}): ", True)
+    changed = update_account(paths, args.name, plugin.config_fields, values, args.unset)
+    return {"account": args.name, "changed": changed}, f"changed {', '.join(changed)} on account {args.name}; run: ludex import {args.name}"
 
 
 def _cmd_account_ls(args: argparse.Namespace) -> tuple[object, str]:
@@ -472,39 +505,66 @@ def _cmd_runners(args: argparse.Namespace) -> tuple[object, str]:
     return {"runners": runners}, "\n".join(lines) if lines else "no Proton builds found"
 
 
-_SETTINGS = {"prefix_dir", *SWITCHES}
 _YES_NO = {"yes": True, "on": True, "true": True, "no": False, "off": False, "false": False}
+
+
+def _plugin_setting(sources: dict[str, Provider], key: str) -> tuple[Provider, str]:
+    provider, _, name = key.partition(".")
+    plugin = sources.get(provider)
+    if plugin is None or not name or all(f.name != name for f in plugin.settings):
+        raise LudexError("invalid_setting", f"unknown setting {key}; see 'ludex config'")
+    return plugin, name
 
 
 def _cmd_config(args: argparse.Namespace) -> tuple[object, str]:
     paths = state_paths()
     default = paths.root / "prefixes"
-    changing = bool(args.value or args.reset)
-    if changing and not args.key:
+    sources, _ = load_providers()
+    key = args.key
+    core = {"prefix_dir", *SWITCHES}
+    changing = bool(args.value or args.reset or args.secret)
+    if changing and not key:
         raise LudexError("invalid_setting", "name the setting to change")
-    if args.value and args.reset:
-        raise LudexError("invalid_setting", "give a value or --reset, not both")
-    if args.reset and args.key in SWITCHES:
-        raise LudexError("invalid_setting", f"{args.key} has no default to reset to; set yes or no")
-    if args.value and args.key in SWITCHES and args.value.lower() not in _YES_NO:
-        raise LudexError("invalid_setting", f"{args.key} takes yes or no")
+    if sum(map(bool, (args.value, args.reset, args.secret))) > 1:
+        raise LudexError("invalid_setting", "give a value, --secret or --reset, one at a time")
+    if key is not None and key not in core:
+        plugin, name = _plugin_setting(sources, key)
+        field = field_for(plugin, name)
+        if args.value and field.secret:
+            raise LudexError("secret_via_argv", f"{key} is secret; use: ludex config {key} --secret")
+        if args.secret and not field.secret:
+            raise LudexError("invalid_setting", f"{key} is not a secret setting")
+        if changing:
+            value = None if args.reset else _read_value(f"{key} ({field.help}): ", True) if args.secret else args.value
+            set_value(paths, plugin, name, value)
+    else:
+        if args.secret:
+            raise LudexError("invalid_setting", f"{key} is not a secret setting")
+        if args.reset and key in SWITCHES:
+            raise LudexError("invalid_setting", f"{key} has no default to reset to; set yes or no")
+        if args.value and key in SWITCHES and args.value.lower() not in _YES_NO:
+            raise LudexError("invalid_setting", f"{key} takes yes or no")
     with writer_lock(paths.import_lock):
         conn = connect(paths.database)
         try:
-            if changing and args.key == "prefix_dir":
+            if changing and key == "prefix_dir":
                 set_prefix_root(conn, None if args.reset else args.value)
-            elif changing:
-                sources, _ = load_providers()
-                set_switch(paths, conn, sources, args.key, _YES_NO[args.value.lower()])
+            elif changing and key in SWITCHES:
+                set_switch(paths, conn, sources, key, _YES_NO[args.value.lower()])
             folder = get_prefix_root(conn, default)
         finally:
             conn.close()
-    data: dict[str, Any] = {"prefix_dir": str(folder), **{key: get_switch(paths, key) for key in sorted(SWITCHES)}}
-    lines = [f"prefix_dir: {folder}" + (" (default)" if folder == default else "")]
-    lines += [f"{key}: {'yes' if data[key] else 'no'}" for key in sorted(SWITCHES)]
-    if args.key:
-        lines = [line for line in lines if line.startswith(args.key + ":")]
-    return data, "\n".join(lines)
+    plugin_values = {name: describe(paths, plugin) for name, plugin in sorted(sources.items()) if plugin.settings}
+    data: dict[str, Any] = {
+        "prefix_dir": str(folder),
+        **{k: get_switch(paths, k) for k in sorted(SWITCHES)},
+        "plugins": plugin_values,
+    }
+    shown = {"prefix_dir": f"prefix_dir: {folder}" + (" (default)" if folder == default else "")}
+    shown.update({k: f"{k}: {'yes' if data[k] else 'no'}" for k in sorted(SWITCHES)})
+    for name, values in plugin_values.items():
+        shown.update({f"{name}.{k}": f"{name}.{k}: {v if v is not None else '(not set)'}" for k, v in values.items()})
+    return data, "\n".join(shown.values() if key is None else [shown[key]])
 
 
 def _settings_view(conn: Any, game_id: int, store: str | None) -> tuple[dict[str, Any], str]:
@@ -641,6 +701,7 @@ _HANDLERS = {
     ("providers", None): _cmd_providers,
     ("setup", None): _cmd_setup,
     ("account", "add"): _cmd_account_add,
+    ("account", "set"): _cmd_account_set,
     ("account", "ls"): _cmd_account_ls,
     ("account", "rm"): _cmd_account_rm,
     ("plugin", "add"): _cmd_plugin_add,
@@ -715,7 +776,7 @@ def _plugin_command(argv: list[str]) -> int | None:
         with writer_lock(paths.import_lock):
             conn = connect(paths.database)
             try:
-                result = command.run(CommandContext(conn, providers), words[2:])
+                result = command.run(CommandContext(conn, providers, get_values(paths, provider.name)), words[2:])
             except (LudexError, SystemExit):
                 raise
             except Exception as exc:
@@ -745,7 +806,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help(sys.stderr)
         return 2
     if args.command == "account" and args.account_command is None:
-        parser.error("account requires an action: add, ls or rm")
+        parser.error("account requires an action: add, set, ls or rm")
     if args.command == "plugin" and args.plugin_command is None:
         parser.error("plugin requires an action: add, ls, rm, enable, disable or update")
     if args.command == "game" and args.game_command is None:
