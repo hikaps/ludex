@@ -14,7 +14,7 @@ from . import __version__
 from .accounts import add_account, get_account, list_accounts, remove_account
 from .errors import LudexError
 from .launch import launch_game
-from .library import export_games, dismiss_review, get_game, list_games, list_review, merge_games, run_import
+from .library import remove_account_records, export_games, dismiss_review, get_game, list_games, list_review, merge_games, run_import
 from .loader import load_sources
 from .paths import state_paths
 from .plugins import SourcePlugin
@@ -178,8 +178,26 @@ def _cmd_account_ls(args: argparse.Namespace) -> tuple[object, str]:
 
 
 def _cmd_account_rm(args: argparse.Namespace) -> tuple[object, str]:
-    remove_account(state_paths(), args.name)
-    return {"account": args.name}, f"removed account {args.name}"
+    paths = state_paths()
+    try:
+        account = get_account(paths, args.name)
+    except LudexError as exc:
+        if exc.code != "account_not_found" or ":" in args.name:
+            raise
+        # an account already gone from the file can still have stale records: clear those
+        name, scope = args.name, {"keep_stores": [s for n, s in list_accounts(paths) if n == args.name]}
+    else:
+        remove_account(paths, args.name)
+        name, scope = account.name, {"store": account.source}
+    with writer_lock(paths.import_lock):
+        conn = connect(paths.database)
+        try:
+            changed = remove_account_records(conn, name, **scope)
+        finally:
+            conn.close()
+    if "keep_stores" in scope and not changed:
+        raise LudexError("account_not_found", f"account {args.name} not found")
+    return {"account": args.name, "records_removed": changed}, f"removed account {args.name}; marked {changed} records removed"
 
 
 def _import_one(conn: Any, paths: Any, sources: dict[str, SourcePlugin], problems: dict[str, str], name: str) -> dict[str, Any]:

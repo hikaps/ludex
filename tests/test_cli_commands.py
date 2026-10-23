@@ -4,6 +4,8 @@ import io
 import json
 import stat
 from pathlib import Path
+
+from ludex.paths import state_paths
 from typing import Any
 
 import pytest
@@ -182,7 +184,7 @@ def test_account_duplicate_invalid_and_remove(
     assert (code, json.loads(err)["error"]["code"]) == (1, "invalid_account_name")
 
     code, out, _ = run(capsys, "--json", "account", "rm", "main")
-    assert (code, json.loads(out)) == (0, {"ok": True, "data": {"account": "main"}})
+    assert (code, json.loads(out)) == (0, {"ok": True, "data": {"account": "main", "records_removed": 0}})
     code, err_out, err = run(capsys, "account", "rm", "main")
     assert code == 1 and err_out == "" and err.startswith("error: ")
 
@@ -450,3 +452,27 @@ def test_path_completion_lists_matches_and_marks_directories(tmp_path: Path) -> 
     (tmp_path / "gzip.txt").write_text("x")
     prefix = str(tmp_path / "g")
     assert [_complete_path(prefix, i) for i in range(3)] == [str(tmp_path / "games") + "/", str(tmp_path / "gzip.txt"), None]
+
+
+def test_account_rm_marks_its_records_removed_and_clears_orphans(
+    world: World, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.catalogs["me"] = [("1", "Alpha")]
+    add(capsys, monkeypatch, "main", "me")
+    add(capsys, monkeypatch, "other", "me")
+    assert run(capsys, "import", "--all")[0] == 0
+    code, out, _ = run(capsys, "account", "rm", "other")
+    assert code == 0 and "marked 1 records removed" in out
+    code, out, _ = run(capsys, "ls")
+    assert "Alpha" in out  # still owned through main
+    code, out, _ = run(capsys, "show", "1")
+    assert out.count("owned") == 1 and out.count("removed") == 1
+    # orphan: the account vanished from the file but its record remains
+    add(capsys, monkeypatch, "ghost", "me")
+    assert run(capsys, "import", "ghost")[0] == 0
+    path = state_paths().accounts
+    path.write_text(json.dumps({k: v for k, v in json.loads(path.read_text()).items() if k != "fake:ghost"}))
+    code, out, _ = run(capsys, "account", "rm", "ghost")
+    assert code == 0 and "marked 1 records removed" in out
+    code, _, err = run(capsys, "account", "rm", "ghost")
+    assert code == 1 and "not found" in err

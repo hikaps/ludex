@@ -317,3 +317,21 @@ def export_games(conn: sqlite3.Connection, *, include_removed: bool = False) -> 
             }
         )
     return list(games.values())
+
+
+def remove_account_records(
+    conn: sqlite3.Connection, account: str, *, store: str | None = None, keep_stores: Sequence[str] = ()
+) -> int:
+    """Mark an account's owned records removed (never deleted; a later import restores them).
+
+    ``store`` limits it to one source; ``keep_stores`` spares stores where the same account name is
+    still configured. Returns how many records changed.
+    """
+    marks = ",".join("?" * len(keep_stores))
+    with conn:
+        cursor = conn.execute(
+            f"UPDATE ownership SET removed = 1 WHERE account = ? AND removed = 0 AND (? IS NULL OR store = ?)"
+            + (f" AND store NOT IN ({marks})" if keep_stores else ""),
+            (account, store, store, *keep_stores),
+        )
+    return cursor.rowcount
