@@ -75,15 +75,17 @@ class LudexApp(App[None]):
     #filter:focus { background: $surface; }
     Footer { background: $background; }
     Footer .footer-key--key { color: $success; background: transparent; text-style: bold; }
-    #settings-table { padding: 0 1; }
-    #settings-table .section { text-style: bold; color: $success; margin-top: 1; }
+    #settings-table { padding: 0 1; scrollbar-size-vertical: 1; scrollbar-color: $panel-lighten-1; scrollbar-background: $background; }
+    #settings-table .section { text-style: bold; color: $success; margin-top: 1; width: 100%; border-bottom: solid $panel; }
     #settings-table .hint { color: $text-muted; width: 100%; }
-    #settings-table .row { height: 1; }
-    #settings-table .row:focus-within { background: $accent 40%; text-style: bold; }
-    #settings-table Input:focus { background: $accent 40%; text-style: bold; }
-    #settings-table Switch:focus { background: $accent; }
-    #settings-table Input { border: none; height: 1; padding: 0 1; }
+    #settings-table .row { height: 1; border-left: thick $background; }
+    #settings-table .row:focus-within { border-left: thick $success; background: $surface; }
+    #settings-table Input { border: none; border-left: thick $panel; height: 1; padding: 0 1; max-width: 80; background: $background; }
+    #settings-table Input:focus { border-left: thick $success; background: $surface; }
     #settings-table Switch { border: none; height: 1; padding: 0 1; background: transparent; }
+    #settings-table Switch > .switch--slider { color: $text-muted; background: $panel; }
+    #settings-table Switch.-on > .switch--slider { color: $success; }
+    #settings-table Switch:focus { background: transparent; }
     """
     BINDINGS = [
         Binding("tab", "next_tab", "Next tab", priority=True),
@@ -159,7 +161,10 @@ class LudexApp(App[None]):
         # tab, arrows and paging belong to the list only on the main screen; forms keep their own
         if len(self.screen_stack) > 1 and action not in {"quit"}:
             return False
-        if self._active() == "settings" and action in {"launch", "edit", "install", "focus_filter", "settings"}:
+        tab_actions = {"owned": {"install", "edit"}, "installed": {"launch", "edit"}, "search": {"install"}}
+        if action in {"launch", "edit", "install"}:  # what you can do depends on the tab
+            return action in tab_actions.get(self._active(), set())
+        if self._active() == "settings" and action in {"focus_filter", "settings"}:
             return False
         if action == "enter_list":  # only from the list; inputs and switches keep their own Enter
             return self._active() != "settings" and (self.focused is None or isinstance(self.focused, (DataTable, Tabs)))
@@ -170,6 +175,7 @@ class LudexApp(App[None]):
 
     def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
         name = event.tab.id or "owned"
+        self.refresh_bindings()
         self.query_one(ContentSwitcher).current = f"{name}-table"
         self.query_one("#main").set_class(name == "settings", "-settings")
         box = self.query_one("#filter", Input)
@@ -177,6 +183,7 @@ class LudexApp(App[None]):
         box.placeholder = "store search: type a name, Enter" if name == "search" else "filter: type, then Enter or Esc"
         (self.query_one("#folder") if name == "settings" else self._table()).focus()
         if name == "settings":
+            self._status("")
             self.query_one("#detail", Static).update("")
         else:
             self._show_hint()
@@ -451,8 +458,23 @@ class LudexApp(App[None]):
             )
         )
 
+    def _install_hit(self) -> None:
+        table = self.query_one("#search-table", DataTable)
+        hit = self._hits.get(table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value or "") if table.row_count else None
+        if hit is None:
+            return
+        plugin = self._sources.get(hit["store"])
+        try:  # the store client's own install link when the plugin has one, else the store page
+            open_url(plugin.install_url(hit["store_id"]) if plugin and plugin.install_url else hit["url"], f"the {hit['store']} client")
+            self.notify(f"asked the client to install {hit['title']}")
+        except LudexError as exc:
+            self.notify(exc.message, severity="error")
+
     def action_install(self) -> None:
-        game_id = None if self._active() in {"search", "settings"} else self._current_id()
+        if self._active() == "search":
+            self._install_hit()
+            return
+        game_id = None if self._active() == "settings" else self._current_id()
         if game_id is None:
             return
         try:
@@ -469,16 +491,6 @@ class LudexApp(App[None]):
 
     def action_launch(self) -> None:
         if self._active() == "settings":
-            return
-        if self._active() == "search":
-            table = self.query_one("#search-table", DataTable)
-            hit = self._hits.get(table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value or "") if table.row_count else None
-            if hit is not None:
-                try:
-                    open_url(hit["url"], "the store page")
-                    self.notify(f"opened {hit['title']}")
-                except LudexError as exc:
-                    self.notify(exc.message, severity="error")
             return
         game_id = self._current_id()
         if game_id is None:
