@@ -13,8 +13,8 @@ from rich.markup import escape
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, VerticalScroll
-from textual.widgets import ContentSwitcher, DataTable, Footer, Header, Input, Label, Static, Switch, Tab, Tabs
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.widgets import ContentSwitcher, DataTable, Footer, Input, Label, Static, Switch, Tab, Tabs
 
 from .accounts import get_account, list_accounts, update_account
 from .errors import LudexError
@@ -56,23 +56,27 @@ def _stores_text(stores) -> Text:
 class LudexApp(App[None]):
     TITLE = "ludex"
     CSS = """
-    #filter { border: none; height: 1; background: $surface; padding: 0 1; margin-bottom: 1; }
-    #filter:focus { background: $accent 40%; }
     Screen { background: $background; }
-    Header { background: $primary; color: $text; }
-    Tabs { background: $background; }
-    Tab { background: $background; }
-    Tab { color: $text-muted; }
-    Tab.-active { color: $accent; text-style: bold; }
-    Underline > .underline--bar { color: $accent; background: $primary 30%; }
-    Footer { background: $surface; }
-    Footer .footer-key--key { color: $accent; background: transparent; text-style: bold; }
+    #main { height: 1fr; }
+    #left { width: 45%; border: round $panel-lighten-2; border-title-color: $text-muted; border-subtitle-color: $text-muted; }
+    #left:focus-within { border: round $success; border-title-color: $success; border-title-style: bold; }
+    #detail { width: 1fr; height: 100%; border: round $panel-lighten-2; border-title-color: $text-muted; padding: 0 1; }
+    #main.-settings #left { width: 100%; }
+    #main.-settings #detail { display: none; }
+    Tabs { background: $background; height: 1; }
+    Tabs Underline { display: none; }
+    Tab { background: $background; color: $text-muted; padding: 0 1; }
+    Tab.-active { color: $success; text-style: bold; }
     #views { height: 1fr; }
     DataTable { height: 100%; background: $background; }
-    DataTable > .datatable--header { background: $primary 40%; color: $text; text-style: bold; }
-    #detail { height: auto; min-height: 3; max-height: 40%; padding: 0 2; margin: 0 1; border: round $primary-darken-1; background: $background; }
-    #settings-table { padding: 1 2; }
-    #settings-table .section { text-style: bold; color: $accent; margin-top: 1; }
+    DataTable > .datatable--header { background: $background; color: $text-muted; text-style: bold; }
+    DataTable > .datatable--cursor { background: $primary; color: $text; text-style: bold; }
+    #filter { border: none; height: 1; background: $background; padding: 0 1; }
+    #filter:focus { background: $surface; }
+    Footer { background: $background; }
+    Footer .footer-key--key { color: $success; background: transparent; text-style: bold; }
+    #settings-table { padding: 0 1; }
+    #settings-table .section { text-style: bold; color: $success; margin-top: 1; }
     #settings-table .hint { color: $text-muted; width: 100%; }
     #settings-table .row { height: 1; }
     #settings-table .row:focus-within { background: $accent 40%; text-style: bold; }
@@ -124,19 +128,25 @@ class LudexApp(App[None]):
         self._conn = None
 
     def compose(self) -> ComposeResult:
-        yield Header()
-        yield Tabs(Tab("Owned", id="owned"), Tab("Installed", id="installed"), Tab("Search", id="search"), Tab("Settings", id="settings"), id="tabs")
-        yield Input(id="filter")
-        with ContentSwitcher(id="views", initial="owned-table"):
-            yield DataTable(id="owned-table", cursor_type="row")
-            yield DataTable(id="installed-table", cursor_type="row")
-            yield DataTable(id="search-table", cursor_type="row")
-            with VerticalScroll(id="settings-table"):
-                yield from self._settings_widgets()
-        yield Static("", id="detail")
+        with Horizontal(id="main"):
+            with Vertical(id="left"):
+                yield Tabs(Tab("Owned", id="owned"), Tab("Installed", id="installed"), Tab("Search", id="search"), Tab("Settings", id="settings"), id="tabs")
+                with ContentSwitcher(id="views", initial="owned-table"):
+                    yield DataTable(id="owned-table", cursor_type="row", show_header=False)
+                    yield DataTable(id="installed-table", cursor_type="row", show_header=False)
+                    yield DataTable(id="search-table", cursor_type="row")
+                    with VerticalScroll(id="settings-table"):
+                        yield from self._settings_widgets()
+                yield Input(id="filter")
+            yield Static("", id="detail")
         yield Footer()
 
+    def _status(self, text: str) -> None:
+        self.query_one("#left").border_subtitle = text
+
     def on_mount(self) -> None:
+        self.query_one("#left").border_title = "ludex"
+        self.query_one("#detail").border_title = "Detail"
         self.theme = "tokyo-night"  # colourful default; ctrl+p opens the theme picker
         self._conn = connect(self._database)
         for table in self.query(DataTable):
@@ -161,9 +171,10 @@ class LudexApp(App[None]):
     def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
         name = event.tab.id or "owned"
         self.query_one(ContentSwitcher).current = f"{name}-table"
+        self.query_one("#main").set_class(name == "settings", "-settings")
         box = self.query_one("#filter", Input)
         box.display = name != "settings"
-        box.placeholder = "type a game name, Enter searches the stores (Esc: back to the list)" if name == "search" else "type to filter (Enter or Esc: back to the list)"
+        box.placeholder = "store search: type a name, Enter" if name == "search" else "filter: type, then Enter or Esc"
         (self.query_one("#folder") if name == "settings" else self._table()).focus()
         if name == "settings":
             self.query_one("#detail", Static).update("")
@@ -203,7 +214,7 @@ class LudexApp(App[None]):
                 mark = Text("●", style="#9ece6a") if game["id"] in installed_ids else Text(" ")
                 table.add_row(mark, game["title"], _stores_text(game["stores"]), key=str(game["id"]))
             counts.append(f"{len(games)}{'+' if len(games) == 500 else ''} {name}")
-        self.sub_title = ", ".join(reversed(counts))
+        self._status(", ".join(reversed(counts)))
         self._show_hint()
 
     def _show_hint(self) -> None:
@@ -238,7 +249,7 @@ class LudexApp(App[None]):
             query = event.value.strip()
             if query and query != self._searched:
                 self._searched = query
-                self.sub_title = f"searching the stores for {query!r}..."
+                self._status(f"searching the stores for {query!r}...")
                 owned = owned_keys(self._conn)
                 self.run_worker(lambda: self._search(query, owned), thread=True, exclusive=True)
                 return
@@ -254,7 +265,7 @@ class LudexApp(App[None]):
         table.clear()
         for key, h in self._hits.items():
             table.add_row(Text(h["store"], style=_store_color(h["store"])), h["title"], Text(h["price"] or "-", style="#e0af68"), Text("✔ owned", style="bold #9ece6a") if h["owned"] else "", key=key)
-        self.sub_title = f"{len(hits)} results for {query!r}"
+        self._status(f"{len(hits)} results for {query!r}")
         self.query_one("#detail", Static).update("" if hits else f"[dim]No results for {escape(query)!r}.[/]")
         if self._active() == "search" and self.focused is self.query_one("#filter"):
             table.focus()
@@ -277,6 +288,8 @@ class LudexApp(App[None]):
             + ("[b #f7768e]removed[/]" if o["removed"] else "[b #9ece6a]owned[/]")
             for o in game["ownership"]
         ]
+        if any((o["store"], str(o["store_id"])) in self._keys for o in game["ownership"]):
+            lines.append("[#9ece6a]● installed[/]")
         self.query_one("#detail", Static).update("\n".join(lines))
 
     def action_clear(self) -> None:
