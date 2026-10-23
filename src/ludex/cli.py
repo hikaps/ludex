@@ -10,7 +10,7 @@ from typing import Any
 from . import __version__
 from .accounts import add_account, get_account, list_accounts, remove_account
 from .errors import LudexError
-from .library import get_game, list_games, run_import
+from .library import dismiss_review, get_game, list_games, list_review, merge_games, run_import
 from .loader import load_sources
 from .paths import state_paths
 from .plugins import SourcePlugin
@@ -53,6 +53,13 @@ def _parser() -> argparse.ArgumentParser:
 
     show = commands.add_parser("show", help="show one game")
     show.add_argument("id", type=int)
+
+    review = commands.add_parser("review", help="list title matches that need a decision")
+    review.add_argument("--dismiss", type=int, metavar="ID", help="keep this item's game separate and drop it from the list")
+
+    merge = commands.add_parser("merge", help="merge game DROP into game KEEP")
+    merge.add_argument("keep", type=int)
+    merge.add_argument("drop", type=int)
     return parser
 
 
@@ -245,7 +252,38 @@ def _cmd_show(args: argparse.Namespace) -> tuple[object, str]:
     return game, "\n".join(lines)
 
 
+def _cmd_review(args: argparse.Namespace) -> tuple[object, str]:
+    paths = state_paths()
+    with writer_lock(paths.import_lock):
+        conn = connect(paths.database)
+        try:
+            if args.dismiss is not None:
+                dismiss_review(conn, args.dismiss)
+                return {"dismissed": args.dismiss}, f"dismissed review item {args.dismiss}"
+            items = list_review(conn)
+        finally:
+            conn.close()
+    lines = []
+    for item in items:
+        lines.append(f"{item['id']}  game {item['game_id']}: {item['title']} [{item['store']}] may be the same as:")
+        lines += [f"    game {c['id']}: {c['title']}" for c in item["candidates"]]
+    return {"items": items}, "\n".join(lines) if lines else "nothing to review"
+
+
+def _cmd_merge(args: argparse.Namespace) -> tuple[object, str]:
+    paths = state_paths()
+    with writer_lock(paths.import_lock):
+        conn = connect(paths.database)
+        try:
+            moved = merge_games(conn, args.keep, args.drop)
+        finally:
+            conn.close()
+    return {"keep": args.keep, "drop": args.drop, "moved": moved}, f"merged game {args.drop} into {args.keep} ({moved} records)"
+
+
 _HANDLERS = {
+    ("review", None): _cmd_review,
+    ("merge", None): _cmd_merge,
     ("sources", None): _cmd_sources,
     ("setup", None): _cmd_setup,
     ("account", "add"): _cmd_account_add,

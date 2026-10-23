@@ -9,7 +9,7 @@ from ludex.storage import SCHEMA_VERSION, connect, normalize_title, utc_now, wri
 def test_fresh_database_has_schema_version_and_wal(tmp_path):
     conn = connect(tmp_path / "db.sqlite3")
     version = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0]
-    assert version == str(SCHEMA_VERSION) == "1"
+    assert version == str(SCHEMA_VERSION)
     assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
     assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     conn.close()
@@ -75,3 +75,20 @@ def test_writer_lock_released_after_exception(tmp_path):
     with writer_lock(lock):
         pass
     assert (lock.stat().st_mode & 0o777) == 0o600
+
+
+def test_schema_v1_database_is_migrated_to_add_review_queue(tmp_path):
+    import sqlite3
+    from ludex import storage
+
+    path = tmp_path / "old.sqlite3"
+    raw = sqlite3.connect(path)
+    for statement in storage._SCHEMA_V1:
+        raw.execute(statement)
+    raw.execute("INSERT INTO meta(key, value) VALUES ('schema_version', '1')")
+    raw.commit()
+    raw.close()
+    conn = storage.connect(path)
+    assert conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0] == "2"
+    assert conn.execute("SELECT COUNT(*) FROM review_queue").fetchone()[0] == 0
+    conn.close()

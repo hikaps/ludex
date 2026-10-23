@@ -107,8 +107,8 @@ def test_removal_is_isolated_per_account(conn):
     assert summary.removed == 1
     removed = {r["account"]: r["removed"] for r in conn.execute("SELECT account, removed FROM ownership")}
     assert removed == {"a": 1, "b": 0}
-    # same key in another account is a separate ownership with its own game
-    assert counts(conn) == (2, 2)
+    # same key in another account is a separate ownership of the same game
+    assert counts(conn) == (1, 2)
 
 
 def test_failing_fetch_leaves_state_untouched(conn):
@@ -297,9 +297,10 @@ def test_removed_flag_requires_every_ownership_removed(conn):
     import_account(conn, "a", [g("1", "Alpha")])
     import_account(conn, "b", [g("1", "Alpha")])
     import_account(conn, "a", [])
-    # separate games per account, so each has its own flag
-    flags = {x["accounts"][0]: x["removed"] for x in list_games(conn, include_removed=True)}
-    assert flags == {"a": True, "b": False}
+    # one game owned through both accounts; it is removed only when every ownership is
+    assert [x["removed"] for x in list_games(conn, include_removed=True)] == [False]
+    import_account(conn, "b", [])
+    assert [x["removed"] for x in list_games(conn, include_removed=True)] == [True]
 
 
 def test_get_game_returns_ownership_records(conn):
@@ -338,3 +339,55 @@ def test_run_import_rejects_bare_list(conn):
     with pytest.raises(LudexError) as info:
         run_import(conn, "main", SourcePlugin("fake", "fake", (), lambda config: [g("1", "Alpha")]), {})
     assert info.value.code == "source_failed"
+
+
+def _games(conn):
+    return [tuple(r) for r in conn.execute("SELECT o.store, o.account, o.game_id FROM ownership o ORDER BY o.id")]
+
+
+def test_same_title_in_another_store_joins_one_game(conn):
+    import_account(conn, "s", [g("1", "Hades")])
+    import_account(conn, "e", [g("a", "HADES!", store="epic")])
+    assert _games(conn) == [("steam", "s", 1), ("epic", "e", 1)]
+    assert conn.execute("SELECT COUNT(*) FROM review_queue").fetchone()[0] == 0
+
+
+def test_same_store_id_under_another_account_joins_even_if_title_differs(conn):
+    import_account(conn, "local", [g("10", "Counter-Strike")])
+    import_account(conn, "api", [g("10", "Counter Strike: Global")])
+    assert [r[2] for r in _games(conn)] == [1, 1]
+
+
+def test_second_game_with_same_title_in_same_store_is_queued_not_merged(conn):
+    import_account(conn, "s", [g("1", "Doom"), g("2", "DOOM")])
+    assert [r[2] for r in _games(conn)] == [1, 2]
+    items = library.list_review(conn)
+    assert [(i["game_id"], [c["id"] for c in i["candidates"]]) for i in items] == [(2, [1])]
+
+
+def test_ambiguous_title_across_stores_is_queued(conn):
+    import_account(conn, "s", [g("1", "Doom"), g("2", "Doom ")])
+    import_account(conn, "e", [g("a", "Doom", store="epic")])
+    assert [r[2] for r in _games(conn)] == [1, 2, 3]
+    assert [c["id"] for c in library.list_review(conn)[-1]["candidates"]] == [1, 2]
+
+
+def test_reimport_keeps_manual_merge(conn):
+    import_account(conn, "s", [g("1", "Doom"), g("2", "DOOM")])
+    assert library.merge_games(conn, 1, 2) == 1
+    assert library.list_review(conn) == []
+    import_account(conn, "s", [g("1", "Doom"), g("2", "DOOM")])
+    assert [r[2] for r in _games(conn)] == [1, 1]
+    assert [x["id"] for x in list_games(conn)] == [1]
+
+
+def test_merge_validates_and_dismiss(conn):
+    import_account(conn, "s", [g("1", "Doom"), g("2", "DOOM")])
+    for args, code in [((1, 1), "invalid_merge"), ((1, 9), "game_not_found")]:
+        with pytest.raises(LudexError) as info:
+            library.merge_games(conn, *args)
+        assert info.value.code == code
+    library.dismiss_review(conn, 1)
+    assert library.list_review(conn) == []
+    with pytest.raises(LudexError):
+        library.dismiss_review(conn, 1)
