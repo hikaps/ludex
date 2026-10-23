@@ -207,13 +207,14 @@ class LudexApp(App[None]):
             self.notify(f"{name}: {reason}", severity="warning")
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        key = event.row_key.value if event.row_key is not None else None  # None: the table is empty
         if event.data_table.id == "search-table":
-            hit = self._hits.get(event.row_key.value or "")
+            hit = self._hits.get(key or "")
             self.query_one("#detail", Static).update(f"{hit['title']}\n  {hit['url']}" if hit else "")
             return
-        if event.row_key.value is None:
+        if key is None:
             return
-        game = get_game(self._conn, int(event.row_key.value))  # the event's own row, not the active tab's cursor
+        game = get_game(self._conn, int(key))  # the event's own row, not the active tab's cursor
         lines = [game["title"]] + [
             f"  {o['store']}:{o['store_id']}  account={o['account']}  {'removed' if o['removed'] else 'owned'}"
             for o in game["ownership"]
