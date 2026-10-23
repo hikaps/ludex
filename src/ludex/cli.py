@@ -26,6 +26,7 @@ from .loader import load_providers
 from .paths import state_paths
 from .plugins import CommandContext, CommandResult, Provider
 from .storage import connect, writer_lock
+from .switches import SWITCHES, get_switch, set_switch
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -86,9 +87,13 @@ def _parser() -> argparse.ArgumentParser:
 
     commands.add_parser("runners", help="list detected Proton builds")
 
-    config = commands.add_parser("config", help="show or change global settings (prefix_dir: folder default Wine prefixes are created in)")
+    config = commands.add_parser(
+        "config",
+        help="show or change global settings: prefix_dir (folder for default Wine prefixes), "
+        "steam_shortcuts and heroic_sideload (yes/no; no removes those games from the library)",
+    )
     config.add_argument("key", nargs="?", choices=sorted(_SETTINGS), help="setting to show or change")
-    config.add_argument("value", nargs="?", help="new value (an absolute folder for prefix_dir)")
+    config.add_argument("value", nargs="?", help="new value: an absolute folder, or yes/no")
     config.add_argument("--reset", action="store_true", help="go back to the built-in value")
 
     game = commands.add_parser("game", help="per-game launch settings (runner, prefix, executable, environment)")
@@ -408,26 +413,39 @@ def _cmd_runners(args: argparse.Namespace) -> tuple[object, str]:
     return {"runners": runners}, "\n".join(lines) if lines else "no Proton builds found"
 
 
-_SETTINGS = {"prefix_dir"}
+_SETTINGS = {"prefix_dir", *SWITCHES}
+_YES_NO = {"yes": True, "on": True, "true": True, "no": False, "off": False, "false": False}
 
 
 def _cmd_config(args: argparse.Namespace) -> tuple[object, str]:
     paths = state_paths()
     default = paths.root / "prefixes"
-    if (args.value or args.reset) and not args.key:
+    changing = bool(args.value or args.reset)
+    if changing and not args.key:
         raise LudexError("invalid_setting", "name the setting to change")
     if args.value and args.reset:
         raise LudexError("invalid_setting", "give a value or --reset, not both")
+    if args.reset and args.key in SWITCHES:
+        raise LudexError("invalid_setting", f"{args.key} has no default to reset to; set yes or no")
+    if args.value and args.key in SWITCHES and args.value.lower() not in _YES_NO:
+        raise LudexError("invalid_setting", f"{args.key} takes yes or no")
     with writer_lock(paths.import_lock):
         conn = connect(paths.database)
         try:
-            if args.value or args.reset:
+            if changing and args.key == "prefix_dir":
                 set_prefix_root(conn, None if args.reset else args.value)
+            elif changing:
+                sources, _ = load_providers()
+                set_switch(paths, conn, sources, args.key, _YES_NO[args.value.lower()])
             folder = get_prefix_root(conn, default)
         finally:
             conn.close()
-    data = {"prefix_dir": str(folder)}
-    return data, f"prefix_dir: {folder}" + ("" if folder != default else " (default)")
+    data: dict[str, Any] = {"prefix_dir": str(folder), **{key: get_switch(paths, key) for key in sorted(SWITCHES)}}
+    lines = [f"prefix_dir: {folder}" + (" (default)" if folder == default else "")]
+    lines += [f"{key}: {'yes' if data[key] else 'no'}" for key in sorted(SWITCHES)]
+    if args.key:
+        lines = [line for line in lines if line.startswith(args.key + ":")]
+    return data, "\n".join(lines)
 
 
 def _settings_view(conn: Any, game_id: int, store: str | None) -> tuple[dict[str, Any], str]:
@@ -503,7 +521,7 @@ def _cmd_tui(args: argparse.Namespace) -> tuple[object, str]:
     LudexApp(
         paths.database, sources, lambda: installed_keys(paths, sources)[0],
         lambda store, account: get_account(paths, f"{store}:{account}").config,
-        paths.root / "prefixes", paths.import_lock,
+        paths.root / "prefixes", paths.import_lock, paths,
     ).run()
     return {}, ""
 

@@ -207,3 +207,42 @@ def test_tab_completes_a_path_then_moves_on(tmp_path):
             assert app.focused is app.screen.query_one("#executable", Input)
 
     asyncio.run(scenario())
+
+
+def test_settings_switch_needs_confirmation_before_removing_games(tmp_path):
+    from textual.widgets import Switch
+
+    from ludex.accounts import add_account, list_accounts
+    from ludex.paths import StatePaths
+    from ludex.plugins import FetchResult, Provider
+    from ludex.library import run_import
+
+    root = tmp_path / "state"
+    root.mkdir(mode=0o700)
+    paths = StatePaths(root, root / "library.sqlite3", root / "accounts.json", root / "import.lock")
+    provider = Provider("shortcuts", "s", (), lambda c: FetchResult([OwnedGame("shortcuts", "1", "Hades")], True, None))
+    add_account(paths, "default", "shortcuts", {})
+    conn = connect(paths.database)
+    run_import(conn, "default", provider, {})
+    conn.close()
+
+    async def scenario():
+        app = LudexApp(paths.database, {"shortcuts": provider}, prefix_root=root / "p", paths=paths)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert app.query_one("#owned-table", DataTable).row_count == 1
+            await pilot.press("s")
+            await pilot.pause()
+            screen = app.screen
+            assert screen.query_one("#steam_shortcuts", Switch).value is True
+            screen.query_one("#steam_shortcuts", Switch).value = False
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+            assert app.screen is screen and list_accounts(paths)  # asked first, nothing deleted
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+            assert app.screen is not screen
+            assert app.query_one("#owned-table", DataTable).row_count == 0
+
+    asyncio.run(scenario())
+    assert list_accounts(paths) == []

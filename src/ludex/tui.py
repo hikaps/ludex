@@ -18,9 +18,11 @@ from .game_settings import get_prefix_root, get_settings, set_prefix_root, updat
 from .launch import install_game, launch_game, open_url
 from .find import find_games, owned_keys
 from .library import get_game, list_games
+from .paths import StatePaths
 from .plugins import Provider
 from .runners import find_runners
 from .storage import connect, writer_lock
+from .switches import SWITCHES, get_switch, set_switch
 from .tui_settings import GameSettingsScreen, SettingsScreen
 
 
@@ -49,6 +51,7 @@ class LudexApp(App[None]):
         config_for: Callable[[str, str], Mapping[str, str]] | None = None,
         prefix_root: Path | None = None,
         lock: Path | None = None,
+        paths: StatePaths | None = None,
     ) -> None:
         super().__init__()
         self._database = database
@@ -57,6 +60,7 @@ class LudexApp(App[None]):
         self._config_for = config_for
         self._prefix_root = prefix_root
         self._lock = lock
+        self._paths = paths
         self._keys: set[tuple[str, str]] = set()
         self._hits: dict[str, dict] = {}
         self._conn = None
@@ -185,12 +189,21 @@ class LudexApp(App[None]):
 
     def action_settings(self) -> None:
         default = self._prefix_root or Path.home() / "prefixes"
+        keys = sorted(SWITCHES) if self._paths else []
+        current = {key: get_switch(self._paths, key) for key in keys}
 
-        def save(value: str | None) -> None:
-            self._write(lambda: set_prefix_root(self._conn, value))
-            self.notify(f"prefix folder: {get_prefix_root(self._conn, default)}")
+        def save(folder: str | None, wanted: dict[str, bool]) -> None:
+            def apply() -> None:
+                set_prefix_root(self._conn, folder)
+                for key, on in wanted.items():
+                    if on != current[key]:
+                        set_switch(self._paths, self._conn, self._sources, key, on)
 
-        self.push_screen(SettingsScreen(get_prefix_root(self._conn, default), default, save))
+            self._write(apply)
+            self.notify(f"saved settings; prefix folder: {get_prefix_root(self._conn, default)}")
+            self.action_reload()
+
+        self.push_screen(SettingsScreen(get_prefix_root(self._conn, default), default, current, save))
 
     def action_edit(self) -> None:
         game_id = None if self.query_one(TabbedContent).active == "search" else self._current_id()
