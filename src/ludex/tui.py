@@ -38,17 +38,38 @@ _SOURCE_LABELS = {
 }
 
 
+_STORE_COLORS = {"steam": "#66c0f4", "epic": "#e8e8e8", "gog": "#b57edc", "heroic": "#4dd0e1", "shortcuts": "#ffb454", "local": "#9ece6a"}
+_FALLBACK = ("#f7768e", "#e0af68", "#7dcfff", "#bb9af7", "#73daca")
+
+
+def _store_color(store: str) -> str:
+    return _STORE_COLORS.get(store) or _FALLBACK[sum(map(ord, store)) % len(_FALLBACK)]
+
+
+def _stores_text(stores) -> Text:
+    out = Text()
+    for i, store in enumerate(stores):
+        out.append(", " if i else "").append(store, style=_store_color(store))
+    return out
+
+
 class LudexApp(App[None]):
     TITLE = "ludex"
     CSS = """
     #filter { border: none; height: 1; background: $boost; padding: 0 1; margin-bottom: 1; }
     #filter:focus { background: $accent 40%; }
+    Header { background: $primary; color: $text; }
+    Tab { color: $text-muted; }
+    Tab.-active { color: $accent; text-style: bold; }
+    Underline > .underline--bar { color: $accent; background: $primary 30%; }
+    Footer { background: $panel; }
+    Footer .footer-key--key { color: $accent; background: transparent; text-style: bold; }
     #views { height: 1fr; }
     DataTable { height: 100%; }
-    DataTable > .datatable--header { background: $primary-darken-2; text-style: bold; }
+    DataTable > .datatable--header { background: $primary 40%; color: $text; text-style: bold; }
     #detail { height: auto; min-height: 3; max-height: 40%; padding: 0 2; margin: 0 1; border: round $primary-darken-1; background: $panel; }
     #settings-table { padding: 1 2; }
-    #settings-table .section { text-style: bold; margin-top: 1; }
+    #settings-table .section { text-style: bold; color: $accent; margin-top: 1; }
     #settings-table .hint { color: $text-muted; width: 100%; }
     #settings-table .row { height: 1; }
     #settings-table .row:focus-within { background: $accent 40%; text-style: bold; }
@@ -64,7 +85,8 @@ class LudexApp(App[None]):
         Binding("up", "cursor('up')", "Up", show=False, priority=True),
         Binding("pagedown", "cursor('page_down')", "Page down", show=False, priority=True),
         Binding("pageup", "cursor('page_up')", "Page up", show=False, priority=True),
-        Binding("enter,slash", "focus_filter", "Search"),
+        Binding("enter", "enter_list", "Search", priority=True),  # priority: an empty table swallows Enter
+        Binding("slash", "focus_filter", "Search", show=False),
         Binding("escape", "clear", "Back to list", show=False),
         Binding("l", "launch", "Launch"),
         Binding("e", "edit", "Game settings"),
@@ -112,6 +134,7 @@ class LudexApp(App[None]):
         yield Footer()
 
     def on_mount(self) -> None:
+        self.theme = "tokyo-night"  # colourful default; ctrl+p opens the theme picker
         self._conn = connect(self._database)
         for table in self.query(DataTable):
             table.add_columns(*(("store", "title", "price", "owned") if table.id == "search-table" else ("", "title", "stores")))
@@ -125,6 +148,8 @@ class LudexApp(App[None]):
             return False
         if self._active() == "settings" and action in {"launch", "edit", "install", "focus_filter", "settings"}:
             return False
+        if action == "enter_list":  # only from the list; inputs and switches keep their own Enter
+            return self._active() != "settings" and (self.focused is None or isinstance(self.focused, (DataTable, Tabs)))
         return True
 
     def _active(self) -> str:
@@ -172,8 +197,8 @@ class LudexApp(App[None]):
             if name == "installed":
                 installed_ids = {g["id"] for g in games}
             for game in games:
-                mark = Text("●", style="green") if game["id"] in installed_ids else Text(" ")
-                table.add_row(mark, game["title"], ", ".join(game["stores"]), key=str(game["id"]))
+                mark = Text("●", style="#9ece6a") if game["id"] in installed_ids else Text(" ")
+                table.add_row(mark, game["title"], _stores_text(game["stores"]), key=str(game["id"]))
             counts.append(f"{len(games)}{'+' if len(games) == 500 else ''} {name}")
         self.sub_title = ", ".join(reversed(counts))
         self._show_hint()
@@ -225,7 +250,7 @@ class LudexApp(App[None]):
         table = self.query_one("#search-table", DataTable)
         table.clear()
         for key, h in self._hits.items():
-            table.add_row(h["store"], h["title"], h["price"] or "-", "yes" if h["owned"] else "", key=key)
+            table.add_row(Text(h["store"], style=_store_color(h["store"])), h["title"], Text(h["price"] or "-", style="#e0af68"), Text("✔ owned", style="bold #9ece6a") if h["owned"] else "", key=key)
         self.sub_title = f"{len(hits)} results for {query!r}"
         self.query_one("#detail", Static).update("" if hits else f"[dim]No results for {escape(query)!r}.[/]")
         if self._active() == "search" and self.focused is self.query_one("#filter"):
@@ -238,15 +263,15 @@ class LudexApp(App[None]):
         if event.data_table.id == "search-table":
             hit = self._hits.get(key or "")
             self.query_one("#detail", Static).update(
-                f"[b]{escape(hit['title'])}[/]\n[dim]{escape(hit['url'])}[/]" + (f"\n{escape(hit['price'])}" if hit["price"] else "") if hit else ""
+                f"[b #7aa2f7]{escape(hit['title'])}[/]\n[dim]{escape(hit['url'])}[/]" + (f"\n[#e0af68]{escape(hit['price'])}[/]" if hit["price"] else "") if hit else ""
             )
             return
         if key is None:
             return
         game = get_game(self._conn, int(key))  # the event's own row, not the active tab's cursor
-        lines = [f"[b]{escape(game['title'])}[/]"] + [
-            f"  {escape(o['store'])}:{escape(str(o['store_id']))}  [dim]{escape(str(o['account']))}[/]  "
-            + ("[red]removed[/]" if o["removed"] else "[green]owned[/]")
+        lines = [f"[b #7aa2f7]{escape(game['title'])}[/]"] + [
+            f"  [{_store_color(o['store'])}]{escape(o['store'])}[/]:{escape(str(o['store_id']))}  [dim]{escape(str(o['account']))}[/]  "
+            + ("[b #f7768e]removed[/]" if o["removed"] else "[b #9ece6a]owned[/]")
             for o in game["ownership"]
         ]
         self.query_one("#detail", Static).update("\n".join(lines))
@@ -255,6 +280,9 @@ class LudexApp(App[None]):
         self.query_one("#filter", Input).value = ""
         if self._active() != "settings":
             self._table().focus()
+
+    def action_enter_list(self) -> None:
+        self.action_focus_filter()  # Enter goes to the search box; l launches
 
     def action_focus_filter(self) -> None:
         self.query_one("#filter", Input).focus()
@@ -265,9 +293,6 @@ class LudexApp(App[None]):
     def action_reload(self) -> None:
         self._keys = self._installed()
         self._reload()
-
-    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        self.action_focus_filter()  # Enter on a row goes to the search box; l launches
 
     def _prefix(self) -> Path | None:
         return get_prefix_root(self._conn, self._prefix_root) if self._prefix_root else None

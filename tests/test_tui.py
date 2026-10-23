@@ -65,7 +65,7 @@ def test_search_tab_queries_providers_marks_owned_and_enter_opens_the_page(tmp_p
             await app.workers.wait_for_complete()
             await pilot.pause()
             table = app.query_one("#search-table", DataTable)
-            rows = [tuple(table.get_row_at(i)) for i in range(table.row_count)]
+            rows = [tuple(str(c) for c in table.get_row_at(i)) for i in range(table.row_count)]
             assert app.focused is table  # results take the focus
             await pilot.press("down", "l")
             await pilot.pause()
@@ -73,7 +73,7 @@ def test_search_tab_queries_providers_marks_owned_and_enter_opens_the_page(tmp_p
 
     opened = []
     monkeypatch.setattr(launch_mod.subprocess, "run", lambda argv, **kw: opened.append(argv))
-    assert asyncio.run(scenario()) == [("steam", "Hades", "9 USD", "yes"), ("steam", "Doom", "-", "")]
+    assert asyncio.run(scenario()) == [("steam", "Hades", "9 USD", "✔ owned"), ("steam", "Doom", "-", "")]
     assert opened == [["xdg-open", "https://x/2"]]
 
 
@@ -367,3 +367,19 @@ def test_empty_lists_say_what_to_do_and_installed_games_get_a_marker(tmp_path):
             assert rows == {"Doom": "", "Hades": "●"}
 
     asyncio.run(marked())
+
+
+def test_enter_goes_to_the_search_box_even_when_the_list_is_empty(tmp_path):
+    db = tmp_path / "db.sqlite3"
+    connect(db).close()
+
+    async def scenario():
+        app = LudexApp(db, {})
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            for _ in range(3):  # Owned, Installed, Search are all empty
+                await pilot.press("enter")
+                assert app.focused is app.query_one("#filter"), app.query_one("Tabs").active
+                await pilot.press("escape", "tab")
+
+    asyncio.run(scenario())
