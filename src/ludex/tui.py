@@ -56,18 +56,21 @@ def _stores_text(stores) -> Text:
 class LudexApp(App[None]):
     TITLE = "ludex"
     CSS = """
-    #filter { border: none; height: 1; background: $boost; padding: 0 1; margin-bottom: 1; }
+    #filter { border: none; height: 1; background: $surface; padding: 0 1; margin-bottom: 1; }
     #filter:focus { background: $accent 40%; }
+    Screen { background: $background; }
     Header { background: $primary; color: $text; }
+    Tabs { background: $background; }
+    Tab { background: $background; }
     Tab { color: $text-muted; }
     Tab.-active { color: $accent; text-style: bold; }
     Underline > .underline--bar { color: $accent; background: $primary 30%; }
-    Footer { background: $panel; }
+    Footer { background: $surface; }
     Footer .footer-key--key { color: $accent; background: transparent; text-style: bold; }
     #views { height: 1fr; }
-    DataTable { height: 100%; }
+    DataTable { height: 100%; background: $background; }
     DataTable > .datatable--header { background: $primary 40%; color: $text; text-style: bold; }
-    #detail { height: auto; min-height: 3; max-height: 40%; padding: 0 2; margin: 0 1; border: round $primary-darken-1; background: $panel; }
+    #detail { height: auto; min-height: 3; max-height: 40%; padding: 0 2; margin: 0 1; border: round $primary-darken-1; background: $background; }
     #settings-table { padding: 1 2; }
     #settings-table .section { text-style: bold; color: $accent; margin-top: 1; }
     #settings-table .hint { color: $text-muted; width: 100%; }
@@ -125,9 +128,9 @@ class LudexApp(App[None]):
         yield Tabs(Tab("Owned", id="owned"), Tab("Installed", id="installed"), Tab("Search", id="search"), Tab("Settings", id="settings"), id="tabs")
         yield Input(id="filter")
         with ContentSwitcher(id="views", initial="owned-table"):
-            yield DataTable(id="owned-table", cursor_type="row", zebra_stripes=True)
-            yield DataTable(id="installed-table", cursor_type="row", zebra_stripes=True)
-            yield DataTable(id="search-table", cursor_type="row", zebra_stripes=True)
+            yield DataTable(id="owned-table", cursor_type="row")
+            yield DataTable(id="installed-table", cursor_type="row")
+            yield DataTable(id="search-table", cursor_type="row")
             with VerticalScroll(id="settings-table"):
                 yield from self._settings_widgets()
         yield Static("", id="detail")
