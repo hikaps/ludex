@@ -23,6 +23,7 @@ class Account:
 
 
 def _load(paths: StatePaths) -> dict[str, Any]:
+    """Accounts keyed ``source:name``. Files written before names were per source used ``name``."""
     if not paths.accounts.exists() and not paths.accounts.is_symlink():
         return {}
     try:
@@ -31,7 +32,10 @@ def _load(paths: StatePaths) -> dict[str, Any]:
         raise LudexError("accounts_corrupt", "accounts file is unreadable") from exc
     if not isinstance(data, dict):
         raise LudexError("accounts_corrupt", "accounts file is unreadable")
-    return data
+    return {
+        key if ":" in key or not isinstance(entry, dict) else f"{entry.get('source')}:{key}": entry
+        for key, entry in data.items()
+    }
 
 
 def _check_name(name: str) -> None:
@@ -39,40 +43,50 @@ def _check_name(name: str) -> None:
         raise LudexError("invalid_account_name", "account name must match [a-z][a-z0-9_-]{0,31}")
 
 
+def _resolve(data: dict[str, Any], ref: str) -> str:
+    """``source:name`` or a bare name that is unique across sources."""
+    if ref in data:
+        return ref
+    matches = [key for key in data if ":" not in ref and key.partition(":")[2] == ref]
+    if len(matches) > 1:
+        raise LudexError("account_ambiguous", f"account {ref} exists for several sources; use one of: {', '.join(sorted(matches))}")
+    if not matches:
+        raise LudexError("account_not_found", f"account {ref} not found")
+    return matches[0]
+
+
 def add_account(paths: StatePaths, name: str, source: str, config: Mapping[str, str]) -> None:
     _check_name(name)
     data = _load(paths)
-    if name in data:
-        raise LudexError(
-            "account_exists",
-            f"account {name} already exists (source {data[name].get('source')}); account names are shared by all sources, pick another",
-        )
-    data[name] = {"source": source, "config": dict(config)}
+    key = f"{source}:{name}"
+    if key in data:
+        raise LudexError("account_exists", f"account {name} already exists for source {source}")
+    data[key] = {"source": source, "config": dict(config)}
     write_json_private(paths.accounts, data)
 
 
-def get_account(paths: StatePaths, name: str) -> Account:
-    entry = _load(paths).get(name)
+def get_account(paths: StatePaths, ref: str) -> Account:
+    data = _load(paths)
+    key = _resolve(data, ref)
+    entry = data[key]
     if not isinstance(entry, dict) or not isinstance(entry.get("source"), str):
-        raise LudexError("account_not_found", f"account {name} not found")
+        raise LudexError("account_not_found", f"account {ref} not found")
     config = entry.get("config")
     if not isinstance(config, dict):
         config = {}
-    return Account(name, entry["source"], MappingProxyType({str(k): str(v) for k, v in config.items()}))
+    return Account(key.partition(":")[2], entry["source"], MappingProxyType({str(k): str(v) for k, v in config.items()}))
 
 
 def list_accounts(paths: StatePaths) -> list[tuple[str, str]]:
     data = _load(paths)
     return sorted(
-        (name, entry["source"])
-        for name, entry in data.items()
+        (key.partition(":")[2], entry["source"])
+        for key, entry in data.items()
         if isinstance(entry, dict) and isinstance(entry.get("source"), str)
     )
 
 
-def remove_account(paths: StatePaths, name: str) -> None:
+def remove_account(paths: StatePaths, ref: str) -> None:
     data = _load(paths)
-    if name not in data:
-        raise LudexError("account_not_found", f"account {name} not found")
-    del data[name]
+    del data[_resolve(data, ref)]
     write_json_private(paths.accounts, data)
