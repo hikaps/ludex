@@ -23,20 +23,23 @@ def test_search_narrows_the_list_and_enter_launches(tmp_path, monkeypatch):
     monkeypatch.setattr(launch_mod.subprocess, "run", lambda argv, **kw: opened.append(argv[1]))
 
     async def scenario():
-        app = LudexApp(db, {"steam": steam.PLUGIN, "epic": epic.PLUGIN}, lambda: {("steam", "2")})
+        app = LudexApp(db, {"steam": steam.PLUGIN, "epic": epic.PLUGIN}, lambda: {("steam", "2"), ("epic", "h")})
         async with app.run_test() as pilot:
-            table = app.query_one("#owned-table", DataTable)
-            assert table.row_count == 2
+            owned = app.query_one("#owned-table", DataTable)
             installed = app.query_one("#installed-table", DataTable)
-            assert [installed.get_row_at(i)[1] for i in range(installed.row_count)] == ["Doom"]
-            assert app.focused is table  # the list has focus, so letters are shortcuts
+            assert owned.row_count == 2 and installed.row_count == 2
+            assert app.focused is owned  # the list has focus, so letters are shortcuts
+            await pilot.press("l")  # launching belongs to the Installed tab
+            await pilot.press("tab")
+            assert app.focused is installed
             await pilot.press("enter")  # Enter goes to the search box
             assert app.focused is app.query_one("#filter")
             await pilot.press("h", "a", "d", "e", "s")  # typing filters at once
             await pilot.pause()
-            assert table.row_count == 1
+            assert installed.row_count == 1
             await pilot.press("enter")  # Enter returns to the list; l launches
-            assert app.focused is table
+            assert app.focused is installed
+            await pilot.press("i")  # installing belongs to Owned and Search
             await pilot.press("l")
             await pilot.pause()
 
@@ -67,7 +70,9 @@ def test_search_tab_queries_providers_marks_owned_and_enter_opens_the_page(tmp_p
             table = app.query_one("#search-table", DataTable)
             rows = [tuple(str(c) for c in table.get_row_at(i)) for i in range(table.row_count)]
             assert app.focused is table  # results take the focus
-            await pilot.press("down", "l")
+            await pilot.press("e", "l")  # game settings and launching are not offered on Search
+            assert app.screen is app.screen_stack[0]
+            await pilot.press("down", "i")  # Install opens the store's page when the plugin has no install link
             await pilot.pause()
             return rows
 
