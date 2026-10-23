@@ -592,11 +592,12 @@ def test_game_set_and_show_and_runners_commands(
         run(capsys, "game")
 
 
-def test_prefixes_command_shows_sets_and_resets(world: World, capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
-    code, out, _ = run(capsys, "--json", "prefixes")
-    assert code == 0 and json.loads(out)["data"]["default"] is True
-    code, out, _ = run(capsys, "--json", "prefixes", str(tmp_path / "pfx"))
-    assert code == 0 and json.loads(out)["data"] == {"prefix_dir": str(tmp_path / "pfx"), "default": False}
-    assert run(capsys, "prefixes", "rel")[0] == 1
-    code, out, _ = run(capsys, "--json", "prefixes", "--reset")
-    assert json.loads(out)["data"]["default"] is True
+def test_config_command_shows_sets_and_resets(world: World, capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    default = json.loads(run(capsys, "--json", "config")[1])["data"]["prefix_dir"]
+    code, out, _ = run(capsys, "--json", "config", "prefix_dir", str(tmp_path / "pfx"))
+    assert code == 0 and json.loads(out)["data"] == {"prefix_dir": str(tmp_path / "pfx")}
+    assert run(capsys, "config", "prefix_dir", "rel")[0] == 1
+    assert run(capsys, "config", "--reset")[0] == 1  # no setting named
+    with pytest.raises(SystemExit):
+        run(capsys, "config", "nope")
+    assert json.loads(run(capsys, "--json", "config", "prefix_dir", "--reset")[1])["data"]["prefix_dir"] == default

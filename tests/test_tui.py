@@ -112,7 +112,7 @@ def test_edit_screen_saves_runner_prefix_env_and_the_prefix_folder(tmp_path, mon
             await pilot.press("ctrl+s")
             await pilot.pause()
             assert app.screen is not screen, str(screen.query_one("#form-error").render())  # closed
-            await pilot.press("p")
+            await pilot.press("s")
             await pilot.pause()
             app.screen.query_one("#folder", Input).value = str(tmp_path / "all-prefixes")
             await pilot.press("ctrl+s")
