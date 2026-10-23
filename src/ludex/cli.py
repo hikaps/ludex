@@ -15,9 +15,9 @@ from .accounts import add_account, get_account, list_accounts, remove_account
 from .errors import LudexError
 from .launch import launch_game
 from .library import resolve_game, delete_account_records, export_games, dismiss_review, get_game, list_games, list_review, merge_games, run_import
-from .loader import load_sources
+from .loader import load_providers
 from .paths import state_paths
-from .plugins import SourcePlugin
+from .plugins import Provider
 from .storage import connect, writer_lock
 
 
@@ -27,7 +27,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--json", action="store_true", help="machine-readable output (before the subcommand)")
     commands = parser.add_subparsers(dest="command", metavar="command")
 
-    commands.add_parser("sources", help="list available source plugins")
+    commands.add_parser("providers", help="list available providers and their capabilities")
 
     account = commands.add_parser("account", help="manage store accounts")
     account_commands = account.add_subparsers(dest="account_command", metavar="action")
@@ -88,7 +88,7 @@ def _emit_json(ok: bool, data: object | None = None, error: LudexError | None = 
     print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), file=target)
 
 
-def _plugin(sources: dict[str, SourcePlugin], problems: dict[str, str], name: str) -> SourcePlugin:
+def _plugin(sources: dict[str, Provider], problems: dict[str, str], name: str) -> Provider:
     plugin = sources.get(name)
     if plugin is None:
         detail = f" ({problems[name]})" if name in problems else ""
@@ -124,27 +124,30 @@ def _read_value(prompt: str, secret: bool, path: bool = False) -> str:
     return value
 
 
-def _cmd_sources(args: argparse.Namespace) -> tuple[object, str]:
-    sources, problems = load_sources()
+def _cmd_providers(args: argparse.Namespace) -> tuple[object, str]:
+    sources, problems = load_providers()
     data = {
-        "sources": [
+        "providers": [
             {
                 "name": plugin.name,
                 "help": plugin.help,
+                "capabilities": list(plugin.capabilities),
                 "fields": [{"name": f.name, "help": f.help, "secret": f.secret, "optional": f.optional} for f in plugin.config_fields],
             }
             for _, plugin in sorted(sources.items())
         ],
         "problems": dict(sorted(problems.items())),
     }
-    lines = [f"{s['name']}  {s['help']}" for s in data["sources"]]
+    lines = [f"{p['name']}  [{', '.join(p['capabilities'])}]  {p['help']}" for p in data["providers"]]
     lines += [f"problem: {name}: {reason}" for name, reason in data["problems"].items()]
-    return data, "\n".join(lines) if lines else "no sources available"
+    return data, "\n".join(lines) if lines else "no providers available"
 
 
 def _cmd_account_add(args: argparse.Namespace) -> tuple[object, str]:
-    sources, problems = load_sources()
+    sources, problems = load_providers()
     plugin = _plugin(sources, problems, args.source)
+    if plugin.fetch is None:
+        raise LudexError("no_owned_capability", f"provider {plugin.name} cannot list owned games, so it has no accounts")
     fields = {f.name: f for f in plugin.config_fields}
     config: dict[str, str] = {}
     for item in args.fields:
@@ -200,7 +203,7 @@ def _cmd_account_rm(args: argparse.Namespace) -> tuple[object, str]:
     return {"account": args.name, "records_removed": changed}, f"removed account {args.name}; deleted {changed} records"
 
 
-def _import_one(conn: Any, paths: Any, sources: dict[str, SourcePlugin], problems: dict[str, str], name: str) -> dict[str, Any]:
+def _import_one(conn: Any, paths: Any, sources: dict[str, Provider], problems: dict[str, str], name: str) -> dict[str, Any]:
     account = get_account(paths, name)
     plugin = _plugin(sources, problems, account.source)
     summary = run_import(conn, account.name, plugin, account.config)
@@ -212,7 +215,7 @@ def _cmd_import(args: argparse.Namespace) -> tuple[object, str, int]:
     with writer_lock(paths.import_lock):
         conn = connect(paths.database)
         try:
-            sources, problems = load_sources()
+            sources, problems = load_providers()
             if not args.all:
                 result = _import_one(conn, paths, sources, problems, args.account)
                 return {k: v for k, v in result.items() if k != "ok"}, _import_line(result), 0
@@ -235,7 +238,7 @@ def _ask(prompt: str, default: str) -> str:
 
 
 def _cmd_setup(args: argparse.Namespace) -> tuple[object, str]:
-    sources, problems = load_sources()
+    sources, problems = load_providers()
     if not sources:
         raise LudexError("no_sources", "no source plugins are available")
     names = sorted(sources)
@@ -307,7 +310,7 @@ def _cmd_show(args: argparse.Namespace) -> tuple[object, str]:
 
 
 def _cmd_launch(args: argparse.Namespace) -> tuple[object, str]:
-    sources, _ = load_sources()
+    sources, _ = load_providers()
     conn = connect(state_paths().database)
     try:
         game_id = resolve_game(conn, args.game)
@@ -320,7 +323,7 @@ def _cmd_launch(args: argparse.Namespace) -> tuple[object, str]:
 def _cmd_tui(args: argparse.Namespace) -> tuple[object, str]:
     from .tui import LudexApp
 
-    sources, _ = load_sources()
+    sources, _ = load_providers()
     LudexApp(state_paths().database, sources).run()
     return {}, ""
 
@@ -378,7 +381,7 @@ _HANDLERS = {
     ("export", None): _cmd_export,
     ("review", None): _cmd_review,
     ("merge", None): _cmd_merge,
-    ("sources", None): _cmd_sources,
+    ("providers", None): _cmd_providers,
     ("setup", None): _cmd_setup,
     ("account", "add"): _cmd_account_add,
     ("account", "ls"): _cmd_account_ls,

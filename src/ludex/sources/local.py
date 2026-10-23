@@ -13,7 +13,7 @@ import glob
 from collections.abc import Mapping
 from pathlib import Path
 
-from ..plugins import ConfigField, FetchResult, OwnedGame, SourceError, SourcePlugin
+from ..plugins import ConfigField, FetchResult, OwnedGame, SourceError, Provider
 
 
 def fetch(config: Mapping[str, str]) -> FetchResult:
@@ -42,7 +42,7 @@ def fetch(config: Mapping[str, str]) -> FetchResult:
     return FetchResult(games, True, "directory")
 
 
-PLUGIN = SourcePlugin(
+PLUGIN = Provider(
     name="local",
     help="A folder of games: each subfolder is one game (add one account per folder)",
     config_fields=(ConfigField("path", "games directory, or a pattern like /mnt/games/* to search every folder in it", path=True),),

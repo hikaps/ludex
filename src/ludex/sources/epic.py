@@ -15,7 +15,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from ..plugins import ConfigField, FetchResult, OwnedGame, SourceError, SourcePlugin
+from ..plugins import ConfigField, FetchResult, OwnedGame, SourceError, Provider
 
 _DIRS = (
     "~/.config/legendary",
@@ -57,7 +57,7 @@ def fetch(config: Mapping[str, str]) -> FetchResult:
     return FetchResult(_games(_legendary_dir(config)), False, "local")
 
 
-PLUGIN = SourcePlugin(
+PLUGIN = Provider(
     name="epic",
     help="Epic library from the Legendary or Heroic cache on this machine (no login; refresh it in Heroic first)",
     config_fields=(ConfigField("legendary_dir", "Legendary config folder; blank to auto-detect", optional=True),),
