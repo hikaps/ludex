@@ -44,6 +44,9 @@ class LudexApp(App[None]):
     #settings-table .section { text-style: bold; margin-top: 1; }
     #settings-table .hint { color: $text-muted; width: 100%; }
     #settings-table .row { height: 1; }
+    #settings-table .row:focus-within { background: $accent 40%; text-style: bold; }
+    #settings-table Input:focus { background: $accent 40%; text-style: bold; }
+    #settings-table Switch:focus { background: $accent; }
     #settings-table Input { border: none; height: 1; padding: 0 1; }
     #settings-table Switch { border: none; height: 1; padding: 0 1; background: transparent; }
     """
@@ -54,11 +57,14 @@ class LudexApp(App[None]):
         Binding("up", "cursor('up')", "Up", show=False, priority=True),
         Binding("pagedown", "cursor('page_down')", "Page down", show=False, priority=True),
         Binding("pageup", "cursor('page_up')", "Page up", show=False, priority=True),
-        Binding("escape", "clear", "Clear search", show=False),
-        Binding("f2", "edit", "Game settings"),
-        Binding("f3", "install", "Install"),
-        Binding("f5", "reload", "Reload"),
-        Binding("ctrl+q", "quit", "Quit"),
+        Binding("enter,slash", "focus_filter", "Search"),
+        Binding("escape", "clear", "Back to list", show=False),
+        Binding("l", "launch", "Launch"),
+        Binding("e", "edit", "Game settings"),
+        Binding("i", "install", "Install"),
+        Binding("s", "settings", "Settings"),
+        Binding("r", "reload", "Reload"),
+        Binding("q", "quit", "Quit"),
     ]
 
     def __init__(
@@ -104,10 +110,13 @@ class LudexApp(App[None]):
             table.add_columns(*(("store", "title", "price", "owned") if table.id == "search-table" else ("id", "title", "stores")))
         self.query_one("#folder", Input).value = str(get_prefix_root(self._conn, self._default_prefix()))
         self.action_reload()
+        self._table().focus()
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         # tab, arrows and paging belong to the list only on the main screen; forms keep their own
-        if action in {"next_tab", "previous_tab", "cursor"} and len(self.screen_stack) > 1:
+        if len(self.screen_stack) > 1 and action not in {"quit"}:
+            return False
+        if self._active() == "settings" and action in {"launch", "edit", "install", "focus_filter", "settings"}:
             return False
         return True
 
@@ -119,8 +128,8 @@ class LudexApp(App[None]):
         self.query_one(ContentSwitcher).current = f"{name}-table"
         box = self.query_one("#filter", Input)
         box.display = name != "settings"
-        box.placeholder = "type a game name, then Enter to search the stores" if name == "search" else "type to filter your games"
-        (self.query_one("#folder") if name == "settings" else box).focus()
+        box.placeholder = "type a game name, Enter searches the stores (Esc: back to the list)" if name == "search" else "type to filter (Enter or Esc: back to the list)"
+        (self.query_one("#folder") if name == "settings" else self._table()).focus()
 
     def action_next_tab(self) -> None:
         self.query_one(Tabs).action_next_tab()
@@ -179,7 +188,7 @@ class LudexApp(App[None]):
                 owned = owned_keys(self._conn)
                 self.run_worker(lambda: self._search(query, owned), thread=True, exclusive=True)
                 return
-        self.action_launch()
+        self._table().focus()
 
     def _search(self, query: str, owned: set[tuple[str, str]]) -> None:
         hits, problems = find_games(self._sources, query, owned)
@@ -192,6 +201,8 @@ class LudexApp(App[None]):
         for key, h in self._hits.items():
             table.add_row(h["store"], h["title"], h["price"] or "-", "yes" if h["owned"] else "", key=key)
         self.sub_title = f"{len(hits)} results for {query!r}"
+        if self._active() == "search" and self.focused is self.query_one("#filter"):
+            table.focus()
         for name, reason in sorted(problems.items()):
             self.notify(f"{name}: {reason}", severity="warning")
 
@@ -210,14 +221,22 @@ class LudexApp(App[None]):
         self.query_one("#detail", Static).update("\n".join(lines))
 
     def action_clear(self) -> None:
-        self.query_one(Input).value = ""
+        self.query_one("#filter", Input).value = ""
+        if self._active() != "settings":
+            self._table().focus()
+
+    def action_focus_filter(self) -> None:
+        self.query_one("#filter", Input).focus()
+
+    def action_settings(self) -> None:
+        self.query_one(Tabs).active = "settings"
 
     def action_reload(self) -> None:
         self._keys = self._installed()
         self._reload()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        self.action_launch()
+        self.action_focus_filter()  # Enter on a row goes to the search box; l launches
 
     def _prefix(self) -> Path | None:
         return get_prefix_root(self._conn, self._prefix_root) if self._prefix_root else None

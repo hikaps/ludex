@@ -29,10 +29,15 @@ def test_search_narrows_the_list_and_enter_launches(tmp_path, monkeypatch):
             assert table.row_count == 2
             installed = app.query_one("#installed-table", DataTable)
             assert [installed.get_row_at(i)[1] for i in range(installed.row_count)] == ["Doom"]
-            app.query_one(Input).value = "hades"
+            assert app.focused is table  # the list has focus, so letters are shortcuts
+            await pilot.press("enter")  # Enter goes to the search box
+            assert app.focused is app.query_one("#filter")
+            await pilot.press("h", "a", "d", "e", "s")  # typing filters at once
             await pilot.pause()
             assert table.row_count == 1
-            await pilot.press("enter")  # the filter box always has focus; Enter launches the highlighted game
+            await pilot.press("enter")  # Enter returns to the list; l launches
+            assert app.focused is table
+            await pilot.press("l")
             await pilot.pause()
 
     asyncio.run(scenario())
@@ -54,14 +59,15 @@ def test_search_tab_queries_providers_marks_owned_and_enter_opens_the_page(tmp_p
             await pilot.pause()
             await pilot.press("tab", "tab")  # Owned -> Installed -> Search
             await pilot.pause()
-            assert app.query_one("Tabs").active == "search" and app.focused is app.query_one(Input)
-            await pilot.press("h", "a")  # typing goes straight into the filter box
-            await pilot.press("enter")
+            assert app.query_one("Tabs").active == "search" and app.focused is app.query_one("#search-table")
+            await pilot.press("slash", "h", "a")  # "/" jumps to the search box
+            await pilot.press("enter")  # new query: search the stores
             await app.workers.wait_for_complete()
             await pilot.pause()
             table = app.query_one("#search-table", DataTable)
             rows = [tuple(table.get_row_at(i)) for i in range(table.row_count)]
-            await pilot.press("down", "enter")
+            assert app.focused is table  # results take the focus
+            await pilot.press("down", "l")
             await pilot.pause()
             return rows
 
@@ -95,7 +101,7 @@ def test_edit_screen_saves_runner_prefix_executable_args_and_env(tmp_path, monke
         app = LudexApp(db, {"local": local}, config_for=lambda s, a: {}, prefix_root=tmp_path / "default")
         async with app.run_test() as pilot:
             await pilot.pause()
-            await pilot.press("f2")
+            await pilot.press("e")
             await pilot.pause()
             screen = app.screen
             screen.query_one("#runner", Select).value = "GE"
@@ -106,7 +112,7 @@ def test_edit_screen_saves_runner_prefix_executable_args_and_env(tmp_path, monke
             await pilot.press("ctrl+s")
             await pilot.pause()
             assert app.screen is not screen, str(screen.query_one("#form-error").render())  # closed
-            await pilot.press("f4")
+            await pilot.press("s")
             await pilot.pause()
             app.screen.query_one("#folder", Input).value = str(tmp_path / "all-prefixes")
             await pilot.press("ctrl+s")
@@ -135,7 +141,7 @@ def test_edit_screen_reports_invalid_input_and_stays_open(tmp_path):
         app = LudexApp(db, {"local": local}, config_for=lambda s, a: {}, prefix_root=tmp_path / "default")
         async with app.run_test() as pilot:
             await pilot.pause()
-            await pilot.press("f2")
+            await pilot.press("e")
             await pilot.pause()
             screen = app.screen
             screen.query_one("#env", TextArea).text = "no equals sign"
@@ -184,7 +190,7 @@ def test_tab_completes_a_path_then_moves_on(tmp_path):
         app = LudexApp(db, {"local": local}, config_for=lambda s, a: {}, prefix_root=tmp_path / "default")
         async with app.run_test() as pilot:
             await pilot.pause()
-            await pilot.press("f2")
+            await pilot.press("e")
             await pilot.pause()
             assert app.focused is app.screen.query_one("#runner")  # the form opens ready to use
             prefix = app.screen.query_one("#prefix", Input)
@@ -292,3 +298,26 @@ def test_settings_tab_edits_plugin_settings_and_account_fields(tmp_path, monkeyp
     asyncio.run(scenario())
     assert get_values(paths, "demo") == {"region": "eu", "token": "tok"}
     assert dict(get_account(paths, "demo:a").config) == {"region": "eu", "token": "tok", "user": "u2", "key": "k1", "tag": "x"}
+
+
+def test_s_opens_settings_and_letters_only_type_while_the_search_box_has_focus(tmp_path):
+    db = tmp_path / "db.sqlite3"
+    conn = connect(db)
+    import_account(conn, "m", [OwnedGame("steam", "1", "Hades"), OwnedGame("steam", "2", "Doom")], store="steam")
+    conn.close()
+
+    async def scenario():
+        app = LudexApp(db, {})
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("slash", "s", "q")  # typed into the box: no tab switch, no quit
+            assert app.query_one("Tabs").active == "owned" and app.query_one("#filter", Input).value == "sq"
+            await pilot.press("escape")  # clears the box and returns to the list
+            assert app.query_one("#filter", Input).value == "" and app.focused is app.query_one("#owned-table")
+            await pilot.press("s")
+            await pilot.pause()
+            assert app.query_one("Tabs").active == "settings" and app.focused is app.query_one("#folder")
+            await pilot.press("tab")  # Tab still cycles: Settings -> Owned
+            assert app.query_one("Tabs").active == "owned"
+
+    asyncio.run(scenario())
