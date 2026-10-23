@@ -148,10 +148,9 @@ class LudexApp(App[None]):
             hit = self._hits.get(event.row_key.value or "")
             self.query_one("#detail", Static).update(f"{hit['title']}\n  {hit['url']}" if hit else "")
             return
-        game_id = self._current_id()
-        if game_id is None:
+        if event.row_key.value is None:
             return
-        game = get_game(self._conn, game_id)
+        game = get_game(self._conn, int(event.row_key.value))  # the event's own row, not the active tab's cursor
         lines = [game["title"]] + [
             f"  {o['store']}:{o['store_id']}  account={o['account']}  {'removed' if o['removed'] else 'owned'}"
             for o in game["ownership"]
