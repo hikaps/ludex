@@ -47,6 +47,13 @@ it detached from the terminal and does not track it afterwards. Raise ``SourceEr
 single command can be determined. A provider may declare ``launch_url`` or ``launch_command``;
 both count as the ``launch`` capability, and ``launch_url`` wins when both are present.
 
+Game folder (optional): ``game_folder(config, store_id)`` returns the folder a game lives in. With
+it, the user can attach launch settings (``ludex game set``: executable, arguments, environment,
+and a Proton runner): the core then runs the configured executable itself, through ``umu-run``
+when a runner is set, and uses ``launch_command`` only when no executable or runner is set.
+Settings arguments and environment also apply to ``launch_command``. Declaring ``game_folder``
+counts as the ``launch`` capability.
+
 Installing (optional): ``install_url(store_id)`` returns the URL that makes the store's own client
 offer to install a game the account owns (for example ``steam://install/<id>``). Same rules as
 ``launch_url``. This is for the owner's official store client only; the core does not download or
@@ -169,6 +176,7 @@ class Provider:
     api_version: int = API_VERSION
     launch_url: Callable[[str], str] | None = None
     launch_command: Callable[[Mapping[str, str], str], Sequence[str]] | None = None
+    game_folder: Callable[[Mapping[str, str], str], Path] | None = None
     install_url: Callable[[str], str] | None = None
     acquire: Callable[[AcquireRequest, Callable[[str], None]], AcquireResult] | None = None
     installed: Callable[[Mapping[str, str]], Iterable[str]] | None = None
@@ -177,5 +185,5 @@ class Provider:
 
     @property
     def capabilities(self) -> tuple[str, ...]:
-        found = (("owned", self.fetch), ("installed", self.installed), ("search", self.search), ("launch", self.launch_url or self.launch_command), ("install", self.install_url), ("acquire", self.acquire), ("commands", self.commands or None))
+        found = (("owned", self.fetch), ("installed", self.installed), ("search", self.search), ("launch", self.launch_url or self.launch_command or self.game_folder), ("install", self.install_url), ("acquire", self.acquire), ("commands", self.commands or None))
         return tuple(name for name, value in found if value is not None)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -101,3 +102,63 @@ def test_command_launch_rejects_invalid_commands(conn, monkeypatch, argv):
     with pytest.raises(LudexError) as info:
         launch_mod.launch_game(conn, sources, 1, None, lambda *a: {})
     assert info.value.code == "launch_failed"
+
+
+@pytest.fixture
+def windows(conn, tmp_path, monkeypatch):
+    """A local-style provider whose game folder holds one .exe, plus a Proton folder and a fake umu-run."""
+    folder = tmp_path / "games" / "g"
+    folder.mkdir(parents=True)
+    (folder / "Game.exe").write_text("")
+    (folder / "unins000.exe").write_text("")
+    proton = tmp_path / "GE"
+    proton.mkdir()
+    (proton / "proton").write_text("")
+    monkeypatch.setattr(launch_mod.shutil, "which", lambda name: "/usr/bin/umu-run" if name == "umu-run" else None)
+    import_account(conn, "disk", [OwnedGame("local", "g", "G")], store="local")
+    sources = {"local": Provider("local", "l", (), lambda c: None, game_folder=lambda config, store_id: folder)}
+    return sources, folder, proton
+
+
+def test_runner_launch_goes_through_umu_run_with_prefix_and_environment(conn, windows, tmp_path):
+    from ludex.game_settings import update_settings
+
+    sources, folder, proton = windows
+    update_settings(conn, "local", "g", runner=str(proton), env={"DXVK_HUD": "1"}, args=["-w", "x y"])
+    plan = launch_mod.prepare_launch(conn, sources, 1, None, lambda *a: {}, tmp_path / "prefixes")
+    assert plan.argv == ("/usr/bin/umu-run", str(folder / "Game.exe"), "-w", "x y") and plan.cwd == folder
+    assert plan.env["PROTONPATH"] == str(proton) and plan.env["DXVK_HUD"] == "1" and plan.env["GAMEID"] == "umu-0"
+    assert Path(plan.env["WINEPREFIX"]).parent == tmp_path / "prefixes"
+    update_settings(conn, "local", "g", prefix=str(tmp_path / "mine"))
+    assert launch_mod.prepare_launch(conn, sources, 1, None, lambda *a: {}, tmp_path / "prefixes").env["WINEPREFIX"] == str(tmp_path / "mine")
+
+
+def test_runner_launch_errors_are_specific(conn, windows, tmp_path, monkeypatch):
+    from ludex.game_settings import update_settings
+
+    sources, folder, proton = windows
+    update_settings(conn, "local", "g", runner=str(proton))
+    (folder / "Other.exe").write_text("")  # two .exe files: ambiguous without --exe
+    with pytest.raises(LudexError, match="--exe"):
+        launch_mod.prepare_launch(conn, sources, 1, None, lambda *a: {}, tmp_path)
+    update_settings(conn, "local", "g", executable="../escape.exe")
+    with pytest.raises(LudexError, match="outside the game folder"):
+        launch_mod.prepare_launch(conn, sources, 1, None, lambda *a: {}, tmp_path)
+    update_settings(conn, "local", "g", executable="Game.exe")
+    monkeypatch.setattr(launch_mod.shutil, "which", lambda name: None)
+    with pytest.raises(LudexError) as info:
+        launch_mod.prepare_launch(conn, sources, 1, None, lambda *a: {}, tmp_path)
+    assert info.value.code == "launcher_missing"
+
+
+def test_executable_without_runner_runs_natively_and_settings_apply_to_launch_command(conn, windows, tmp_path):
+    from ludex.game_settings import update_settings
+
+    sources, folder, proton = windows
+    (folder / "run.sh").write_text("")
+    update_settings(conn, "local", "g", executable="run.sh", env={"A": "1"}, args=["x"])
+    plan = launch_mod.prepare_launch(conn, sources, 1, None, lambda *a: {}, tmp_path)
+    assert (plan.argv, plan.env) == ((str(folder / "run.sh"), "x"), {"A": "1"})
+    auto = {"local": Provider("local", "l", (), lambda c: None, launch_command=lambda c, s: [str(folder / "auto.sh")])}
+    plan = launch_mod.prepare_launch(conn, auto, 1, None, lambda *a: {}, tmp_path)  # settings env/args still apply
+    assert (plan.argv, plan.env) == ((str(folder / "auto.sh"), "x"), {"A": "1"})
