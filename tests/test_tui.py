@@ -40,7 +40,7 @@ def test_search_narrows_the_list_and_enter_launches(tmp_path, monkeypatch):
     assert opened == ["heroic://launch?appName=h&runner=legendary"]
 
 
-def test_search_tab_queries_providers_and_marks_owned(tmp_path):
+def test_search_tab_queries_providers_marks_owned_and_enter_opens_the_page(tmp_path, monkeypatch):
     from ludex.plugins import Provider, SearchHit
 
     db = tmp_path / "db.sqlite3"
@@ -61,6 +61,12 @@ def test_search_tab_queries_providers_and_marks_owned(tmp_path):
             await app.workers.wait_for_complete()
             await pilot.pause()
             table = app.query_one("#search-table", DataTable)
-            return [tuple(table.get_row_at(i)) for i in range(table.row_count)]
+            rows = [tuple(table.get_row_at(i)) for i in range(table.row_count)]
+            await pilot.press("down", "enter")
+            await pilot.pause()
+            return rows
 
+    opened = []
+    monkeypatch.setattr(launch_mod.subprocess, "run", lambda argv, **kw: opened.append(argv))
     assert asyncio.run(scenario()) == [("steam", "Hades", "9 USD", "yes"), ("steam", "Doom", "-", "")]
+    assert opened == [["xdg-open", "https://x/2"]]
