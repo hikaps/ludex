@@ -317,7 +317,6 @@ def test_usage_errors_exit_2(world: World, capsys: pytest.CaptureFixture[str]) -
     for argv in (
         ["import"],
         ["import", "a", "--all"],
-        ["show", "abc"],
         ["account"],
         ["account", "add", "fake"],
         ["bogus"],
@@ -476,3 +475,13 @@ def test_account_rm_deletes_its_records_and_clears_orphans(
     assert code == 0 and "deleted 1 records" in out
     code, _, err = run(capsys, "account", "rm", "ghost")
     assert code == 1 and "not found" in err
+
+
+def test_show_accepts_a_title(world: World, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+    world.catalogs["me"] = [("1", "Alpha"), ("2", "Beta")]
+    add(capsys, monkeypatch, "main", "me")
+    assert run(capsys, "import", "main")[0] == 0
+    code, out, _ = run(capsys, "show", "beta")
+    assert code == 0 and out.startswith("2  Beta")
+    code, _, err = run(capsys, "show", "gamma")
+    assert code == 1 and "no game matches" in err

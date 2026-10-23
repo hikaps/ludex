@@ -421,3 +421,14 @@ def test_run_import_rejects_games_of_another_store(conn):
     with pytest.raises(LudexError) as info:
         run_import(conn, "main", plugin_, {})
     assert info.value.code == "source_failed"
+
+
+def test_resolve_game_by_id_exact_title_or_unique_partial(conn):
+    import_account(conn, "m", [g("1", "Doom"), g("2", "Doom Eternal"), g("3", "Hades")])
+    assert library.resolve_game(conn, "7") == 7
+    assert library.resolve_game(conn, "doom") == 1  # exact beats partial
+    assert library.resolve_game(conn, "had") == 3
+    for ref, code in [("zzz", "game_not_found"), ("e", "game_ambiguous")]:
+        with pytest.raises(LudexError) as info:
+            library.resolve_game(conn, ref)
+        assert info.value.code == code

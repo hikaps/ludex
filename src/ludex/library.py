@@ -337,3 +337,18 @@ def delete_account_records(
         conn.execute(f"DELETE FROM review_queue WHERE ownership_id IN (SELECT id FROM ownership WHERE {where})", params)
         cursor = conn.execute(f"DELETE FROM ownership WHERE {where}", params)
     return cursor.rowcount
+
+
+def resolve_game(conn: sqlite3.Connection, ref: str) -> int:
+    """A game id (digits) or a title: an exact title match, else the only partial match."""
+    if ref.isdigit():
+        return int(ref)
+    matches = list_games(conn, query=ref, limit=_MAX_LIMIT)
+    exact = [g for g in matches if normalize_title(g["title"]) == normalize_title(ref)]
+    found = exact if len(exact) == 1 else matches
+    if not found:
+        raise LudexError("game_not_found", f"no game matches {ref!r}")
+    if len(found) > 1:
+        shown = "; ".join(f"{g['id']} {g['title']}" for g in found[:5]) + ("; ..." if len(found) > 5 else "")
+        raise LudexError("game_ambiguous", f"{len(found)} games match {ref!r}, use an id: {shown}")
+    return found[0]["id"]
