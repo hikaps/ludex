@@ -45,3 +45,4 @@ jobs:
 
       - name: Run full test suite
         run: .venv/bin/python -m pytest --basetemp=/tmp/ludex-ci-pytest -q -ra
+# probe
