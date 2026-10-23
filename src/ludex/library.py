@@ -8,6 +8,8 @@ Removal policy (source of truth):
 - An ownership record of that account that is absent from a complete fetch is marked ``removed``
   and keeps its old ``last_seen``. An incomplete fetch (for example local-only Steam data) adds and
   updates games but removes nothing. Records of other accounts are never touched.
+- Removal is scoped to one account of one source: a source's games must carry its own name as
+  ``store``, and only records with that store are compared (account names repeat across sources).
 - Ownership rows and games are never deleted. ``merge_games`` moves ownership to the kept game and
   leaves the emptied game row behind; a game with no ownership is not listed.
 - Matching applies only when an ownership record is first created (existing records keep their
@@ -80,17 +82,24 @@ def _match(conn: sqlite3.Connection, game: OwnedGame) -> tuple[int | None, list[
 
 
 def import_account(
-    conn: sqlite3.Connection, account: str, games: Sequence[OwnedGame], *, complete: bool = True
+    conn: sqlite3.Connection,
+    account: str,
+    games: Sequence[OwnedGame],
+    *,
+    complete: bool = True,
+    store: str | None = None,
 ) -> ImportSummary:
     fetched = {(game.store, game.store_id): game for game in games}
     now = utc_now()
     added = restored = removed = 0
     conn.execute("BEGIN IMMEDIATE")
     try:
+        # account names are only unique per source, so removal must stay inside the source's store
         existing = {
             (row["store"], row["store_id"]): row
             for row in conn.execute(
-                "SELECT id, store, store_id, removed FROM ownership WHERE account = ?", (account,)
+                "SELECT id, store, store_id, removed FROM ownership WHERE account = ? AND (? IS NULL OR store = ?)",
+                (account, store, store),
             )
         }
         for key, game in fetched.items():
@@ -148,9 +157,10 @@ def run_import(
         if not (
             isinstance(item, OwnedGame)
             and all(isinstance(value, str) and value for value in (item.store, item.store_id, item.title))
-        ):
+        ) or item.store != plugin.name:
             raise LudexError("source_failed", f"source {plugin.name} returned an invalid game record")
-    return replace(import_account(conn, account, items, complete=result.complete), mode=result.mode)
+    summary = import_account(conn, account, items, complete=result.complete, store=plugin.name)
+    return replace(summary, mode=result.mode)
 
 
 def _escape_like(text: str) -> str:
