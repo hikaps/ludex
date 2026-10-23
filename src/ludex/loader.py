@@ -27,7 +27,10 @@ def _add_managed_plugins() -> None:
     """Put each ``<state>/plugins/<name>`` folder at the end of ``sys.path`` (ludex's own libraries win)."""
     root = plugins_dir()
     try:
-        folders = sorted(p for p in root.iterdir() if p.is_dir() and not p.is_symlink() and not p.name.startswith("."))
+        folders = sorted(
+            p for p in root.iterdir()
+            if p.is_dir() and not p.is_symlink() and not p.name.startswith(".") and not (p / ".disabled").exists()
+        )
     except OSError:
         return
     for folder in folders:

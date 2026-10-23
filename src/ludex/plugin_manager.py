@@ -29,7 +29,9 @@ from .paths import plugins_dir
 from .plugins import GROUP
 
 _SIDECAR = ".ludex-plugin.json"
+_DISABLED = ".disabled"
 _NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,63}\Z")
+_REPO_LINK = re.compile(r"https://(?:www\.)?(?:github|gitlab)\.com/[\w.-]+/[\w.-]+?(?:\.git)?/?\Z")
 _CREDENTIALS = re.compile(r"://[^/@\s]*:[^/@\s]*@")
 _RELEASES = "https://github.com/hikaps/ludex/releases/download/{channel}/ludex.tar.gz"
 CHANNELS = ("stable", "beta")
@@ -82,6 +84,8 @@ def _check_spec(spec: str) -> str:
         raise LudexError("invalid_spec", "give a package name, URL or path (not an option)")
     if _CREDENTIALS.search(spec):
         raise LudexError("invalid_spec", "the spec must not contain credentials; use ssh or a credential helper")
+    if _REPO_LINK.fullmatch(spec):  # a pasted repository link: pip needs the git+ prefix
+        spec = "git+" + spec
     return spec
 
 
@@ -108,7 +112,10 @@ def _entry(folder: Path) -> dict[str, Any] | None:
     if not found:
         return None
     name, ver, names = found[0]
-    return {"name": folder.name, "version": ver, "providers": names, "spec": _read_spec(folder)}
+    return {
+        "name": folder.name, "version": ver, "providers": names, "spec": _read_spec(folder),
+        "enabled": not (folder / _DISABLED).exists(),
+    }
 
 
 def list_plugins() -> list[dict[str, Any]]:
@@ -155,6 +162,8 @@ def add_plugin(spec: str, *, upgrade: bool = False) -> dict[str, Any]:
         destination = root / name
         previous = None
         if destination.exists():
+            if (destination / _DISABLED).exists():  # an update keeps the plugin disabled
+                (staging / _DISABLED).touch()
             previous = root / f".old-{secrets.token_hex(6)}"
             destination.rename(previous)
         staging.rename(destination)
@@ -163,6 +172,17 @@ def add_plugin(spec: str, *, upgrade: bool = False) -> dict[str, Any]:
     finally:
         shutil.rmtree(staging, ignore_errors=True)
     return {"name": name, "version": ver, "providers": provider_names}
+
+
+def set_plugin_enabled(name: str, enabled: bool) -> dict[str, Any]:
+    """Enable or disable a managed plugin; a disabled one is not loaded (takes effect on the next run)."""
+    plugin = _find(name)
+    marker = plugins_dir() / plugin["name"] / _DISABLED
+    if enabled:
+        marker.unlink(missing_ok=True)
+    else:
+        marker.touch()
+    return {"name": plugin["name"], "providers": plugin["providers"], "enabled": enabled}
 
 
 def remove_plugin(name: str) -> dict[str, Any]:

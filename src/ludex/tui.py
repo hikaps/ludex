@@ -11,7 +11,8 @@ from pathlib import Path
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.widgets import DataTable, Footer, Header, Input, Static, TabbedContent, TabPane
+from textual.containers import Horizontal, VerticalScroll
+from textual.widgets import ContentSwitcher, DataTable, Footer, Header, Input, Label, Static, Switch, Tab, Tabs
 
 from .errors import LudexError
 from .game_settings import get_prefix_root, get_settings, set_prefix_root, update_settings
@@ -22,25 +23,39 @@ from .paths import StatePaths
 from .plugins import Provider
 from .runners import find_runners
 from .storage import connect, writer_lock
-from .switches import SWITCHES, get_switch, set_switch
-from .tui_settings import GameSettingsScreen, SettingsScreen
+from .switches import get_switch, set_switch
+from .plugin_manager import list_plugins, set_plugin_enabled
+from .tui_settings import GameSettingsScreen, PathInput, PathSuggester
+
+
+_SOURCE_LABELS = {
+    "steam_shortcuts": "Steam non-Steam shortcuts",
+    "heroic_sideload": "Heroic sideloaded games",
+}
 
 
 class LudexApp(App[None]):
     TITLE = "ludex"
-    CSS = "#detail { height: auto; max-height: 40%; padding: 0 1; border-top: solid $primary; }"
+    CSS = """
+    #detail { height: auto; max-height: 40%; padding: 0 1; border-top: solid $primary; }
+    #settings-table { padding: 1 2; }
+    #settings-table .section { text-style: bold; margin-top: 1; }
+    #settings-table .hint { color: $text-muted; width: 100%; }
+    #settings-table .row { height: 1; }
+    #settings-table Switch { border: none; height: 1; padding: 0 1; background: transparent; }
+    """
     BINDINGS = [
-        Binding("1", "tab('owned')", "Owned"),
-        Binding("2", "tab('installed')", "Installed"),
-        Binding("3", "tab('search')", "Search stores"),
-        Binding("slash", "search", "Filter"),
-        Binding("enter", "launch", "Launch / open page"),
+        Binding("tab", "next_tab", "Next tab", priority=True),
+        Binding("shift+tab", "previous_tab", "Previous tab", priority=True, show=False),
+        Binding("down", "cursor('down')", "Down", show=False),
+        Binding("up", "cursor('up')", "Up", show=False),
+        Binding("pagedown", "cursor('page_down')", "Page down", show=False),
+        Binding("pageup", "cursor('page_up')", "Page up", show=False),
         Binding("escape", "clear", "Clear search", show=False),
-        Binding("i", "install", "Install"),
-        Binding("e", "edit", "Edit settings"),
-        Binding("s", "settings", "Settings"),
-        Binding("r", "reload", "Reload"),
-        Binding("q", "quit", "Quit"),
+        Binding("f2", "edit", "Game settings"),
+        Binding("f3", "install", "Install"),
+        Binding("f5", "reload", "Reload"),
+        Binding("ctrl+q", "quit", "Quit"),
     ]
 
     def __init__(
@@ -63,18 +78,19 @@ class LudexApp(App[None]):
         self._paths = paths
         self._keys: set[tuple[str, str]] = set()
         self._hits: dict[str, dict] = {}
+        self._searched = ""
         self._conn = None
 
     def compose(self) -> ComposeResult:
         yield Header()
-        yield Input(placeholder="filter your games; on the Search tab press Enter to search the stores (press / to focus)", id="filter")
-        with TabbedContent(id="tabs"):
-            with TabPane("Owned", id="owned"):
-                yield DataTable(id="owned-table", cursor_type="row", zebra_stripes=True)
-            with TabPane("Installed", id="installed"):
-                yield DataTable(id="installed-table", cursor_type="row", zebra_stripes=True)
-            with TabPane("Search", id="search"):
-                yield DataTable(id="search-table", cursor_type="row", zebra_stripes=True)
+        yield Tabs(Tab("Owned", id="owned"), Tab("Installed", id="installed"), Tab("Search", id="search"), Tab("Settings", id="settings"), id="tabs")
+        yield Input(id="filter")
+        with ContentSwitcher(id="views", initial="owned-table"):
+            yield DataTable(id="owned-table", cursor_type="row", zebra_stripes=True)
+            yield DataTable(id="installed-table", cursor_type="row", zebra_stripes=True)
+            yield DataTable(id="search-table", cursor_type="row", zebra_stripes=True)
+            with VerticalScroll(id="settings-table"):
+                yield from self._settings_widgets()
         yield Static("", id="detail")
         yield Footer()
 
@@ -82,15 +98,44 @@ class LudexApp(App[None]):
         self._conn = connect(self._database)
         for table in self.query(DataTable):
             table.add_columns(*(("store", "title", "price", "owned") if table.id == "search-table" else ("id", "title", "stores")))
-        self._table().focus()
+        self.query_one("#folder", Input).value = str(get_prefix_root(self._conn, self._default_prefix()))
         self.action_reload()
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        # tab, arrows and paging belong to the list only on the main screen; forms keep their own
+        if action in {"next_tab", "previous_tab", "cursor"} and len(self.screen_stack) > 1:
+            return False
+        return True
+
+    def _active(self) -> str:
+        return self.query_one(Tabs).active
+
+    def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
+        name = event.tab.id or "owned"
+        self.query_one(ContentSwitcher).current = f"{name}-table"
+        box = self.query_one("#filter", Input)
+        box.display = name != "settings"
+        box.placeholder = "type a game name, then Enter to search the stores" if name == "search" else "type to filter your games"
+        (self.query_one("#folder") if name == "settings" else box).focus()
+
+    def action_next_tab(self) -> None:
+        self.query_one(Tabs).action_next_tab()
+
+    def action_previous_tab(self) -> None:
+        self.query_one(Tabs).action_previous_tab()
+
+    def action_cursor(self, move: str) -> None:
+        if self._active() == "settings":  # arrows move between the settings
+            (self.screen.focus_previous if move in {"up", "page_up"} else self.screen.focus_next)()
+            return
+        getattr(self._table(), f"action_cursor_{move}" if move in {"up", "down"} else f"action_{move}")()
 
     def on_unmount(self) -> None:
         if self._conn is not None:
             self._conn.close()
 
     def _table(self) -> DataTable:
-        return self.query_one(f"#{self.query_one(TabbedContent).active}-table", DataTable)
+        return self.query_one(f"#{self._active()}-table", DataTable)
 
     def _reload(self) -> None:
         query = self.query_one(Input).value.strip() or None
@@ -105,10 +150,6 @@ class LudexApp(App[None]):
         self.sub_title = ", ".join(counts)
         self.query_one("#detail", Static).update("")
 
-    def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
-        if event.pane.id != "search":
-            self._table().focus()
-
     def _current_id(self) -> int | None:
         table = self._table()
         if table.row_count == 0:
@@ -116,17 +157,22 @@ class LudexApp(App[None]):
         return int(table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value)
 
     def on_input_changed(self, event: Input.Changed) -> None:
-        self._reload()
+        if event.input.id == "filter":
+            self._reload()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        if self.query_one(TabbedContent).active == "search":
+        if event.input.id == "folder":
+            self._save_prefix_folder(event.value.strip() or None)
+            return
+        if self._active() == "search":
             query = event.value.strip()
-            if query:
+            if query and query != self._searched:
+                self._searched = query
                 self.sub_title = f"searching the stores for {query!r}..."
                 owned = owned_keys(self._conn)
                 self.run_worker(lambda: self._search(query, owned), thread=True, exclusive=True)
                 return
-        self._table().focus()
+        self.action_launch()
 
     def _search(self, query: str, owned: set[tuple[str, str]]) -> None:
         hits, problems = find_games(self._sources, query, owned)
@@ -141,7 +187,6 @@ class LudexApp(App[None]):
         self.sub_title = f"{len(hits)} results for {query!r}"
         for name, reason in sorted(problems.items()):
             self.notify(f"{name}: {reason}", severity="warning")
-        table.focus()
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         if event.data_table.id == "search-table":
@@ -157,17 +202,8 @@ class LudexApp(App[None]):
         ]
         self.query_one("#detail", Static).update("\n".join(lines))
 
-    def action_tab(self, name: str) -> None:
-        self.query_one(TabbedContent).active = name
-        if name == "search":
-            self.query_one(Input).focus()
-
-    def action_search(self) -> None:
-        self.query_one(Input).focus()
-
     def action_clear(self) -> None:
         self.query_one(Input).value = ""
-        self._table().focus()
 
     def action_reload(self) -> None:
         self._keys = self._installed()
@@ -186,26 +222,61 @@ class LudexApp(App[None]):
         with writer_lock(self._lock):
             change()
 
-    def action_settings(self) -> None:
-        default = self._prefix_root or Path.home() / "prefixes"
-        keys = sorted(SWITCHES) if self._paths else []
-        current = {key: get_switch(self._paths, key) for key in keys}
+    def _default_prefix(self) -> Path:
+        return self._prefix_root or Path.home() / "prefixes"
 
-        def save(folder: str | None, wanted: dict[str, bool]) -> None:
-            def apply() -> None:
-                set_prefix_root(self._conn, folder)
-                for key, on in wanted.items():
-                    if on != current[key]:
-                        set_switch(self._paths, self._conn, self._sources, key, on)
+    def _settings_widgets(self):
+        yield Label("Default prefix folder", classes="section")
+        yield Label("Each game gets its own prefix inside it. Enter saves, Right arrow completes, blank resets.", classes="hint")
+        yield PathInput("", suggester=PathSuggester(dirs_only=True), id="folder")
+        if self._paths is None:
+            return
+        yield Label("Sources", classes="section")
+        for key, text in _SOURCE_LABELS.items():
+            with Horizontal(classes="row"):
+                yield Switch(get_switch(self._paths, key), id=f"src-{key}")
+                yield Label(f" {text}")
+        yield Label("Plugins", classes="section")
+        plugins = list_plugins()
+        for plugin in plugins:
+            with Horizontal(classes="row"):
+                yield Switch(plugin["enabled"], id=f"plg-{plugin['name']}")
+                yield Label(f" {plugin['name']} {plugin['version']}  ({', '.join(plugin['providers'])})")
+        yield Label(
+            "Add plugins with: ludex plugin add <git link or package>. Enabling or disabling applies the next time ludex starts."
+            if plugins else "No plugins installed. Add one with: ludex plugin add <git link or package>",
+            classes="hint",
+        )
 
-            self._write(apply)
-            self.notify(f"saved settings; prefix folder: {get_prefix_root(self._conn, default)}")
-            self.action_reload()
+    def _save_prefix_folder(self, folder: str | None) -> None:
+        try:
+            self._write(lambda: set_prefix_root(self._conn, folder))
+        except LudexError as exc:
+            self.notify(exc.message, severity="error")
+            return
+        self.notify(f"prefix folder: {get_prefix_root(self._conn, self._default_prefix())}")
 
-        self.push_screen(SettingsScreen(get_prefix_root(self._conn, default), default, current, save))
+    def on_switch_changed(self, event: Switch.Changed) -> None:
+        kind, _, name = (event.switch.id or "").partition("-")
+        try:
+            if kind == "src":
+                count = []
+                self._write(lambda: count.append(set_switch(self._paths, self._conn, self._sources, name, event.value)))
+                self.notify(
+                    f"{_SOURCE_LABELS[name]}: {count[0]} games imported" if event.value
+                    else f"{_SOURCE_LABELS[name]}: removed {count[0]} records; turn it on to bring the games back"
+                )
+                self.action_reload()
+            elif kind == "plg":
+                self._write(lambda: set_plugin_enabled(name, event.value))
+                self.notify(f"{name} {'enabled' if event.value else 'disabled'}; applies the next time ludex starts")
+        except LudexError as exc:
+            self.notify(exc.message, severity="error")
+            with self.prevent(Switch.Changed):
+                event.switch.value = not event.value
 
     def action_edit(self) -> None:
-        game_id = None if self.query_one(TabbedContent).active == "search" else self._current_id()
+        game_id = None if self._active() in {"search", "settings"} else self._current_id()
         if game_id is None:
             return
         game = get_game(self._conn, game_id)
@@ -235,7 +306,7 @@ class LudexApp(App[None]):
         )
 
     def action_install(self) -> None:
-        game_id = None if self.query_one(TabbedContent).active == "search" else self._current_id()
+        game_id = None if self._active() in {"search", "settings"} else self._current_id()
         if game_id is None:
             return
         try:
@@ -251,7 +322,9 @@ class LudexApp(App[None]):
             self.notify(exc.message, severity="error")
 
     def action_launch(self) -> None:
-        if self.query_one(TabbedContent).active == "search":
+        if self._active() == "settings":
+            return
+        if self._active() == "search":
             table = self.query_one("#search-table", DataTable)
             hit = self._hits.get(table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value or "") if table.row_count else None
             if hit is not None:
