@@ -330,3 +330,27 @@ def dedupe(conn: sqlite3.Connection) -> tuple[int, int]:
             ).rowcount:
                 queued += 1
     return merged, queued
+
+
+def export_games(conn: sqlite3.Connection, *, include_removed: bool = False) -> list[dict[str, Any]]:
+    """Every listed game with its ownership records (no raw store data), ordered by game id."""
+    games: dict[int, dict[str, Any]] = {}
+    for row in conn.execute(
+        "SELECT g.id AS game_id, g.title AS game_title, o.store, o.store_id, o.account, o.title, "
+        "o.removed, o.first_seen, o.last_seen FROM games g JOIN ownership o ON o.game_id = g.id "
+        "WHERE (? OR o.removed = 0) ORDER BY g.id, o.id",
+        (int(include_removed),),
+    ):
+        entry = games.setdefault(row["game_id"], {"id": row["game_id"], "title": row["game_title"], "ownership": []})
+        entry["ownership"].append(
+            {
+                "store": row["store"],
+                "store_id": row["store_id"],
+                "account": row["account"],
+                "title": row["title"],
+                "removed": bool(row["removed"]),
+                "first_seen": row["first_seen"],
+                "last_seen": row["last_seen"],
+            }
+        )
+    return list(games.values())

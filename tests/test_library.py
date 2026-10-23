@@ -423,3 +423,14 @@ def test_dedupe_merges_same_store_id_across_accounts_before_titles(conn):
     assert library.dedupe(conn) == (2, 0)
     assert [x["stores"] for x in list_games(conn)] == [["epic", "steam"]]
     assert library.list_review(conn) == []
+
+
+def test_export_lists_ownership_per_game_and_hides_removed_by_default(conn):
+    import_account(conn, "s", [g("1", "Hades", secret_field="x"), g("2", "Doom")])
+    import_account(conn, "e", [g("a", "Hades", store="epic")])
+    import_account(conn, "s", [g("1", "Hades")])
+    data = library.export_games(conn)
+    assert [(x["id"], x["title"], [o["store"] for o in x["ownership"]]) for x in data] == [(1, "Hades", ["steam", "epic"])]
+    assert "raw_json" not in str(data) and "secret_field" not in str(data)
+    everything = library.export_games(conn, include_removed=True)
+    assert [x["title"] for x in everything] == ["Hades", "Doom"] and everything[1]["ownership"][0]["removed"] is True
