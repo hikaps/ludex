@@ -23,10 +23,12 @@ def test_search_narrows_the_list_and_enter_launches(tmp_path, monkeypatch):
     monkeypatch.setattr(launch_mod.subprocess, "run", lambda argv, **kw: opened.append(argv[1]))
 
     async def scenario():
-        app = LudexApp(db, {"steam": steam.PLUGIN, "epic": epic.PLUGIN})
+        app = LudexApp(db, {"steam": steam.PLUGIN, "epic": epic.PLUGIN}, lambda: {("steam", "2")})
         async with app.run_test() as pilot:
-            table = app.query_one(DataTable)
+            table = app.query_one("#owned-table", DataTable)
             assert table.row_count == 2
+            installed = app.query_one("#installed-table", DataTable)
+            assert [installed.get_row_at(i)[1] for i in range(installed.row_count)] == ["Doom"]
             app.query_one(Input).value = "hades"
             await pilot.pause()
             assert table.row_count == 1

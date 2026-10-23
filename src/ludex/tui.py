@@ -5,12 +5,12 @@ review screens, first 500 matches only; add when the list needs paging or in-app
 """
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.widgets import DataTable, Footer, Header, Input, Static
+from textual.widgets import DataTable, Footer, Header, Input, Static, TabbedContent, TabPane
 
 from .errors import LudexError
 from .launch import launch_game
@@ -30,42 +30,62 @@ class LudexApp(App[None]):
         Binding("q", "quit", "Quit"),
     ]
 
-    def __init__(self, database: Path, sources: Mapping[str, Provider]) -> None:
+    def __init__(
+        self,
+        database: Path,
+        sources: Mapping[str, Provider],
+        installed: Callable[[], set[tuple[str, str]]] = lambda: set(),
+    ) -> None:
         super().__init__()
         self._database = database
         self._sources = sources
+        self._installed = installed
+        self._keys: set[tuple[str, str]] = set()
         self._conn = None
 
     def compose(self) -> ComposeResult:
         yield Header()
         yield Input(placeholder="search (press / to focus)", id="search")
-        yield DataTable(id="games", cursor_type="row", zebra_stripes=True)
+        with TabbedContent(id="tabs"):
+            with TabPane("Owned", id="owned"):
+                yield DataTable(id="owned-table", cursor_type="row", zebra_stripes=True)
+            with TabPane("Installed", id="installed"):
+                yield DataTable(id="installed-table", cursor_type="row", zebra_stripes=True)
         yield Static("", id="detail")
         yield Footer()
 
     def on_mount(self) -> None:
         self._conn = connect(self._database)
-        table = self.query_one(DataTable)
-        table.add_columns("id", "title", "stores")
-        table.focus()
-        self._reload()
+        for table in self.query(DataTable):
+            table.add_columns("id", "title", "stores")
+        self._table().focus()
+        self.action_reload()
 
     def on_unmount(self) -> None:
         if self._conn is not None:
             self._conn.close()
 
+    def _table(self) -> DataTable:
+        return self.query_one(f"#{self.query_one(TabbedContent).active}-table", DataTable)
+
     def _reload(self) -> None:
         query = self.query_one(Input).value.strip() or None
-        games = list_games(self._conn, query=query, limit=500)
-        table = self.query_one(DataTable)
-        table.clear()
-        for game in games:
-            table.add_row(str(game["id"]), game["title"], ", ".join(game["stores"]), key=str(game["id"]))
-        self.sub_title = f"{len(games)} games" + (" (first 500)" if len(games) == 500 else "")
+        counts = []
+        for name, only in (("owned", None), ("installed", self._keys)):
+            games = list_games(self._conn, query=query, only=only, limit=500)
+            table = self.query_one(f"#{name}-table", DataTable)
+            table.clear()
+            for game in games:
+                table.add_row(str(game["id"]), game["title"], ", ".join(game["stores"]), key=str(game["id"]))
+            counts.append(f"{len(games)}{'+' if len(games) == 500 else ''} {name}")
+        self.sub_title = ", ".join(counts)
         self.query_one("#detail", Static).update("")
 
+    def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
+        self._table().focus()
+
     def _current_id(self) -> int | None:
-        table = self.query_one(DataTable)
+        table = self._table()
         if table.row_count == 0:
             return None
         return int(table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value)
@@ -74,7 +94,7 @@ class LudexApp(App[None]):
         self._reload()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        self.query_one(DataTable).focus()
+        self._table().focus()
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         game_id = self._current_id()
@@ -92,9 +112,10 @@ class LudexApp(App[None]):
 
     def action_clear(self) -> None:
         self.query_one(Input).value = ""
-        self.query_one(DataTable).focus()
+        self._table().focus()
 
     def action_reload(self) -> None:
+        self._keys = self._installed()
         self._reload()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:

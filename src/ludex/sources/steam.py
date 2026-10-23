@@ -171,11 +171,30 @@ def _detect_steam_id(steam_dir: Path) -> str | None:
     return pick[0] if len(pick) == 1 else None
 
 
-def _local(steam_dir: Path) -> list[OwnedGame]:
+def _libraries(steam_dir: Path) -> list[Path]:
     libraries = [steam_dir]
     folders = _load_vdf(steam_dir / "steamapps" / "libraryfolders.vdf").get("libraryfolders")
     if isinstance(folders, dict):
         libraries += [Path(v["path"]) for v in folders.values() if isinstance(v, dict) and isinstance(v.get("path"), str)]
+    return libraries
+
+
+def installed(config: Mapping[str, str]) -> set[str]:
+    """App ids whose manifest says fully installed (StateFlags bit 4; a missing flag counts as installed)."""
+    found: set[str] = set()
+    for library in _libraries(_steam_dir(config)):
+        for manifest in (library / "steamapps").glob("appmanifest_*.acf"):
+            state = _load_vdf(manifest).get("AppState")
+            if not isinstance(state, dict) or not str(state.get("appid", "")).isdigit() or int(state["appid"]) <= 0:
+                continue
+            flags = str(state.get("StateFlags", "4"))
+            if flags.isdigit() and int(flags) & 4:
+                found.add(str(int(state["appid"])))
+    return found
+
+
+def _local(steam_dir: Path) -> list[OwnedGame]:
+    libraries = _libraries(steam_dir)
     games: dict[str, OwnedGame] = {
         str(app_id): OwnedGame("steam", str(app_id), name, {"installed": False})
         for app_id, name in cached_games(steam_dir).items()
@@ -217,5 +236,6 @@ PLUGIN = Provider(
         ConfigField("steam_dir", "Steam folder; blank to auto-detect", optional=True),
     ),
     fetch=fetch,
+    installed=installed,
     launch_url=lambda store_id: f"steam://rungameid/{quote(store_id, safe='')}",
 )

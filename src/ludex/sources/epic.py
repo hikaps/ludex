@@ -53,6 +53,18 @@ def _games(directory: Path) -> list[OwnedGame]:
     return list(games.values())
 
 
+def installed(config: Mapping[str, str]) -> set[str]:
+    """App names in Legendary's installed.json (empty when nothing was ever installed)."""
+    path = _legendary_dir(config) / "installed.json"
+    try:
+        data: Any = json.loads(path.read_text(encoding="utf-8")) if path.stat().st_size <= _MAX_FILE_BYTES else {}
+    except FileNotFoundError:
+        return set()
+    except (OSError, ValueError):
+        raise SourceError("epic_installed_unreadable", "Legendary's installed.json is unreadable") from None
+    return {key for key in data if isinstance(key, str)} if isinstance(data, dict) else set()
+
+
 def fetch(config: Mapping[str, str]) -> FetchResult:
     return FetchResult(_games(_legendary_dir(config)), False, "local")
 
@@ -62,5 +74,6 @@ PLUGIN = Provider(
     help="Epic library from the Legendary or Heroic cache on this machine (no login; refresh it in Heroic first)",
     config_fields=(ConfigField("legendary_dir", "Legendary config folder; blank to auto-detect", optional=True),),
     fetch=fetch,
+    installed=installed,
     launch_url=lambda store_id: f"heroic://launch?appName={quote(store_id, safe='')}&runner=legendary",
 )
