@@ -125,9 +125,9 @@ class LudexApp(App[None]):
         yield Tabs(Tab("Owned", id="owned"), Tab("Installed", id="installed"), Tab("Search", id="search"), Tab("Settings", id="settings"), id="tabs")
         yield Input(id="filter")
         with ContentSwitcher(id="views", initial="owned-table"):
-            yield DataTable(id="owned-table", cursor_type="row", zebra_stripes=True)
-            yield DataTable(id="installed-table", cursor_type="row", zebra_stripes=True)
-            yield DataTable(id="search-table", cursor_type="row", zebra_stripes=True)
+            yield DataTable(id="owned-table", cursor_type="row")
+            yield DataTable(id="installed-table", cursor_type="row")
+            yield DataTable(id="search-table", cursor_type="row")
             with VerticalScroll(id="settings-table"):
                 yield from self._settings_widgets()
         yield Static("", id="detail")
