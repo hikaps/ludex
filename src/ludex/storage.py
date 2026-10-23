@@ -14,7 +14,7 @@ from pathlib import Path
 
 from .errors import LudexError
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA_V1 = (
     "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
@@ -33,6 +33,12 @@ _SCHEMA_V1 = (
 _SCHEMA_V2 = (
     "CREATE TABLE review_queue (id INTEGER PRIMARY KEY, "
     "ownership_id INTEGER NOT NULL UNIQUE REFERENCES ownership(id), candidates_json TEXT NOT NULL)",
+)
+
+_SCHEMA_V3 = (
+    "CREATE TABLE game_settings (store TEXT NOT NULL, store_id TEXT NOT NULL, runner TEXT, prefix TEXT, "
+    "executable TEXT, args_json TEXT NOT NULL DEFAULT '[]', env_json TEXT NOT NULL DEFAULT '{}', "
+    "PRIMARY KEY(store, store_id))",
 )
 
 
@@ -65,7 +71,7 @@ def _initialize(connection: sqlite3.Connection) -> None:
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta'"
         ).fetchone()
         if has_meta is None:
-            for statement in _SCHEMA_V1 + _SCHEMA_V2:
+            for statement in _SCHEMA_V1 + _SCHEMA_V2 + _SCHEMA_V3:
                 connection.execute(statement)
             connection.execute(
                 "INSERT INTO meta(key, value) VALUES ('schema_version', ?)", (str(SCHEMA_VERSION),)
@@ -81,10 +87,11 @@ def _initialize(connection: sqlite3.Connection) -> None:
                     "schema_too_new",
                     f"database schema {stored} is newer than supported version {SCHEMA_VERSION}",
                 )
-            if stored == 1:
-                for statement in _SCHEMA_V2:
-                    connection.execute(statement)
-                connection.execute("UPDATE meta SET value = '2' WHERE key = 'schema_version'")
+            for version, statements in ((2, _SCHEMA_V2), (3, _SCHEMA_V3)):
+                if stored < version:
+                    for statement in statements:
+                        connection.execute(statement)
+                    connection.execute("UPDATE meta SET value = ? WHERE key = 'schema_version'", (str(version),))
         connection.execute("COMMIT")
     except BaseException:
         connection.execute("ROLLBACK")

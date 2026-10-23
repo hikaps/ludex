@@ -344,6 +344,10 @@ def delete_account_records(
     with conn:
         conn.execute(f"DELETE FROM review_queue WHERE ownership_id IN (SELECT id FROM ownership WHERE {where})", params)
         cursor = conn.execute(f"DELETE FROM ownership WHERE {where}", params)
+        conn.execute(
+            "DELETE FROM game_settings WHERE NOT EXISTS (SELECT 1 FROM ownership o "
+            "WHERE o.store = game_settings.store AND o.store_id = game_settings.store_id)"
+        )
     return cursor.rowcount
 
 

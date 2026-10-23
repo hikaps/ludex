@@ -7,6 +7,7 @@ import getpass
 import glob
 import json
 import os
+import shlex
 import sys
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,8 @@ from typing import Any
 from . import __version__
 from .accounts import add_account, get_account, list_accounts, remove_account
 from .errors import LudexError
+from .game_settings import get_settings, pick_copy, update_settings
+from .runners import find_runners
 from .find import find_games, owned_keys
 from .installed import installed_keys
 from .acquire import acquire_game
@@ -79,6 +82,24 @@ def _parser() -> argparse.ArgumentParser:
     acquire.add_argument("store_id")
     acquire.add_argument("--to", required=True, help="destination directory")
     acquire.add_argument("--title", default="", help="game title, if the provider wants one")
+
+    commands.add_parser("runners", help="list detected Proton builds")
+
+    game = commands.add_parser("game", help="per-game launch settings (runner, prefix, executable, environment)")
+    game_commands = game.add_subparsers(dest="game_command", metavar="action")
+    game_show = game_commands.add_parser("show", help="show a game's launch settings")
+    game_show.add_argument("game", help="game id or title")
+    game_show.add_argument("--store", help="store whose copy to use when several exist")
+    game_set = game_commands.add_parser("set", help="change a game's launch settings")
+    game_set.add_argument("game", help="game id or title")
+    game_set.add_argument("--store", help="store whose copy to use when several exist")
+    game_set.add_argument("--runner", help="runner name from 'ludex runners', or the path of a Proton folder")
+    game_set.add_argument("--prefix", help="absolute path of the Wine prefix folder")
+    game_set.add_argument("--exe", help="executable, relative to the game folder or absolute")
+    game_set.add_argument("--args", help="arguments passed to the game, one quoted string; write --args='-w' when it starts with a dash")
+    game_set.add_argument("--env", action="append", default=[], metavar="NAME=VALUE", help="environment variable (repeatable)")
+    game_set.add_argument("--unset-env", action="append", default=[], metavar="NAME", help="remove an environment variable (repeatable)")
+    game_set.add_argument("--clear", action="store_true", help="reset all settings first")
 
     commands.add_parser("tui", help="browse, search and launch games in the terminal")
 
@@ -375,6 +396,55 @@ def _cmd_acquire(args: argparse.Namespace) -> tuple[object, str]:
     return data, f"acquired into {result.directory}{hints}"
 
 
+def _cmd_runners(args: argparse.Namespace) -> tuple[object, str]:
+    runners = [{"name": r.name, "path": str(r.path), "origin": r.origin} for r in find_runners()]
+    lines = [f"{r['name']}  ({r['origin']})  {r['path']}" for r in runners]
+    return {"runners": runners}, "\n".join(lines) if lines else "no Proton builds found"
+
+
+def _settings_view(conn: Any, game_id: int, store: str | None) -> tuple[dict[str, Any], str]:
+    copy = pick_copy(conn, game_id, store)
+    data = {"id": game_id, "store": copy[0], "store_id": copy[1], **get_settings(conn, *copy).as_dict()}
+    lines = [f"{copy[0]}:{copy[1]}"] + [
+        f"  {key}: {data[key] if data[key] not in (None, [], {}) else '-'}" for key in ("runner", "prefix", "executable", "args", "env")
+    ]
+    return data, "\n".join(lines)
+
+
+def _cmd_game_show(args: argparse.Namespace) -> tuple[object, str]:
+    conn = connect(state_paths().database)
+    try:
+        return _settings_view(conn, resolve_game(conn, args.game), args.store)
+    finally:
+        conn.close()
+
+
+def _cmd_game_set(args: argparse.Namespace) -> tuple[object, str]:
+    env: dict[str, str] = {}
+    for item in args.env:
+        name, sep, value = item.partition("=")
+        if not sep:
+            raise LudexError("invalid_setting", "--env needs NAME=VALUE")
+        env[name] = value
+    try:
+        extra = shlex.split(args.args) if args.args is not None else None
+    except ValueError:
+        raise LudexError("invalid_setting", "--args has unbalanced quotes") from None
+    paths = state_paths()
+    with writer_lock(paths.import_lock):
+        conn = connect(paths.database)
+        try:
+            game_id = resolve_game(conn, args.game)
+            copy = pick_copy(conn, game_id, args.store)
+            update_settings(
+                conn, *copy, runner=args.runner, prefix=args.prefix, executable=args.exe, args=extra,
+                env=env, unset_env=args.unset_env, clear=args.clear,
+            )
+            return _settings_view(conn, game_id, args.store)
+        finally:
+            conn.close()
+
+
 def _cmd_launch(args: argparse.Namespace) -> tuple[object, str]:
     sources, _ = load_providers()
     conn = connect(state_paths().database)
@@ -465,13 +535,16 @@ _HANDLERS = {
     ("find", None): _cmd_find,
     ("install", None): _cmd_install,
     ("acquire", None): _cmd_acquire,
+    ("runners", None): _cmd_runners,
+    ("game", "show"): _cmd_game_show,
+    ("game", "set"): _cmd_game_set,
     ("launch", None): _cmd_launch,
     ("tui", None): _cmd_tui,
 }
 
 
 def _run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
-    handler = _HANDLERS[(args.command, getattr(args, "account_command", None))]
+    handler = _HANDLERS[(args.command, getattr(args, "account_command", None) or getattr(args, "game_command", None))]
     return _execute(args.json, lambda: handler(args))
 
 
@@ -551,6 +624,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if args.command == "account" and args.account_command is None:
         parser.error("account requires an action: add, ls or rm")
+    if args.command == "game" and args.game_command is None:
+        parser.error("game requires an action: show or set")
     if args.command == "import" and not args.all and not args.account:
         parser.error("import requires an account name or --all")
     if args.command == "import" and args.all and args.account:

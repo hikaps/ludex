@@ -77,7 +77,7 @@ def test_writer_lock_released_after_exception(tmp_path):
     assert (lock.stat().st_mode & 0o777) == 0o600
 
 
-def test_schema_v1_database_is_migrated_to_add_review_queue(tmp_path):
+def test_older_databases_are_migrated_step_by_step(tmp_path):
     import sqlite3
     from ludex import storage
 
@@ -89,6 +89,18 @@ def test_schema_v1_database_is_migrated_to_add_review_queue(tmp_path):
     raw.commit()
     raw.close()
     conn = storage.connect(path)
-    assert conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0] == "2"
+    assert conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0] == str(storage.SCHEMA_VERSION)
     assert conn.execute("SELECT COUNT(*) FROM review_queue").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM game_settings").fetchone()[0] == 0
+    conn.close()
+
+    raw = sqlite3.connect(tmp_path / "v2.sqlite3")  # a v2 database only gains the settings table
+    for statement in storage._SCHEMA_V1 + storage._SCHEMA_V2:
+        raw.execute(statement)
+    raw.execute("INSERT INTO meta(key, value) VALUES ('schema_version', '2')")
+    raw.commit()
+    raw.close()
+    conn = storage.connect(tmp_path / "v2.sqlite3")
+    assert conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0] == "3"
+    assert conn.execute("SELECT COUNT(*) FROM game_settings").fetchone()[0] == 0
     conn.close()
