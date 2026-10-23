@@ -410,3 +410,16 @@ def test_dedupe_merges_distinct_store_groups_and_queues_the_rest(conn):
     assert len(list_games(conn)) == 4
     assert [(i["game_id"], [c["id"] for c in i["candidates"]]) for i in library.list_review(conn)] == [(4, [3])]
     assert library.dedupe(conn) == (0, 0)
+
+
+def test_dedupe_merges_same_store_id_across_accounts_before_titles(conn):
+    _raw_games(conn, [("steam", "1", "Hades"), ("epic", "a", "Hades")])
+    gid = conn.execute("INSERT INTO games(title, normalized_title, created_at) VALUES ('Hades', 'hades', 'x')").lastrowid
+    conn.execute(
+        "INSERT INTO ownership(game_id, store, store_id, account, title, raw_json, first_seen, last_seen) "
+        "VALUES (?, 'steam', '1', 'b', 'Hades', '{}', 'x', 'x')",
+        (gid,),
+    )
+    assert library.dedupe(conn) == (2, 0)
+    assert [x["stores"] for x in list_games(conn)] == [["epic", "steam"]]
+    assert library.list_review(conn) == []
