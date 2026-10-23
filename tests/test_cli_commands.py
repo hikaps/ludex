@@ -396,3 +396,13 @@ def test_setup_failed_import_keeps_account_and_says_how_to_retry(
     assert "profile is private" in err and "ludex import main" in err
     code, out, _ = run(capsys, "account", "ls")
     assert "main" in out
+
+
+def test_setup_rejects_taken_name_before_prompting_for_fields(
+    world: World, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    add(capsys, monkeypatch, "main", "me")
+    monkeypatch.setattr("sys.stdin", io.StringIO(""))
+    code, _, err = run(capsys, "setup", "fake", "--name", "main")
+    assert code == 1
+    assert "already exists (source fake)" in err and "pick another" in err
