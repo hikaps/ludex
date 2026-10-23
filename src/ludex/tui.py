@@ -60,9 +60,10 @@ class LudexApp(App[None]):
     CSS = """
     Screen { background: $background; }
     #main { height: 1fr; }
-    #left { width: 45%; border: round $panel-lighten-2; border-title-color: $text-muted; border-subtitle-color: $text-muted; }
+    #left { width: 45%; min-width: 46; border: round $panel-lighten-2; border-title-color: $text-muted; border-subtitle-color: $text-muted; }
     #left:focus-within { border: round $success; border-title-color: $success; border-title-style: bold; }
     #detail { width: 1fr; height: 100%; border: round $panel-lighten-2; border-title-color: $text-muted; padding: 0 1; }
+    #main.-search #left { width: 70%; }
     #main.-settings #left { width: 100%; }
     #main.-settings #detail { display: none; }
     Tabs { background: $background; height: 1; }
@@ -148,6 +149,18 @@ class LudexApp(App[None]):
             yield Static("", id="detail")
         yield Footer()
 
+    def on_resize(self) -> None:
+        self.call_after_refresh(self._fit_search)
+
+    def _fit_search(self) -> None:
+        """Give the title whatever the other search columns leave, so price and owned stay visible."""
+        table = self.query_one("#search-table", DataTable)
+        if table.size.width <= 0:
+            return
+        others = sum(table.columns[k].width for k in ("store", "price", "owned"))
+        table.columns["title"].width = max(12, table.size.width - others - 2 * 4 - 2)  # cell padding, scrollbar
+        table.refresh()
+
     def _status(self, text: str) -> None:
         self.query_one("#left").border_subtitle = text
 
@@ -160,7 +173,11 @@ class LudexApp(App[None]):
         with self.prevent(Switch.Changed):
             self.query_one("#opt-auto_details", Switch).value = self._auto
         for table in self.query(DataTable):
-            table.add_columns(*(("store", "title", "price", "owned") if table.id == "search-table" else ("", "title", "stores")))
+            if table.id == "search-table":
+                for name, width in (("store", 6), ("title", 30), ("price", 10), ("owned", 7)):
+                    table.add_column(name, width=width, key=name)
+            else:
+                table.add_columns("", "title", "stores")
         self.query_one("#folder", Input).value = str(get_prefix_root(self._conn, self._default_prefix()))
         self.action_reload()
         self._table().focus()
@@ -186,6 +203,8 @@ class LudexApp(App[None]):
         self.refresh_bindings()
         self.query_one(ContentSwitcher).current = f"{name}-table"
         self.query_one("#main").set_class(name == "settings", "-settings")
+        self.query_one("#main").set_class(name == "search", "-search")
+        self.call_after_refresh(self._fit_search)
         box = self.query_one("#filter", Input)
         box.display = name != "settings"
         box.placeholder = "store search: type a name, Enter" if name == "search" else "filter: type, then Enter or Esc"
