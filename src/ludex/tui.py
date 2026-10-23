@@ -9,6 +9,8 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
+from rich.markup import escape
+from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, VerticalScroll
@@ -39,7 +41,12 @@ _SOURCE_LABELS = {
 class LudexApp(App[None]):
     TITLE = "ludex"
     CSS = """
-    #detail { height: auto; max-height: 40%; padding: 0 1; border-top: solid $primary; }
+    #filter { border: none; height: 1; background: $boost; padding: 0 1; margin-bottom: 1; }
+    #filter:focus { background: $accent 40%; }
+    #views { height: 1fr; }
+    DataTable { height: 100%; }
+    DataTable > .datatable--header { background: $primary-darken-2; text-style: bold; }
+    #detail { height: auto; min-height: 3; max-height: 40%; padding: 0 2; margin: 0 1; border: round $primary-darken-1; background: $panel; }
     #settings-table { padding: 1 2; }
     #settings-table .section { text-style: bold; margin-top: 1; }
     #settings-table .hint { color: $text-muted; width: 100%; }
@@ -107,7 +114,7 @@ class LudexApp(App[None]):
     def on_mount(self) -> None:
         self._conn = connect(self._database)
         for table in self.query(DataTable):
-            table.add_columns(*(("store", "title", "price", "owned") if table.id == "search-table" else ("id", "title", "stores")))
+            table.add_columns(*(("store", "title", "price", "owned") if table.id == "search-table" else ("", "title", "stores")))
         self.query_one("#folder", Input).value = str(get_prefix_root(self._conn, self._default_prefix()))
         self.action_reload()
         self._table().focus()
@@ -130,6 +137,10 @@ class LudexApp(App[None]):
         box.display = name != "settings"
         box.placeholder = "type a game name, Enter searches the stores (Esc: back to the list)" if name == "search" else "type to filter (Enter or Esc: back to the list)"
         (self.query_one("#folder") if name == "settings" else self._table()).focus()
+        if name == "settings":
+            self.query_one("#detail", Static).update("")
+        else:
+            self._show_hint()
 
     def action_next_tab(self) -> None:
         self.query_one(Tabs).action_next_tab()
@@ -151,17 +162,32 @@ class LudexApp(App[None]):
         return self.query_one(f"#{self._active()}-table", DataTable)
 
     def _reload(self) -> None:
-        query = self.query_one(Input).value.strip() or None
+        query = self.query_one("#filter", Input).value.strip() or None
         counts = []
-        for name, only in (("owned", None), ("installed", self._keys)):
+        installed_ids: set[int] = set()
+        for name, only in (("installed", self._keys), ("owned", None)):
             games = list_games(self._conn, query=query, only=only, limit=500)
             table = self.query_one(f"#{name}-table", DataTable)
             table.clear()
+            if name == "installed":
+                installed_ids = {g["id"] for g in games}
             for game in games:
-                table.add_row(str(game["id"]), game["title"], ", ".join(game["stores"]), key=str(game["id"]))
+                mark = Text("●", style="green") if game["id"] in installed_ids else Text(" ")
+                table.add_row(mark, game["title"], ", ".join(game["stores"]), key=str(game["id"]))
             counts.append(f"{len(games)}{'+' if len(games) == 500 else ''} {name}")
-        self.sub_title = ", ".join(counts)
-        self.query_one("#detail", Static).update("")
+        self.sub_title = ", ".join(reversed(counts))
+        self._show_hint()
+
+    def _show_hint(self) -> None:
+        """Say what to do when the visible list is empty; otherwise the detail card waits for a row."""
+        name = self._active()
+        hints = {
+            "owned": "No games here yet. Add a source with 'ludex account add' and run 'ludex import'." ,
+            "installed": "Nothing installed was found for these games. Press r to look again.",
+            "search": "Press / and type a game name, then Enter to search the stores.",
+        }
+        empty = name in hints and self.query_one(f"#{name}-table", DataTable).row_count == 0
+        self.query_one("#detail", Static).update(f"[dim]{hints[name]}[/]" if empty else "")
 
     def _current_id(self) -> int | None:
         table = self._table()
@@ -201,6 +227,7 @@ class LudexApp(App[None]):
         for key, h in self._hits.items():
             table.add_row(h["store"], h["title"], h["price"] or "-", "yes" if h["owned"] else "", key=key)
         self.sub_title = f"{len(hits)} results for {query!r}"
+        self.query_one("#detail", Static).update("" if hits else f"[dim]No results for {escape(query)!r}.[/]")
         if self._active() == "search" and self.focused is self.query_one("#filter"):
             table.focus()
         for name, reason in sorted(problems.items()):
@@ -210,13 +237,16 @@ class LudexApp(App[None]):
         key = event.row_key.value if event.row_key is not None else None  # None: the table is empty
         if event.data_table.id == "search-table":
             hit = self._hits.get(key or "")
-            self.query_one("#detail", Static).update(f"{hit['title']}\n  {hit['url']}" if hit else "")
+            self.query_one("#detail", Static).update(
+                f"[b]{escape(hit['title'])}[/]\n[dim]{escape(hit['url'])}[/]" + (f"\n{escape(hit['price'])}" if hit["price"] else "") if hit else ""
+            )
             return
         if key is None:
             return
         game = get_game(self._conn, int(key))  # the event's own row, not the active tab's cursor
-        lines = [game["title"]] + [
-            f"  {o['store']}:{o['store_id']}  account={o['account']}  {'removed' if o['removed'] else 'owned'}"
+        lines = [f"[b]{escape(game['title'])}[/]"] + [
+            f"  {escape(o['store'])}:{escape(str(o['store_id']))}  [dim]{escape(str(o['account']))}[/]  "
+            + ("[red]removed[/]" if o["removed"] else "[green]owned[/]")
             for o in game["ownership"]
         ]
         self.query_one("#detail", Static).update("\n".join(lines))

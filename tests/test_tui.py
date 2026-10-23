@@ -10,7 +10,7 @@ from ludex.plugins import OwnedGame
 from ludex.sources import epic, steam
 from ludex.storage import connect
 from ludex.tui import LudexApp
-from textual.widgets import DataTable, Input
+from textual.widgets import DataTable, Input, Static
 
 
 def test_search_narrows_the_list_and_enter_launches(tmp_path, monkeypatch):
@@ -338,3 +338,32 @@ def test_an_empty_table_highlight_event_is_ignored(tmp_path):
             assert app.is_running
 
     asyncio.run(scenario())
+
+
+def test_empty_lists_say_what_to_do_and_installed_games_get_a_marker(tmp_path):
+    db = tmp_path / "db.sqlite3"
+    connect(db).close()
+
+    async def empty():
+        app = LudexApp(db, {})
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert "No games" in str(app.query_one("#detail", Static).render())
+            await pilot.press("tab", "tab")
+            await pilot.pause()
+            assert "Press /" in str(app.query_one("#detail", Static).render())
+
+    asyncio.run(empty())
+    conn = connect(db)
+    import_account(conn, "m", [OwnedGame("steam", "1", "Hades"), OwnedGame("steam", "2", "Doom")], store="steam")
+    conn.close()
+
+    async def marked():
+        app = LudexApp(db, {}, lambda: {("steam", "1")})
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            table = app.query_one("#owned-table", DataTable)
+            rows = {table.get_row_at(i)[1]: str(table.get_row_at(i)[0]).strip() for i in range(table.row_count)}
+            assert rows == {"Doom": "", "Hades": "●"}
+
+    asyncio.run(marked())
