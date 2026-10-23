@@ -86,9 +86,10 @@ def _parser() -> argparse.ArgumentParser:
 
     commands.add_parser("runners", help="list detected Proton builds")
 
-    prefixes = commands.add_parser("prefixes", help="show or set the folder default Wine prefixes are created in")
-    prefixes.add_argument("path", nargs="?", help="new absolute folder")
-    prefixes.add_argument("--reset", action="store_true", help="go back to the built-in folder")
+    config = commands.add_parser("config", help="show or change global settings (prefix_dir: folder default Wine prefixes are created in)")
+    config.add_argument("key", nargs="?", choices=sorted(_SETTINGS), help="setting to show or change")
+    config.add_argument("value", nargs="?", help="new value (an absolute folder for prefix_dir)")
+    config.add_argument("--reset", action="store_true", help="go back to the built-in value")
 
     game = commands.add_parser("game", help="per-game launch settings (runner, prefix, executable, environment)")
     game_commands = game.add_subparsers(dest="game_command", metavar="action")
@@ -407,20 +408,26 @@ def _cmd_runners(args: argparse.Namespace) -> tuple[object, str]:
     return {"runners": runners}, "\n".join(lines) if lines else "no Proton builds found"
 
 
-def _cmd_prefixes(args: argparse.Namespace) -> tuple[object, str]:
+_SETTINGS = {"prefix_dir"}
+
+
+def _cmd_config(args: argparse.Namespace) -> tuple[object, str]:
     paths = state_paths()
     default = paths.root / "prefixes"
+    if (args.value or args.reset) and not args.key:
+        raise LudexError("invalid_setting", "name the setting to change")
+    if args.value and args.reset:
+        raise LudexError("invalid_setting", "give a value or --reset, not both")
     with writer_lock(paths.import_lock):
         conn = connect(paths.database)
         try:
-            if args.path and args.reset:
-                raise LudexError("invalid_setting", "give a path or --reset, not both")
-            if args.path or args.reset:
-                set_prefix_root(conn, None if args.reset else args.path)
+            if args.value or args.reset:
+                set_prefix_root(conn, None if args.reset else args.value)
             folder = get_prefix_root(conn, default)
         finally:
             conn.close()
-    return {"prefix_dir": str(folder), "default": folder == default}, str(folder)
+    data = {"prefix_dir": str(folder)}
+    return data, f"prefix_dir: {folder}" + ("" if folder != default else " (default)")
 
 
 def _settings_view(conn: Any, game_id: int, store: str | None) -> tuple[dict[str, Any], str]:
@@ -566,7 +573,7 @@ _HANDLERS = {
     ("install", None): _cmd_install,
     ("acquire", None): _cmd_acquire,
     ("runners", None): _cmd_runners,
-    ("prefixes", None): _cmd_prefixes,
+    ("config", None): _cmd_config,
     ("game", "show"): _cmd_game_show,
     ("game", "set"): _cmd_game_set,
     ("launch", None): _cmd_launch,

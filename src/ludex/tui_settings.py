@@ -157,19 +157,19 @@ class GameSettingsScreen(_Form):
         }
 
 
-class PrefixFolderScreen(_Form):
-    """Edit the folder default prefixes are created in."""
+class SettingsScreen(_Form):
+    """Global settings (today: the folder default prefixes are created in)."""
 
     AUTO_FOCUS = "#folder"
 
     def __init__(self, current: Path, default: Path, save: Callable[[str | None], None]) -> None:
-        super().__init__("Default prefix folder", lambda: save(self.query_one("#folder", Input).value.strip() or None))
+        super().__init__("Settings", lambda: save(self.query_one("#folder", Input).value.strip() or None))
         self._current = current
         self._default = default
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="form"):
             yield Label(self._heading)
-            yield Label(f"Each game gets its own prefix inside it. Blank resets to {self._default}")
+            yield Label(f"Default prefix folder: each game gets its own prefix inside it. Blank resets to {self._default}")
             yield PathInput(str(self._current), suggester=PathSuggester(dirs_only=True), id="folder")
             yield from self._buttons()

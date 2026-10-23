@@ -21,7 +21,7 @@ from .library import get_game, list_games
 from .plugins import Provider
 from .runners import find_runners
 from .storage import connect, writer_lock
-from .tui_settings import GameSettingsScreen, PrefixFolderScreen
+from .tui_settings import GameSettingsScreen, SettingsScreen
 
 
 class LudexApp(App[None]):
@@ -36,7 +36,7 @@ class LudexApp(App[None]):
         Binding("escape", "clear", "Clear search", show=False),
         Binding("i", "install", "Install"),
         Binding("e", "edit", "Edit settings"),
-        Binding("p", "prefix_folder", "Prefix folder"),
+        Binding("s", "settings", "Settings"),
         Binding("r", "reload", "Reload"),
         Binding("q", "quit", "Quit"),
     ]
@@ -183,14 +183,14 @@ class LudexApp(App[None]):
         with writer_lock(self._lock):
             change()
 
-    def action_prefix_folder(self) -> None:
+    def action_settings(self) -> None:
         default = self._prefix_root or Path.home() / "prefixes"
 
         def save(value: str | None) -> None:
             self._write(lambda: set_prefix_root(self._conn, value))
             self.notify(f"prefix folder: {get_prefix_root(self._conn, default)}")
 
-        self.push_screen(PrefixFolderScreen(get_prefix_root(self._conn, default), default, save))
+        self.push_screen(SettingsScreen(get_prefix_root(self._conn, default), default, save))
 
     def action_edit(self) -> None:
         game_id = None if self.query_one(TabbedContent).active == "search" else self._current_id()
