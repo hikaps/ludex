@@ -71,3 +71,33 @@ def test_install_opens_the_install_url_and_only_for_providers_that_have_one(conn
     with pytest.raises(LudexError) as info:
         launch_mod.install_game(conn, sources, 1, "epic")
     assert info.value.code == "not_installable"
+
+
+def test_command_launch_runs_detached_in_the_game_folder_with_the_account_config(conn, monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(launch_mod.subprocess, "Popen", lambda argv, **kw: calls.append((argv, kw)))
+    exe = tmp_path / "g" / "start.sh"
+    seen = []
+
+    def command(config, store_id):
+        seen.append((dict(config), store_id))
+        return [str(exe)]
+
+    import_account(conn, "disk", [OwnedGame("local", "g", "G")], store="local")
+    sources = {"local": Provider("local", "l", (), lambda c: None, launch_command=command)}
+    assert launch_mod.launch_game(conn, sources, 1, None, lambda store, account: {"path": f"{store}/{account}"}) == "local:g"
+    argv, kw = calls[0]
+    assert (argv, kw["cwd"], kw["start_new_session"], seen) == ([str(exe)], exe.parent, True, [({"path": "local/disk"}, "g")])
+    with pytest.raises(LudexError) as info:  # config is required to build the command
+        launch_mod.launch_game(conn, sources, 1)
+    assert info.value.code == "launch_failed"
+
+
+@pytest.mark.parametrize("argv", [[], ["relative.sh"]])
+def test_command_launch_rejects_invalid_commands(conn, monkeypatch, argv):
+    monkeypatch.setattr(launch_mod.subprocess, "Popen", lambda *a, **k: pytest.fail("must not start"))
+    import_account(conn, "disk", [OwnedGame("local", "g", "G")], store="local")
+    sources = {"local": Provider("local", "l", (), lambda c: None, launch_command=lambda c, s: argv)}
+    with pytest.raises(LudexError) as info:
+        launch_mod.launch_game(conn, sources, 1, None, lambda *a: {})
+    assert info.value.code == "launch_failed"

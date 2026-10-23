@@ -37,3 +37,37 @@ def test_glob_matching_nothing_raises(tmp_path):
     with pytest.raises(SourceError) as info:
         PLUGIN.fetch({"path": str(tmp_path / "nope*")})
     assert info.value.code == "directory_unreadable"
+
+
+def _game(root, name, files):
+    folder = root / name
+    folder.mkdir(parents=True)
+    for file, mode in files.items():
+        (folder / file).write_text("#!/bin/sh\n")
+        (folder / file).chmod(mode)
+    return folder
+
+
+def test_launch_command_picks_start_sh_or_the_only_native_launcher(tmp_path):
+    from ludex.sources.local import launch_command
+
+    _game(tmp_path, "one", {"run.sh": 0o755, "readme.txt": 0o755, "data.sh": 0o644})
+    _game(tmp_path, "two", {"start.sh": 0o755, "other.sh": 0o755})
+    _game(tmp_path, "many", {"a.sh": 0o755, "b.AppImage": 0o755})
+    _game(tmp_path, "none", {"game.exe": 0o755})
+    config = {"path": str(tmp_path)}
+    assert launch_command(config, "one") == [str((tmp_path / "one" / "run.sh").resolve())]
+    assert launch_command(config, "two") == [str((tmp_path / "two" / "start.sh").resolve())]
+    for ambiguous in ("many", "none", "absent"):
+        with pytest.raises(SourceError) as info:
+            launch_command(config, ambiguous)
+        assert info.value.code == "not_launchable"
+
+
+def test_launch_command_resolves_glob_store_ids(tmp_path):
+    from ludex.sources.local import launch_command
+
+    _game(tmp_path / "d1", "g", {"start.sh": 0o755})
+    _game(tmp_path / "d2", "g", {"start.sh": 0o755})
+    config = {"path": str(tmp_path / "d*")}
+    assert launch_command(config, "d2/g") == [str((tmp_path / "d2" / "g" / "start.sh").resolve())]

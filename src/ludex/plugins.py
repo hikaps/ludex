@@ -40,6 +40,13 @@ Launching (optional): ``launch_url(store_id)`` returns the URL that makes the st
 start the game (for example ``steam://rungameid/<id>``). The core opens it with ``xdg-open``; the
 plugin never spawns processes. The URL must percent-encode ``store_id`` and carry no credentials.
 
+Launching without a client (optional): ``launch_command(config, store_id)`` takes the owning
+account's configuration and returns an argument list that starts the game directly (no shell;
+``argv[0]`` an absolute path, which also becomes the working directory's folder). The core starts
+it detached from the terminal and does not track it afterwards. Raise ``SourceError`` when no
+single command can be determined. A provider may declare ``launch_url`` or ``launch_command``;
+both count as the ``launch`` capability, and ``launch_url`` wins when both are present.
+
 Installing (optional): ``install_url(store_id)`` returns the URL that makes the store's own client
 offer to install a game the account owns (for example ``steam://install/<id>``). Same rules as
 ``launch_url``. This is for the owner's official store client only; the core does not download or
@@ -161,6 +168,7 @@ class Provider:
     fetch: Callable[[Mapping[str, str]], FetchResult] | None = None
     api_version: int = API_VERSION
     launch_url: Callable[[str], str] | None = None
+    launch_command: Callable[[Mapping[str, str], str], Sequence[str]] | None = None
     install_url: Callable[[str], str] | None = None
     acquire: Callable[[AcquireRequest, Callable[[str], None]], AcquireResult] | None = None
     installed: Callable[[Mapping[str, str]], Iterable[str]] | None = None
@@ -169,5 +177,5 @@ class Provider:
 
     @property
     def capabilities(self) -> tuple[str, ...]:
-        found = (("owned", self.fetch), ("installed", self.installed), ("search", self.search), ("launch", self.launch_url), ("install", self.install_url), ("acquire", self.acquire), ("commands", self.commands or None))
+        found = (("owned", self.fetch), ("installed", self.installed), ("search", self.search), ("launch", self.launch_url or self.launch_command), ("install", self.install_url), ("acquire", self.acquire), ("commands", self.commands or None))
         return tuple(name for name, value in found if value is not None)

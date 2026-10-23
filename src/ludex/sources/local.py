@@ -4,28 +4,31 @@
 id becomes ``<matched folder>/<game folder>`` so equal names under different folders stay distinct.
 A plain path keeps the folder name as store id. The title is always the folder name. Complete: a folder that disappears is marked
 removed. An unreadable or empty ``path`` raises instead, so an unmounted drive never wipes the
-library. ponytail: folders only (no loose files such as AppImages or ROMs) and no title cleanup
+library. ponytail: launching is native only (no Windows runner, no per-game choice); folders only (no loose files such as AppImages or ROMs) and no title cleanup
 (scene tags, versions); add when a real library needs them.
 """
 from __future__ import annotations
 
 import glob
+import os
 from collections.abc import Mapping
 from pathlib import Path
 
 from ..plugins import ConfigField, FetchResult, OwnedGame, SourceError, Provider
 
 
-def fetch(config: Mapping[str, str]) -> FetchResult:
+def _roots(config: Mapping[str, str]) -> tuple[list[Path], bool]:
     raw = config.get("path")
     if not raw:
         raise SourceError("invalid_config", "path is required")
     pattern = str(Path(raw).expanduser())
     if glob.has_magic(pattern):
-        roots = sorted(Path(m) for m in glob.glob(pattern) if Path(m).is_dir())
-        qualify = True
-    else:
-        roots, qualify = [Path(pattern)], False
+        return sorted(Path(m) for m in glob.glob(pattern) if Path(m).is_dir()), True
+    return [Path(pattern)], False
+
+
+def fetch(config: Mapping[str, str]) -> FetchResult:
+    roots, qualify = _roots(config)
     games: list[OwnedGame] = []
     try:
         for root in roots:
@@ -42,9 +45,33 @@ def fetch(config: Mapping[str, str]) -> FetchResult:
     return FetchResult(games, True, "directory")
 
 
+def launch_command(config: Mapping[str, str], store_id: str) -> list[str]:
+    """The game's single native launcher: ``start.sh``, else the only executable ``.sh`` or ``.AppImage`` at the top of its folder."""
+    roots, qualify = _roots(config)
+    root_name, _, folder_name = store_id.rpartition("/") if qualify else ("", "", store_id)
+    folders = [r / folder_name for r in roots if (not qualify or r.name == root_name) and (r / folder_name).is_dir()]
+    if len(folders) != 1:
+        raise SourceError("not_launchable", "the game folder was not found (or is ambiguous)")
+    try:
+        found = sorted(
+            f for f in folders[0].iterdir()
+            if f.is_file() and os.access(f, os.X_OK) and f.suffix.lower() in (".sh", ".appimage")
+        )
+    except OSError:
+        raise SourceError("not_launchable", "the game folder is unreadable") from None
+    start = [f for f in found if f.name == "start.sh"]
+    if start or len(found) == 1:
+        return [str((start or found)[0].resolve())]
+    raise SourceError(
+        "not_launchable",
+        "no single native launcher (need start.sh or one executable .sh/.AppImage); Windows games are not supported",
+    )
+
+
 PLUGIN = Provider(
     name="local",
     help="A folder of games: each subfolder is one game (add one account per folder)",
     config_fields=(ConfigField("path", "games directory, or a pattern like /mnt/games/* to search every folder in it", path=True),),
     fetch=fetch,
+    launch_command=launch_command,
 )

@@ -380,7 +380,10 @@ def _cmd_launch(args: argparse.Namespace) -> tuple[object, str]:
     conn = connect(state_paths().database)
     try:
         game_id = resolve_game(conn, args.game)
-        target = launch_game(conn, sources, game_id, args.store)
+        paths = state_paths()
+        target = launch_game(
+            conn, sources, game_id, args.store, lambda store, account: get_account(paths, f"{store}:{account}").config
+        )
     finally:
         conn.close()
     return {"id": game_id, "launched": target}, f"launching {target}"
@@ -391,7 +394,10 @@ def _cmd_tui(args: argparse.Namespace) -> tuple[object, str]:
 
     sources, _ = load_providers()
     paths = state_paths()
-    LudexApp(paths.database, sources, lambda: installed_keys(paths, sources)[0]).run()
+    LudexApp(
+        paths.database, sources, lambda: installed_keys(paths, sources)[0],
+        lambda store, account: get_account(paths, f"{store}:{account}").config,
+    ).run()
     return {}, ""
 
 
