@@ -10,6 +10,10 @@ returns ``complete=False``, and the core adds and updates games but removes noth
 cannot tell whether a result is partial (a private profile, a truncated page, a rate limit) MUST
 raise ``SourceError`` instead of returning it.
 
+Launching (optional): ``launch_url(store_id)`` returns the URL that makes the store's own client
+start the game (for example ``steam://rungameid/<id>``). The core opens it with ``xdg-open``; the
+plugin never spawns processes. The URL must percent-encode ``store_id`` and carry no credentials.
+
 Errors raised by ``fetch`` must carry a fixed, secret-free message: never include API keys,
 tokens, or URLs with query strings.
 """
@@ -60,3 +64,4 @@ class SourcePlugin:
     config_fields: tuple[ConfigField, ...]
     fetch: Callable[[Mapping[str, str]], FetchResult]
     api_version: int = API_VERSION
+    launch_url: Callable[[str], str] | None = None

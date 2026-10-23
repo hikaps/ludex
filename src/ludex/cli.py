@@ -13,6 +13,7 @@ from typing import Any
 from . import __version__
 from .accounts import add_account, get_account, list_accounts, remove_account
 from .errors import LudexError
+from .launch import launch_game
 from .library import export_games, dismiss_review, get_game, list_games, list_review, merge_games, run_import
 from .loader import load_sources
 from .paths import state_paths
@@ -56,6 +57,10 @@ def _parser() -> argparse.ArgumentParser:
 
     show = commands.add_parser("show", help="show one game")
     show.add_argument("id", type=int)
+
+    launch = commands.add_parser("launch", help="start a game through its store's client")
+    launch.add_argument("id", type=int)
+    launch.add_argument("--store", help="store to launch from when several can")
 
     review = commands.add_parser("review", help="list title matches that need a decision")
     review.add_argument("--dismiss", type=int, metavar="ID", help="keep this item's game separate and drop it from the list")
@@ -281,6 +286,16 @@ def _cmd_show(args: argparse.Namespace) -> tuple[object, str]:
     return game, "\n".join(lines)
 
 
+def _cmd_launch(args: argparse.Namespace) -> tuple[object, str]:
+    sources, _ = load_sources()
+    conn = connect(state_paths().database)
+    try:
+        target = launch_game(conn, sources, args.id, args.store)
+    finally:
+        conn.close()
+    return {"id": args.id, "launched": target}, f"launching {target}"
+
+
 def _cmd_review(args: argparse.Namespace) -> tuple[object, str]:
     paths = state_paths()
     with writer_lock(paths.import_lock):
@@ -342,6 +357,7 @@ _HANDLERS = {
     ("import", None): _cmd_import,
     ("ls", None): _cmd_ls,
     ("show", None): _cmd_show,
+    ("launch", None): _cmd_launch,
 }
 
 

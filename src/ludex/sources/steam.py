@@ -14,6 +14,8 @@ it cannot be told apart from a failed fetch; only an explicit ``game_count: 0`` 
 """
 from __future__ import annotations
 
+from urllib.parse import quote
+
 import json
 import re
 from collections.abc import Mapping
@@ -215,4 +217,5 @@ PLUGIN = SourcePlugin(
         ConfigField("steam_dir", "Steam folder; blank to auto-detect", optional=True),
     ),
     fetch=fetch,
+    launch_url=lambda store_id: f"steam://rungameid/{quote(store_id, safe='')}",
 )

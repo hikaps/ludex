@@ -8,6 +8,8 @@ Flatpak install, not documented by Legendary. ``user.json`` (login tokens) is ne
 """
 from __future__ import annotations
 
+from urllib.parse import quote
+
 import json
 from collections.abc import Mapping
 from pathlib import Path
@@ -60,4 +62,5 @@ PLUGIN = SourcePlugin(
     help="Epic library from the Legendary or Heroic cache on this machine (no login; refresh it in Heroic first)",
     config_fields=(ConfigField("legendary_dir", "Legendary config folder; blank to auto-detect", optional=True),),
     fetch=fetch,
+    launch_url=lambda store_id: f"heroic://launch?appName={quote(store_id, safe='')}&runner=legendary",
 )
