@@ -288,16 +288,28 @@ def merge_games(conn: sqlite3.Connection, keep: int, drop: int) -> int:
 def dedupe(conn: sqlite3.Connection) -> tuple[int, int]:
     """Apply the matching rule to games that already exist; returns (merged, queued).
 
-    Games with the same normalized title merge into the lowest id when no store appears twice in
-    the group; any other group is queued for review (one item per extra game).
+    Games that own the same (store, store_id) under different accounts merge first. Then games with
+    the same normalized title merge into the lowest id when no store appears twice in the group;
+    any other group is queued for review (one item per extra game).
     """
+    merged = 0
+    for row in conn.execute(
+        "SELECT store, store_id, MIN(game_id) AS keep FROM ownership GROUP BY store, store_id "
+        "HAVING COUNT(DISTINCT game_id) > 1"
+    ).fetchall():
+        for (other,) in conn.execute(
+            "SELECT DISTINCT game_id FROM ownership WHERE store = ? AND store_id = ? AND game_id != ?",
+            (row["store"], row["store_id"], row["keep"]),
+        ).fetchall():
+            merge_games(conn, row["keep"], other)
+            merged += 1
     groups: dict[str, list[int]] = {}
     for row in conn.execute(
         "SELECT g.id, g.normalized_title FROM games g WHERE g.normalized_title != '' "
         "AND EXISTS (SELECT 1 FROM ownership WHERE game_id = g.id) ORDER BY g.id"
     ):
         groups.setdefault(row["normalized_title"], []).append(row["id"])
-    merged = queued = 0
+    queued = 0
     for ids in (g for g in groups.values() if len(g) > 1):
         stores = [
             r["store"]
