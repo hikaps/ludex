@@ -590,3 +590,13 @@ def test_game_set_and_show_and_runners_commands(
     assert code == 1 and "NAME=VALUE" in err
     with pytest.raises(SystemExit):
         run(capsys, "game")
+
+
+def test_prefixes_command_shows_sets_and_resets(world: World, capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    code, out, _ = run(capsys, "--json", "prefixes")
+    assert code == 0 and json.loads(out)["data"]["default"] is True
+    code, out, _ = run(capsys, "--json", "prefixes", str(tmp_path / "pfx"))
+    assert code == 0 and json.loads(out)["data"] == {"prefix_dir": str(tmp_path / "pfx"), "default": False}
+    assert run(capsys, "prefixes", "rel")[0] == 1
+    code, out, _ = run(capsys, "--json", "prefixes", "--reset")
+    assert json.loads(out)["data"]["default"] is True

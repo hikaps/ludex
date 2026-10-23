@@ -100,3 +100,21 @@ def update_settings(
             (store, store_id, result.runner, result.prefix, result.executable, json.dumps(list(result.args)), json.dumps(result.env)),
         )
     return result
+
+
+def get_prefix_root(conn: sqlite3.Connection, default: Path) -> Path:
+    """The folder default Wine prefixes are created in (a setting, else ``default``)."""
+    row = conn.execute("SELECT value FROM meta WHERE key = 'prefix_dir'").fetchone()
+    return Path(row["value"]) if row else default
+
+
+def set_prefix_root(conn: sqlite3.Connection, path: str | None) -> None:
+    """Set the default prefix folder; ``None`` goes back to the built-in one."""
+    with conn:
+        if path is None:
+            conn.execute("DELETE FROM meta WHERE key = 'prefix_dir'")
+            return
+        folder = Path(_clean(path, "prefix folder")).expanduser()
+        if not folder.is_absolute():
+            raise LudexError("invalid_setting", "the prefix folder must be an absolute path")
+        conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('prefix_dir', ?)", (str(folder),))
