@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import re
+import sys
 from collections import Counter
 from collections.abc import Iterable
 from importlib.metadata import EntryPoint, entry_points as _entry_points
 
+from .paths import plugins_dir
 from .plugins import API_VERSION, GROUP, Command, Provider
 
 _NAME = re.compile(r"[a-z][a-z0-9-]{0,31}\Z")
@@ -21,6 +23,18 @@ def _valid_commands(commands) -> bool:
         return False
 
 
+def _add_managed_plugins() -> None:
+    """Put each ``<state>/plugins/<name>`` folder at the end of ``sys.path`` (ludex's own libraries win)."""
+    root = plugins_dir()
+    try:
+        folders = sorted(p for p in root.iterdir() if p.is_dir() and not p.is_symlink() and not p.name.startswith("."))
+    except OSError:
+        return
+    for folder in folders:
+        if str(folder) not in sys.path:
+            sys.path.append(str(folder))
+
+
 def load_providers(
     entry_points: Iterable[EntryPoint] | None = None,
 ) -> tuple[dict[str, Provider], dict[str, str]]:
@@ -30,6 +44,8 @@ def load_providers(
     names of skipped plugins to a short reason that never includes plugin-supplied text.
     Names registered more than once are rejected without importing any of them.
     """
+    if entry_points is None:
+        _add_managed_plugins()
     candidates = sorted(
         _entry_points(group=GROUP) if entry_points is None else entry_points,
         key=lambda item: item.name,

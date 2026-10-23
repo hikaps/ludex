@@ -16,6 +16,7 @@ from . import __version__
 from .accounts import add_account, get_account, list_accounts, remove_account
 from .errors import LudexError
 from .game_settings import get_prefix_root, get_settings, pick_copy, set_prefix_root, update_settings
+from .plugin_manager import CHANNELS, add_plugin, list_plugins, remove_plugin, update_core, update_plugins
 from .runners import find_runners
 from .find import find_games, owned_keys
 from .installed import installed_keys
@@ -46,6 +47,20 @@ def _parser() -> argparse.ArgumentParser:
     account_commands.add_parser("ls", help="list accounts")
     remove = account_commands.add_parser("rm", help="remove an account")
     remove.add_argument("name")
+
+    plugin = commands.add_parser("plugin", help="manage plugins installed by ludex (one folder each in the state directory)")
+    plugin_commands = plugin.add_subparsers(dest="plugin_command", metavar="action")
+    plugin_add = plugin_commands.add_parser("add", help="install a plugin (a package name, URL or path; it runs with your permissions)")
+    plugin_add.add_argument("spec")
+    plugin_commands.add_parser("ls", help="list installed plugins")
+    plugin_rm = plugin_commands.add_parser("rm", help="remove a plugin (its accounts and games stay until 'account rm')")
+    plugin_rm.add_argument("name")
+    plugin_up = plugin_commands.add_parser("update", help="reinstall plugins from the spec they were added with")
+    plugin_up.add_argument("name", nargs="?", help="one plugin (default: all)")
+
+    update = commands.add_parser("update", help="update ludex itself from its release channel")
+    update.add_argument("--channel", choices=CHANNELS, help="default: the channel this install came from")
+    update.add_argument("--dry-run", action="store_true", help="show the command without running it")
 
     setup = commands.add_parser("setup", help="guided: add an account for a source and import it")
     setup.add_argument("source", nargs="?")
@@ -407,6 +422,40 @@ def _cmd_acquire(args: argparse.Namespace) -> tuple[object, str]:
     return data, f"acquired into {result.directory}{hints}"
 
 
+def _cmd_plugin_add(args: argparse.Namespace) -> tuple[object, str]:
+    print("note: a plugin runs with your permissions; install only code you trust", file=sys.stderr)
+    added = add_plugin(args.spec)
+    return added, f"added plugin {added['name']} {added['version']} (providers: {', '.join(added['providers'])})"
+
+
+def _cmd_plugin_ls(args: argparse.Namespace) -> tuple[object, str]:
+    plugins = list_plugins()
+    lines = [f"{p['name']} {p['version']}  providers: {', '.join(p['providers'])}" for p in plugins]
+    return {"plugins": plugins}, "\n".join(lines) if lines else "no plugins installed by ludex"
+
+
+def _cmd_plugin_rm(args: argparse.Namespace) -> tuple[object, str]:
+    removed = remove_plugin(args.name)
+    note = f"; accounts for {', '.join(removed['providers'])} stay until 'ludex account rm'" if removed["providers"] else ""
+    return removed, f"removed plugin {removed['name']}{note}"
+
+
+def _cmd_plugin_update(args: argparse.Namespace) -> tuple[object, str, int]:
+    results = update_plugins(args.name)
+    lines = [
+        f"{r['name']}: {r['from']} -> {r['to']}" if r["ok"] else f"{r['name']}: error: {r['error']['message']}"
+        for r in results
+    ]
+    return {"results": results}, "\n".join(lines) if lines else "no plugins installed by ludex", int(any(not r["ok"] for r in results))
+
+
+def _cmd_update(args: argparse.Namespace) -> tuple[object, str]:
+    result = update_core(args.channel, args.dry_run)
+    if args.dry_run:
+        return result, f"would run: {shlex.join(result['command'])}"
+    return result, f"updated ludex {result['from']} -> {result['to'] or 'unknown'} ({result['channel']})"
+
+
 def _cmd_runners(args: argparse.Namespace) -> tuple[object, str]:
     runners = [{"name": r.name, "path": str(r.path), "origin": r.origin} for r in find_runners()]
     lines = [f"{r['name']}  ({r['origin']})  {r['path']}" for r in runners]
@@ -584,6 +633,11 @@ _HANDLERS = {
     ("account", "add"): _cmd_account_add,
     ("account", "ls"): _cmd_account_ls,
     ("account", "rm"): _cmd_account_rm,
+    ("plugin", "add"): _cmd_plugin_add,
+    ("plugin", "ls"): _cmd_plugin_ls,
+    ("plugin", "rm"): _cmd_plugin_rm,
+    ("plugin", "update"): _cmd_plugin_update,
+    ("update", None): _cmd_update,
     ("import", None): _cmd_import,
     ("ls", None): _cmd_ls,
     ("show", None): _cmd_show,
@@ -600,7 +654,7 @@ _HANDLERS = {
 
 
 def _run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
-    handler = _HANDLERS[(args.command, getattr(args, "account_command", None) or getattr(args, "game_command", None))]
+    handler = _HANDLERS[(args.command, getattr(args, "account_command", None) or getattr(args, "game_command", None) or getattr(args, "plugin_command", None))]
     return _execute(args.json, lambda: handler(args))
 
 
@@ -680,6 +734,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if args.command == "account" and args.account_command is None:
         parser.error("account requires an action: add, ls or rm")
+    if args.command == "plugin" and args.plugin_command is None:
+        parser.error("plugin requires an action: add, ls, rm or update")
     if args.command == "game" and args.game_command is None:
         parser.error("game requires an action: show or set")
     if args.command == "import" and not args.all and not args.account:

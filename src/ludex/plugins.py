@@ -1,6 +1,8 @@
 """Contract for providers (entry-point group ``ludex.providers``).
 
-A plugin is a ``Provider`` instance exported from an entry point. A provider declares the
+A plugin is a ``Provider`` instance exported from an entry point. Users install one with
+``ludex plugin add`` (see ``ludex.plugin_manager``) or any Python installer; do not declare ludex
+as a dependency. A provider declares the
 capabilities it has by filling the matching field; at least one is required and the core only
 calls what is declared (``Provider.capabilities`` lists them):
 
