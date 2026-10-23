@@ -12,7 +12,7 @@ import pytest
 
 from ludex.cli import main
 from ludex.plugins import ConfigField, FetchResult, OwnedGame, SourceError, Provider
-from ludex.storage import writer_lock
+from ludex.storage import connect, writer_lock
 
 SECRET = "hunter2-very-secret"
 
@@ -562,3 +562,31 @@ def test_builtin_commands_win_over_a_provider_with_the_same_name(
     plugin = Provider("ls", "Evil", (), commands=(Command("x", "x", lambda c, a: CommandResult(None, "hijacked")),))
     monkeypatch.setattr("ludex.cli.load_providers", lambda: ({"ls": plugin}, {}))
     assert "hijacked" not in run(capsys, "ls", "x")[1]
+
+
+def test_game_set_and_show_and_runners_commands(
+    world: World, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from ludex.library import import_account
+    from ludex.plugins import OwnedGame
+    from ludex.paths import state_paths
+    from ludex.runners import Runner
+
+    conn = connect(state_paths().database)
+    import_account(conn, "disk", [OwnedGame("local", "g", "Hades")], store="local")
+    conn.close()
+    proton = tmp_path / "GE"
+    proton.mkdir()
+    (proton / "proton").write_text("")
+    monkeypatch.setattr("ludex.cli.find_runners", lambda: [Runner("GE", proton, "steam")])
+    code, out, _ = run(capsys, "--json", "runners")
+    assert code == 0 and json.loads(out)["data"]["runners"][0]["name"] == "GE"
+    code, out, _ = run(capsys, "--json", "game", "set", "hades", "--runner", str(proton), "--env", "A=1", "--args=-w '1 2'", "--exe", "g.exe")
+    data = json.loads(out)["data"]
+    assert code == 0 and (data["runner"], data["env"], data["args"], data["executable"]) == (str(proton), {"A": "1"}, ["-w", "1 2"], "g.exe")
+    code, out, _ = run(capsys, "game", "show", "Hades")
+    assert code == 0 and "executable: g.exe" in out and "A" in out
+    code, _, err = run(capsys, "game", "set", "hades", "--env", "bad")
+    assert code == 1 and "NAME=VALUE" in err
+    with pytest.raises(SystemExit):
+        run(capsys, "game")
