@@ -13,6 +13,7 @@ from typing import Any
 from . import __version__
 from .accounts import add_account, get_account, list_accounts, remove_account
 from .errors import LudexError
+from .find import find_games, owned_keys
 from .installed import installed_keys
 from .launch import launch_game
 from .library import resolve_game, delete_account_records, export_games, dismiss_review, get_game, list_games, list_review, merge_games, run_import
@@ -59,6 +60,9 @@ def _parser() -> argparse.ArgumentParser:
 
     show = commands.add_parser("show", help="show one game")
     show.add_argument("game", help="game id or title")
+
+    find = commands.add_parser("find", help="search the stores' catalogs (uses the network)")
+    find.add_argument("query")
 
     launch = commands.add_parser("launch", help="start a game through its store's client")
     launch.add_argument("game", help="game id or title")
@@ -318,6 +322,22 @@ def _cmd_show(args: argparse.Namespace) -> tuple[object, str]:
     return game, "\n".join(lines)
 
 
+def _cmd_find(args: argparse.Namespace) -> tuple[object, str]:
+    providers, _ = load_providers()
+    conn = connect(state_paths().database)
+    try:
+        owned = owned_keys(conn)
+    finally:
+        conn.close()
+    hits, problems = find_games(providers, args.query, owned)
+    for name, reason in sorted(problems.items()):
+        print(f"warning: {name}: {reason}", file=sys.stderr)
+    lines = [
+        f"[{h['store']}] {h['title']}  {h['price'] or '-'}  {h['url']}" + ("  (owned)" if h["owned"] else "") for h in hits
+    ]
+    return {"hits": hits, "problems": problems}, "\n".join(lines) if lines else "no results"
+
+
 def _cmd_launch(args: argparse.Namespace) -> tuple[object, str]:
     sources, _ = load_providers()
     conn = connect(state_paths().database)
@@ -399,6 +419,7 @@ _HANDLERS = {
     ("import", None): _cmd_import,
     ("ls", None): _cmd_ls,
     ("show", None): _cmd_show,
+    ("find", None): _cmd_find,
     ("launch", None): _cmd_launch,
     ("tui", None): _cmd_tui,
 }
