@@ -14,7 +14,7 @@ from . import __version__
 from .accounts import add_account, get_account, list_accounts, remove_account
 from .errors import LudexError
 from .launch import launch_game
-from .library import delete_account_records, export_games, dismiss_review, get_game, list_games, list_review, merge_games, run_import
+from .library import resolve_game, delete_account_records, export_games, dismiss_review, get_game, list_games, list_review, merge_games, run_import
 from .loader import load_sources
 from .paths import state_paths
 from .plugins import SourcePlugin
@@ -56,10 +56,10 @@ def _parser() -> argparse.ArgumentParser:
     listing.add_argument("--offset", type=int, default=0)
 
     show = commands.add_parser("show", help="show one game")
-    show.add_argument("id", type=int)
+    show.add_argument("game", help="game id or title")
 
     launch = commands.add_parser("launch", help="start a game through its store's client")
-    launch.add_argument("id", type=int)
+    launch.add_argument("game", help="game id or title")
     launch.add_argument("--store", help="store to launch from when several can")
 
     commands.add_parser("tui", help="browse, search and launch games in the terminal")
@@ -293,7 +293,7 @@ def _cmd_show(args: argparse.Namespace) -> tuple[object, str]:
     paths = state_paths()
     conn = connect(paths.database)
     try:
-        game = get_game(conn, args.id)
+        game = get_game(conn, resolve_game(conn, args.game))
     finally:
         conn.close()
     lines = [f"{game['id']}  {game['title']}  (added {game['created_at']})"]
@@ -310,10 +310,11 @@ def _cmd_launch(args: argparse.Namespace) -> tuple[object, str]:
     sources, _ = load_sources()
     conn = connect(state_paths().database)
     try:
-        target = launch_game(conn, sources, args.id, args.store)
+        game_id = resolve_game(conn, args.game)
+        target = launch_game(conn, sources, game_id, args.store)
     finally:
         conn.close()
-    return {"id": args.id, "launched": target}, f"launching {target}"
+    return {"id": game_id, "launched": target}, f"launching {target}"
 
 
 def _cmd_tui(args: argparse.Namespace) -> tuple[object, str]:
