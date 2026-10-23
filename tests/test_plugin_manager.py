@@ -149,3 +149,11 @@ def test_a_pasted_repository_link_gets_the_git_prefix_and_nothing_else_is_rewrit
     except LudexError:
         pass  # the fake installer registers nothing for these specs; only the spec handed over matters
     assert managed[-1][-1] == passed
+
+
+def test_plugin_ls_shows_the_link_and_branch_updates_will_use(managed, capsys):
+    from ludex.cli import main
+
+    pm.add_plugin("ludex-fakeplug==1.0")
+    assert main(["plugin", "ls"]) == 0
+    assert "from: ludex-fakeplug==1.0" in capsys.readouterr().out

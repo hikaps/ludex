@@ -467,6 +467,7 @@ def _cmd_plugin_ls(args: argparse.Namespace) -> tuple[object, str]:
     plugins = list_plugins()
     lines = [
         f"{p['name']} {p['version']}  providers: {', '.join(p['providers'])}" + ("" if p["enabled"] else "  (disabled)")
+        + f"\n  from: {p['spec'] or 'unknown (update skips it)'}"
         for p in plugins
     ]
     return {"plugins": plugins}, "\n".join(lines) if lines else "no plugins installed by ludex"
