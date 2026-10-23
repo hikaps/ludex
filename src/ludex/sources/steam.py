@@ -26,7 +26,7 @@ import httpx
 import vdf
 
 from .. import __version__
-from ..plugins import ConfigField, FetchResult, OwnedGame, Provider, SearchHit, SourceError
+from ..plugins import ConfigField, FetchResult, Metadata, OwnedGame, Provider, SearchHit, SourceError
 from .steam_cache import cached_games
 
 DEFAULT_BASE_URL = "https://api.steampowered.com"
@@ -255,6 +255,49 @@ def search(query: str, *, url: str = STORE_SEARCH_URL, client: httpx.Client | No
     return hits
 
 
+APP_DETAILS_URL = "https://store.steampowered.com/api/appdetails"
+
+
+def metadata(store_id: str, *, url: str = APP_DETAILS_URL, client: httpx.Client | None = None) -> Metadata | None:
+    """Steam store details for one app (public endpoint, no key); ``None`` when Steam has no entry."""
+    own = client is None
+    client = client or httpx.Client(timeout=10.0, headers={"User-Agent": f"ludex/{__version__}"})
+    try:
+        with client.stream("GET", url, params={"appids": store_id, "l": "english"}) as response:
+            if response.status_code == 429:
+                raise SourceError("steam_rate_limited", "Steam rate limit reached; try again later")
+            if response.status_code != 200:
+                raise SourceError("steam_unavailable", "Steam is unavailable")
+            body = _read_body(response)
+    except httpx.HTTPError:
+        raise SourceError("steam_unavailable", "Steam is unavailable") from None
+    finally:
+        if own:
+            client.close()
+    try:
+        entry = json.loads(body)[store_id]
+    except (ValueError, KeyError, TypeError):
+        raise _bad_response() from None
+    if not isinstance(entry, dict):
+        raise _bad_response()
+    data = entry.get("data")
+    if not entry.get("success") or not isinstance(data, dict):
+        return None
+
+    def names(value: object, key: str | None = None) -> tuple[str, ...]:
+        items = value if isinstance(value, list) else []
+        return tuple(x if key is None else x.get(key) for x in items if isinstance(x, str if key is None else dict) and isinstance(x if key is None else x.get(key), str))
+
+    description = data.get("short_description")
+    released = data.get("release_date")
+    return Metadata(
+        description if isinstance(description, str) and description else None,
+        names(data.get("genres"), "description"),
+        names(data.get("developers")),
+        released.get("date") if isinstance(released, dict) and isinstance(released.get("date"), str) and released["date"] else None,
+    )
+
+
 def fetch(config: Mapping[str, str]) -> FetchResult:
     if config.get("api_key"):
         steam_id = config.get("steam_id")
@@ -278,6 +321,7 @@ PLUGIN = Provider(
     fetch=fetch,
     installed=installed,
     search=search,
+    metadata=metadata,
     install_url=lambda store_id: f"steam://install/{quote(store_id, safe='')}",
     launch_url=lambda store_id: f"steam://rungameid/{quote(store_id, safe='')}",
 )

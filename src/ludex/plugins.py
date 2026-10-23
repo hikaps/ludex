@@ -18,6 +18,7 @@ calls what is declared (``Provider.capabilities`` lists them):
 - ``install``: ``install_url``, below.
 - ``installed``: ``installed``, below.
 - ``search``: ``search``, below.
+- ``metadata``: ``metadata``, below.
 - ``acquire``: ``acquire``, below.
 - ``commands``: ``commands``, below.
 
@@ -44,6 +45,12 @@ game, owned or not). This is the only capability besides ``fetch`` that may use 
 same rules apply: bounded responses, verified TLS, ``https`` links only, and errors that are
 ``SourceError`` with fixed, secret-free messages. The core adds the "owned" marker and merges
 results across providers; a failing provider is reported and skipped.
+
+Metadata (optional): ``metadata(store_id)`` returns a ``Metadata`` record (description, genres,
+developers, release date) for one game, or ``None`` when the store does not know it. The core calls
+it only when the user asks (``ludex metadata``, the TUI ``m`` key) and caches the answer in the
+library database. It may use the network under the same rules as ``search``. Several providers
+may offer it; the core uses the first one that owns a copy of the game.
 
 Launching (optional): ``launch_url(store_id)`` returns the URL that makes the store's own client
 start the game (for example ``steam://rungameid/<id>``). The core opens it with ``xdg-open``; the
@@ -138,6 +145,14 @@ class SearchHit:
 
 
 @dataclass(frozen=True, slots=True)
+class Metadata:
+    description: str | None = None
+    genres: tuple[str, ...] = ()
+    developers: tuple[str, ...] = ()
+    released: str | None = None  # as the source prints it
+
+
+@dataclass(frozen=True, slots=True)
 class AcquireRequest:
     store_id: str
     title: str
@@ -191,10 +206,11 @@ class Provider:
     acquire: Callable[[AcquireRequest, Callable[[str], None]], AcquireResult] | None = None
     installed: Callable[[Mapping[str, str]], Iterable[str]] | None = None
     search: Callable[[str], Sequence[SearchHit]] | None = None
+    metadata: Callable[[str], Metadata | None] | None = None
     commands: Sequence[Command] = ()
     settings: tuple[ConfigField, ...] = ()
 
     @property
     def capabilities(self) -> tuple[str, ...]:
-        found = (("owned", self.fetch), ("installed", self.installed), ("search", self.search), ("launch", self.launch_url or self.launch_command or self.game_folder), ("install", self.install_url), ("acquire", self.acquire), ("commands", self.commands or None))
+        found = (("owned", self.fetch), ("installed", self.installed), ("search", self.search), ("metadata", self.metadata), ("launch", self.launch_url or self.launch_command or self.game_folder), ("install", self.install_url), ("acquire", self.acquire), ("commands", self.commands or None))
         return tuple(name for name, value in found if value is not None)

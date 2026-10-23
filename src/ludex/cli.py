@@ -9,6 +9,7 @@ import json
 import os
 import shlex
 import sys
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,7 @@ from .acquire import acquire_game
 from .launch import install_game, launch_game, prepare_launch
 from .library import resolve_game, delete_account_records, export_games, dismiss_review, get_game, list_games, list_review, merge_games, run_import
 from .loader import load_providers
+from .metadata import game_metadata
 from .paths import state_paths
 from .plugins import CommandContext, CommandResult, Provider
 from .storage import connect, writer_lock
@@ -101,6 +103,10 @@ def _parser() -> argparse.ArgumentParser:
     install = commands.add_parser("install", help="ask the owning store's client to install a game you own")
     install.add_argument("game", help="game id or title")
     install.add_argument("--store", help="store to install from when several can")
+
+    meta = commands.add_parser("metadata", help="show a game's description, genres and developer (asks the store's plugin once, then keeps the answer)")
+    meta.add_argument("game", help="game id or title")
+    meta.add_argument("--refresh", action="store_true", help="ask the plugin again instead of using the kept answer")
 
     acquire = commands.add_parser("acquire", help="ask a provider to fetch a game into a directory")
     acquire.add_argument("store")
@@ -447,6 +453,20 @@ def _cmd_install(args: argparse.Namespace) -> tuple[object, str]:
     return {"id": game_id, "install": target}, f"asking the client to install {target}"
 
 
+def _cmd_metadata(args: argparse.Namespace) -> tuple[object, str]:
+    providers, _ = load_providers()
+    conn = connect(state_paths().database)
+    try:
+        game_id = resolve_game(conn, args.game)
+        found = game_metadata(conn, providers, game_id, args.refresh)
+    finally:
+        conn.close()
+    if found is None:
+        return {"id": game_id, "metadata": None}, "no store has details for this game"
+    lines = [found.description or "", f"genres: {', '.join(found.genres)}" if found.genres else "", f"by: {', '.join(found.developers)}" if found.developers else "", f"released: {found.released}" if found.released else ""]
+    return {"id": game_id, "metadata": asdict(found)}, "\n".join(x for x in lines if x)
+
+
 def _cmd_acquire(args: argparse.Namespace) -> tuple[object, str]:
     providers, _ = load_providers()
     result = acquire_game(
@@ -717,6 +737,7 @@ _HANDLERS = {
     ("show", None): _cmd_show,
     ("find", None): _cmd_find,
     ("install", None): _cmd_install,
+    ("metadata", None): _cmd_metadata,
     ("acquire", None): _cmd_acquire,
     ("runners", None): _cmd_runners,
     ("config", None): _cmd_config,

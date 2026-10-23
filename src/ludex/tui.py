@@ -19,6 +19,7 @@ from textual.widgets import ContentSwitcher, DataTable, Footer, Input, Label, St
 from .accounts import get_account, list_accounts, update_account
 from .errors import LudexError
 from .game_settings import get_prefix_root, get_settings, set_prefix_root, update_settings
+from .metadata import cached_metadata, game_metadata
 from .launch import install_game, launch_game, open_url
 from .find import find_games, owned_keys
 from .library import get_game, list_games
@@ -100,6 +101,7 @@ class LudexApp(App[None]):
         Binding("l", "launch", "Launch"),
         Binding("e", "edit", "Game settings"),
         Binding("i", "install", "Install"),
+        Binding("m", "details", "Details"),
         Binding("s", "settings", "Settings"),
         Binding("r", "reload", "Reload"),
         Binding("q", "quit", "Quit"),
@@ -161,8 +163,8 @@ class LudexApp(App[None]):
         # tab, arrows and paging belong to the list only on the main screen; forms keep their own
         if len(self.screen_stack) > 1 and action not in {"quit"}:
             return False
-        tab_actions = {"owned": {"install", "edit"}, "installed": {"launch", "edit"}, "search": {"install"}}
-        if action in {"launch", "edit", "install"}:  # what you can do depends on the tab
+        tab_actions = {"owned": {"install", "edit", "details"}, "installed": {"launch", "edit", "details"}, "search": {"install"}}
+        if action in {"launch", "edit", "install", "details"}:  # what you can do depends on the tab
             return action in tab_actions.get(self._active(), set())
         if self._active() == "settings" and action in {"focus_filter", "settings"}:
             return False
@@ -289,7 +291,10 @@ class LudexApp(App[None]):
             return
         if key is None:
             return
-        game = get_game(self._conn, int(key))  # the event's own row, not the active tab's cursor
+        self._show_game(int(key))  # the event's own row, not the active tab's cursor
+
+    def _show_game(self, game_id: int) -> None:
+        game = get_game(self._conn, game_id)
         lines = [f"[b #7aa2f7]{escape(game['title'])}[/]"] + [
             f"  [{_store_color(o['store'])}]{escape(o['store'])}[/]:{escape(str(o['store_id']))}  [dim]{escape(str(o['account']))}[/]  "
             + ("[b #f7768e]removed[/]" if o["removed"] else "[b #9ece6a]owned[/]")
@@ -297,7 +302,35 @@ class LudexApp(App[None]):
         ]
         if any((o["store"], str(o["store_id"])) in self._keys for o in game["ownership"]):
             lines.append("[#9ece6a]● installed[/]")
+        found = next((m for o in game["ownership"] if (m := cached_metadata(self._conn, o["store"], str(o["store_id"])))), None)
+        if found is not None:
+            lines += [""] + ([escape(found.description)] if found.description else [])
+            lines += [f"[dim]{label}:[/] {escape(', '.join(values))}" for label, values in (("genres", found.genres), ("by", found.developers), ("released", (found.released,) if found.released else ())) if values]
         self.query_one("#detail", Static).update("\n".join(lines))
+
+    def action_details(self) -> None:
+        game_id = self._current_id()
+        if game_id is None:
+            return
+        self.notify("asking the store for details...")
+        self.run_worker(lambda: self._fetch_details(game_id), thread=True, exclusive=True, group="details")
+
+    def _fetch_details(self, game_id: int) -> None:
+        conn = connect(self._database)  # a worker thread needs its own connection
+        try:
+            found = game_metadata(conn, self._sources, game_id)
+        except LudexError as exc:
+            self.call_from_thread(self.notify, exc.message, severity="error")
+            return
+        finally:
+            conn.close()
+        self.call_from_thread(self._details_ready, game_id, found is not None)
+
+    def _details_ready(self, game_id: int, found: bool) -> None:
+        if not found:
+            self.notify("no store has details for this game", severity="warning")
+        elif self._current_id() == game_id:
+            self._show_game(game_id)
 
     def action_clear(self) -> None:
         self.query_one("#filter", Input).value = ""

@@ -101,6 +101,6 @@ def test_older_databases_are_migrated_step_by_step(tmp_path):
     raw.commit()
     raw.close()
     conn = storage.connect(tmp_path / "v2.sqlite3")
-    assert conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0] == "3"
+    assert conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0] == str(storage.SCHEMA_VERSION)
     assert conn.execute("SELECT COUNT(*) FROM game_settings").fetchone()[0] == 0
     conn.close()
