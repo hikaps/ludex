@@ -388,3 +388,25 @@ def test_enter_goes_to_the_search_box_even_when_the_list_is_empty(tmp_path):
                 await pilot.press("escape", "tab")
 
     asyncio.run(scenario())
+
+
+def test_search_columns_fit_the_pane_so_price_and_owned_stay_visible(tmp_path):
+    from ludex.plugins import Provider, SearchHit
+
+    db = tmp_path / "db.sqlite3"
+    connect(db).close()
+    hits = [SearchHit("steam", "1", "A very long game title " * 4, "https://x/1", "9.99 USD")]
+
+    async def scenario():
+        app = LudexApp(db, {"steam": Provider("steam", "s", (), search=lambda q: hits)})
+        async with app.run_test(size=(80, 20)) as pilot:
+            await pilot.press("tab", "tab", "enter", "a", "enter")
+            await pilot.pause(0.3)
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            table = app.query_one("#search-table", DataTable)
+            assert table.row_count == 1
+            assert sum(c.get_render_width(table) for c in table.columns.values()) <= table.size.width
+            assert not table.show_horizontal_scrollbar
+
+    asyncio.run(scenario())
