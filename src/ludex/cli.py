@@ -10,7 +10,7 @@ from typing import Any
 from . import __version__
 from .accounts import add_account, get_account, list_accounts, remove_account
 from .errors import LudexError
-from .library import dismiss_review, get_game, list_games, list_review, merge_games, run_import
+from .library import dedupe, dismiss_review, get_game, list_games, list_review, merge_games, run_import
 from .loader import load_sources
 from .paths import state_paths
 from .plugins import SourcePlugin
@@ -56,6 +56,8 @@ def _parser() -> argparse.ArgumentParser:
 
     review = commands.add_parser("review", help="list title matches that need a decision")
     review.add_argument("--dismiss", type=int, metavar="ID", help="keep this item's game separate and drop it from the list")
+
+    commands.add_parser("dedupe", help="merge existing games that clearly are the same; queue unsure ones")
 
     merge = commands.add_parser("merge", help="merge game DROP into game KEEP")
     merge.add_argument("keep", type=int)
@@ -281,7 +283,19 @@ def _cmd_merge(args: argparse.Namespace) -> tuple[object, str]:
     return {"keep": args.keep, "drop": args.drop, "moved": moved}, f"merged game {args.drop} into {args.keep} ({moved} records)"
 
 
+def _cmd_dedupe(args: argparse.Namespace) -> tuple[object, str]:
+    paths = state_paths()
+    with writer_lock(paths.import_lock):
+        conn = connect(paths.database)
+        try:
+            merged, queued = dedupe(conn)
+        finally:
+            conn.close()
+    return {"merged": merged, "queued": queued}, f"merged {merged} games, queued {queued} for review"
+
+
 _HANDLERS = {
+    ("dedupe", None): _cmd_dedupe,
     ("review", None): _cmd_review,
     ("merge", None): _cmd_merge,
     ("sources", None): _cmd_sources,

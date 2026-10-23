@@ -391,3 +391,22 @@ def test_merge_validates_and_dismiss(conn):
     assert library.list_review(conn) == []
     with pytest.raises(LudexError):
         library.dismiss_review(conn, 1)
+
+
+def _raw_games(conn, rows):
+    # simulate libraries imported before matching: one game per ownership
+    for store, store_id, title in rows:
+        gid = conn.execute("INSERT INTO games(title, normalized_title, created_at) VALUES (?, ?, 'x')", (title, library.normalize_title(title))).lastrowid
+        conn.execute(
+            "INSERT INTO ownership(game_id, store, store_id, account, title, raw_json, first_seen, last_seen) "
+            "VALUES (?, ?, ?, 'a', ?, '{}', 'x', 'x')",
+            (gid, store, store_id, title),
+        )
+
+
+def test_dedupe_merges_distinct_store_groups_and_queues_the_rest(conn):
+    _raw_games(conn, [("steam", "1", "Hades"), ("epic", "a", "Hades!"), ("steam", "2", "Doom"), ("steam", "3", "DOOM"), ("epic", "b", "Solo")])
+    assert library.dedupe(conn) == (1, 1)
+    assert len(list_games(conn)) == 4
+    assert [(i["game_id"], [c["id"] for c in i["candidates"]]) for i in library.list_review(conn)] == [(4, [3])]
+    assert library.dedupe(conn) == (0, 0)
