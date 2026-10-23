@@ -497,3 +497,21 @@ def test_provider_without_owned_capability_cannot_have_accounts(
     assert code == 1 and "cannot list owned games" in err
     code, out, _ = run(capsys, "providers")
     assert "lookup  [launch]" in out
+
+
+def test_acquire_command_prints_directory_and_hints(
+    world: World, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from ludex.plugins import AcquireResult
+
+    def fn(request, report):
+        report("step 1")
+        (request.destination / "g").mkdir()
+        return AcquireResult(request.destination / "g", {"executable": "run.sh"})
+
+    plugin = Provider("demo", "Demo", (), acquire=fn)
+    monkeypatch.setattr("ludex.cli.load_providers", lambda: ({"demo": plugin}, {}))
+    code, out, err = run(capsys, "acquire", "demo", "7", "--to", str(tmp_path / "dl"))
+    assert code == 0 and "step 1" in err and "executable=run.sh" in out and str((tmp_path / "dl").resolve() / "g") in out
+    code, _, err = run(capsys, "acquire", "steam", "7", "--to", str(tmp_path / "dl"))
+    assert code == 1 and "cannot acquire" in err

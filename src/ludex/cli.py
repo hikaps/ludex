@@ -8,6 +8,7 @@ import glob
 import json
 import os
 import sys
+from pathlib import Path
 from typing import Any
 
 from . import __version__
@@ -15,6 +16,7 @@ from .accounts import add_account, get_account, list_accounts, remove_account
 from .errors import LudexError
 from .find import find_games, owned_keys
 from .installed import installed_keys
+from .acquire import acquire_game
 from .launch import install_game, launch_game
 from .library import resolve_game, delete_account_records, export_games, dismiss_review, get_game, list_games, list_review, merge_games, run_import
 from .loader import load_providers
@@ -71,6 +73,12 @@ def _parser() -> argparse.ArgumentParser:
     install = commands.add_parser("install", help="ask the owning store's client to install a game you own")
     install.add_argument("game", help="game id or title")
     install.add_argument("--store", help="store to install from when several can")
+
+    acquire = commands.add_parser("acquire", help="ask a provider to fetch a game into a directory")
+    acquire.add_argument("store")
+    acquire.add_argument("store_id")
+    acquire.add_argument("--to", required=True, help="destination directory")
+    acquire.add_argument("--title", default="", help="game title, if the provider wants one")
 
     commands.add_parser("tui", help="browse, search and launch games in the terminal")
 
@@ -353,6 +361,16 @@ def _cmd_install(args: argparse.Namespace) -> tuple[object, str]:
     return {"id": game_id, "install": target}, f"asking the client to install {target}"
 
 
+def _cmd_acquire(args: argparse.Namespace) -> tuple[object, str]:
+    providers, _ = load_providers()
+    result = acquire_game(
+        providers, args.store, args.store_id, args.title, Path(args.to), lambda message: print(message, file=sys.stderr)
+    )
+    data = {"directory": str(result.directory), "hints": dict(result.hints)}
+    hints = "".join(f"\n  {key}={value}" for key, value in sorted(result.hints.items()))
+    return data, f"acquired into {result.directory}{hints}"
+
+
 def _cmd_launch(args: argparse.Namespace) -> tuple[object, str]:
     sources, _ = load_providers()
     conn = connect(state_paths().database)
@@ -436,6 +454,7 @@ _HANDLERS = {
     ("show", None): _cmd_show,
     ("find", None): _cmd_find,
     ("install", None): _cmd_install,
+    ("acquire", None): _cmd_acquire,
     ("launch", None): _cmd_launch,
     ("tui", None): _cmd_tui,
 }
