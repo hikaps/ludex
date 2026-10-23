@@ -15,7 +15,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, VerticalScroll
 from textual.screen import ModalScreen
 from textual.suggester import Suggester
-from textual.widgets import Button, Input, Label, Select, Static, TextArea
+from textual.widgets import Button, Input, Label, Select, Static, Switch, TextArea
 
 from .errors import LudexError
 from .game_settings import GameSettings
@@ -68,6 +68,7 @@ class _Form(ModalScreen[None]):
     #form { width: 80%; max-width: 100; height: auto; max-height: 90%; border: thick $primary; background: $surface; padding: 1 2; }
     #form-error { color: $error; height: auto; }
     #buttons { height: auto; margin-top: 1; }
+    .switch { height: auto; }
     TextArea { height: 6; }
     """
 
@@ -157,19 +158,45 @@ class GameSettingsScreen(_Form):
         }
 
 
+_SWITCH_LABELS = {
+    "steam_shortcuts": "Steam non-Steam shortcuts",
+    "heroic_sideload": "Heroic sideloaded games",
+}
+
+
 class SettingsScreen(_Form):
-    """Global settings (today: the folder default prefixes are created in)."""
+    """Global settings: the default prefix folder and the yes/no source switches."""
 
     AUTO_FOCUS = "#folder"
 
-    def __init__(self, current: Path, default: Path, save: Callable[[str | None], None]) -> None:
-        super().__init__("Settings", lambda: save(self.query_one("#folder", Input).value.strip() or None))
+    def __init__(
+        self,
+        current: Path,
+        default: Path,
+        switches: dict[str, bool],
+        save: Callable[[str | None, dict[str, bool]], None],
+    ) -> None:
+        super().__init__("Settings", self._submit)
         self._current = current
         self._default = default
+        self._switches = switches
+        self._save = save
+        self._confirmed = False
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="form"):
             yield Label(self._heading)
             yield Label(f"Default prefix folder: each game gets its own prefix inside it. Blank resets to {self._default}")
             yield PathInput(str(self._current), suggester=PathSuggester(dirs_only=True), id="folder")
+            for key, on in self._switches.items():
+                with Horizontal(classes="switch"):
+                    yield Switch(on, id=key)
+                    yield Label(f" Include {_SWITCH_LABELS[key]}")
             yield from self._buttons()
+
+    def _submit(self) -> None:
+        wanted = {key: self.query_one(f"#{key}", Switch).value for key in self._switches}
+        if not self._confirmed and any(self._switches[k] and not on for k, on in wanted.items()):
+            self._confirmed = True
+            raise LudexError("confirm", "Turning a source off deletes its games from the library. Press ctrl+s again to confirm.")
+        self._save(self.query_one("#folder", Input).value.strip() or None, wanted)

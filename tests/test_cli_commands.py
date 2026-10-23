@@ -595,9 +595,18 @@ def test_game_set_and_show_and_runners_commands(
 def test_config_command_shows_sets_and_resets(world: World, capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
     default = json.loads(run(capsys, "--json", "config")[1])["data"]["prefix_dir"]
     code, out, _ = run(capsys, "--json", "config", "prefix_dir", str(tmp_path / "pfx"))
-    assert code == 0 and json.loads(out)["data"] == {"prefix_dir": str(tmp_path / "pfx")}
+    assert code == 0 and json.loads(out)["data"]["prefix_dir"] == str(tmp_path / "pfx")
     assert run(capsys, "config", "prefix_dir", "rel")[0] == 1
     assert run(capsys, "config", "--reset")[0] == 1  # no setting named
     with pytest.raises(SystemExit):
         run(capsys, "config", "nope")
     assert json.loads(run(capsys, "--json", "config", "prefix_dir", "--reset")[1])["data"]["prefix_dir"] == default
+
+
+def test_config_switch_values_are_validated_and_shown(world: World, capsys: pytest.CaptureFixture[str]) -> None:
+    data = json.loads(run(capsys, "--json", "config")[1])["data"]
+    assert data["steam_shortcuts"] is False and data["heroic_sideload"] is False
+    assert run(capsys, "config", "steam_shortcuts", "maybe")[0] == 1
+    assert run(capsys, "config", "steam_shortcuts", "--reset")[0] == 1
+    code, out, _ = run(capsys, "config", "steam_shortcuts", "no")  # already off: harmless
+    assert code == 0 and out.strip() == "steam_shortcuts: no"
