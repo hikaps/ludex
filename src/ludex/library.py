@@ -8,7 +8,13 @@ Removal policy (source of truth):
 - An ownership record of that account that is absent from a complete fetch is marked ``removed``
   and keeps its old ``last_seen``. An incomplete fetch (for example local-only Steam data) adds and
   updates games but removes nothing. Records of other accounts are never touched.
-- Ownership rows and games are never deleted.
+- Ownership rows and games are never deleted. ``merge_games`` moves ownership to the kept game and
+  leaves the emptied game row behind; a game with no ownership is not listed.
+- Matching applies only when an ownership record is first created (existing records keep their
+  game, so manual merges survive re-imports). The same (store, store_id) under another account
+  joins that game. Otherwise a single existing game with the same normalized title and no
+  ownership in the same store is joined. Any other title match is never auto-merged: the new game
+  stays separate and is queued in ``review_queue`` with its candidate games.
 - A removed record that appears in a later fetch is restored (``removed`` cleared) and keeps its
   game, so game-level data is untouched.
 - The whole import is one transaction; any error rolls back to the last good state.
@@ -52,6 +58,27 @@ def _raw_json(extra: Mapping[str, Any]) -> str:
     return json.dumps({"extra": dict(extra)}, sort_keys=True, ensure_ascii=False, default=str)
 
 
+def _match(conn: sqlite3.Connection, game: OwnedGame) -> tuple[int | None, list[int]]:
+    same = conn.execute(
+        "SELECT game_id FROM ownership WHERE store = ? AND store_id = ? ORDER BY game_id LIMIT 1",
+        (game.store, game.store_id),
+    ).fetchone()
+    if same is not None:
+        return same["game_id"], []
+    normalized = normalize_title(game.title)
+    if not normalized:
+        return None, []
+    candidates = [
+        row["id"]
+        for row in conn.execute("SELECT id FROM games WHERE normalized_title = ? ORDER BY id", (normalized,))
+    ]
+    if len(candidates) == 1 and not conn.execute(
+        "SELECT 1 FROM ownership WHERE game_id = ? AND store = ?", (candidates[0], game.store)
+    ).fetchone():
+        return candidates[0], []
+    return None, candidates
+
+
 def import_account(
     conn: sqlite3.Connection, account: str, games: Sequence[OwnedGame], *, complete: bool = True
 ) -> ImportSummary:
@@ -70,15 +97,22 @@ def import_account(
             raw = _raw_json(game.extra)
             row = existing.get(key)
             if row is None:
-                cursor = conn.execute(
-                    "INSERT INTO games(title, normalized_title, created_at) VALUES (?, ?, ?)",
-                    (game.title, normalize_title(game.title), now),
-                )
-                conn.execute(
+                game_id, candidates = _match(conn, game)
+                if game_id is None:
+                    game_id = conn.execute(
+                        "INSERT INTO games(title, normalized_title, created_at) VALUES (?, ?, ?)",
+                        (game.title, normalize_title(game.title), now),
+                    ).lastrowid
+                ownership_id = conn.execute(
                     "INSERT INTO ownership(game_id, store, store_id, account, title, raw_json, "
                     "first_seen, last_seen, removed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)",
-                    (cursor.lastrowid, game.store, game.store_id, account, game.title, raw, now, now),
-                )
+                    (game_id, game.store, game.store_id, account, game.title, raw, now, now),
+                ).lastrowid
+                if candidates:
+                    conn.execute(
+                        "INSERT INTO review_queue(ownership_id, candidates_json) VALUES (?, ?)",
+                        (ownership_id, json.dumps(candidates)),
+                    )
                 added += 1
                 continue
             conn.execute(
@@ -188,3 +222,64 @@ def get_game(conn: sqlite3.Connection, game_id: int) -> dict[str, Any]:
         "created_at": game["created_at"],
         "ownership": [{**dict(o), "removed": bool(o["removed"])} for o in ownership],
     }
+
+
+def list_review(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    items = []
+    for row in conn.execute(
+        "SELECT q.id, q.candidates_json, o.store, o.account, o.title, o.game_id "
+        "FROM review_queue q JOIN ownership o ON o.id = q.ownership_id ORDER BY q.id"
+    ):
+        candidates = [
+            {"id": g["id"], "title": g["title"]}
+            for g in (
+                conn.execute(
+                    "SELECT g.id, g.title FROM games g WHERE g.id = ? "
+                    "AND EXISTS (SELECT 1 FROM ownership WHERE game_id = g.id)",
+                    (game_id,),
+                ).fetchone()
+                for game_id in json.loads(row["candidates_json"])
+            )
+            if g is not None
+        ]
+        if candidates:
+            items.append(
+                {
+                    "id": row["id"],
+                    "game_id": row["game_id"],
+                    "store": row["store"],
+                    "account": row["account"],
+                    "title": row["title"],
+                    "candidates": candidates,
+                }
+            )
+    return items
+
+
+def dismiss_review(conn: sqlite3.Connection, review_id: int) -> None:
+    if conn.execute("DELETE FROM review_queue WHERE id = ?", (review_id,)).rowcount == 0:
+        raise LudexError("review_not_found", f"no review item with id {review_id}")
+
+
+def merge_games(conn: sqlite3.Connection, keep: int, drop: int) -> int:
+    """Move every ownership record of game ``drop`` to ``keep``; returns how many moved."""
+    if keep == drop:
+        raise LudexError("invalid_merge", "cannot merge a game into itself")
+    for game_id in (keep, drop):
+        if conn.execute("SELECT 1 FROM games WHERE id = ?", (game_id,)).fetchone() is None:
+            raise LudexError("game_not_found", f"no game with id {game_id}")
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        moved = conn.execute("UPDATE ownership SET game_id = ? WHERE game_id = ?", (keep, drop)).rowcount
+        for row in conn.execute(
+            "SELECT q.id, q.candidates_json FROM review_queue q JOIN ownership o ON o.id = q.ownership_id "
+            "WHERE o.game_id = ?",
+            (keep,),
+        ).fetchall():
+            if {keep, drop} & set(json.loads(row["candidates_json"])):
+                conn.execute("DELETE FROM review_queue WHERE id = ?", (row["id"],))
+        conn.execute("COMMIT")
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
+    return moved
