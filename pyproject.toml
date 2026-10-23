@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ludex"
-version = "0.36.0"
+version = "0.37.0"
 description = "Headless, scriptable library of the games you own across stores"
 readme = "README.md"
 license = "GPL-3.0-or-later"
