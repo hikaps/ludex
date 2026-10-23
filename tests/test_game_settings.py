@@ -82,3 +82,17 @@ def test_pick_copy_needs_a_choice_between_stores(conn):
     with pytest.raises(LudexError) as info:
         pick_copy(conn, 1, "epic")
     assert info.value.code == "not_owned"
+
+
+def test_prefix_root_setting_roundtrip_and_validation(conn, tmp_path):
+    from ludex.game_settings import get_prefix_root, set_prefix_root
+
+    default = tmp_path / "default"
+    assert get_prefix_root(conn, default) == default
+    set_prefix_root(conn, str(tmp_path / "mine"))
+    assert get_prefix_root(conn, default) == tmp_path / "mine"
+    with pytest.raises(LudexError):
+        set_prefix_root(conn, "relative/dir")
+    assert get_prefix_root(conn, default) == tmp_path / "mine"
+    set_prefix_root(conn, None)
+    assert get_prefix_root(conn, default) == default

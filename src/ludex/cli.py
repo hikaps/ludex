@@ -15,7 +15,7 @@ from typing import Any
 from . import __version__
 from .accounts import add_account, get_account, list_accounts, remove_account
 from .errors import LudexError
-from .game_settings import get_settings, pick_copy, update_settings
+from .game_settings import get_prefix_root, get_settings, pick_copy, set_prefix_root, update_settings
 from .runners import find_runners
 from .find import find_games, owned_keys
 from .installed import installed_keys
@@ -85,6 +85,10 @@ def _parser() -> argparse.ArgumentParser:
     acquire.add_argument("--title", default="", help="game title, if the provider wants one")
 
     commands.add_parser("runners", help="list detected Proton builds")
+
+    prefixes = commands.add_parser("prefixes", help="show or set the folder default Wine prefixes are created in")
+    prefixes.add_argument("path", nargs="?", help="new absolute folder")
+    prefixes.add_argument("--reset", action="store_true", help="go back to the built-in folder")
 
     game = commands.add_parser("game", help="per-game launch settings (runner, prefix, executable, environment)")
     game_commands = game.add_subparsers(dest="game_command", metavar="action")
@@ -403,6 +407,22 @@ def _cmd_runners(args: argparse.Namespace) -> tuple[object, str]:
     return {"runners": runners}, "\n".join(lines) if lines else "no Proton builds found"
 
 
+def _cmd_prefixes(args: argparse.Namespace) -> tuple[object, str]:
+    paths = state_paths()
+    default = paths.root / "prefixes"
+    with writer_lock(paths.import_lock):
+        conn = connect(paths.database)
+        try:
+            if args.path and args.reset:
+                raise LudexError("invalid_setting", "give a path or --reset, not both")
+            if args.path or args.reset:
+                set_prefix_root(conn, None if args.reset else args.path)
+            folder = get_prefix_root(conn, default)
+        finally:
+            conn.close()
+    return {"prefix_dir": str(folder), "default": folder == default}, str(folder)
+
+
 def _settings_view(conn: Any, game_id: int, store: str | None) -> tuple[dict[str, Any], str]:
     copy = pick_copy(conn, game_id, store)
     data = {"id": game_id, "store": copy[0], "store_id": copy[1], **get_settings(conn, *copy).as_dict()}
@@ -454,7 +474,7 @@ def _cmd_launch(args: argparse.Namespace) -> tuple[object, str]:
     try:
         game_id = resolve_game(conn, args.game)
         if args.dry_run:
-            plan = prepare_launch(conn, sources, game_id, args.store, config_for, paths.root / "prefixes")
+            plan = prepare_launch(conn, sources, game_id, args.store, config_for, get_prefix_root(conn, paths.root / "prefixes"))
             data = {
                 "id": game_id, "target": plan.target, "url": plan.url, "argv": list(plan.argv),
                 "cwd": str(plan.cwd) if plan.cwd else None, "env": sorted(plan.env),  # names only: values may be secrets
@@ -462,7 +482,7 @@ def _cmd_launch(args: argparse.Namespace) -> tuple[object, str]:
             how = plan.url or shlex.join(plan.argv)
             env = f"  [env: {', '.join(data['env'])}]" if data["env"] else ""
             return data, f"would start {plan.target}: {how}{env}"
-        target = launch_game(conn, sources, game_id, args.store, config_for, paths.root / "prefixes")
+        target = launch_game(conn, sources, game_id, args.store, config_for, get_prefix_root(conn, paths.root / "prefixes"))
     finally:
         conn.close()
     return {"id": game_id, "launched": target}, f"launching {target}"
@@ -476,7 +496,7 @@ def _cmd_tui(args: argparse.Namespace) -> tuple[object, str]:
     LudexApp(
         paths.database, sources, lambda: installed_keys(paths, sources)[0],
         lambda store, account: get_account(paths, f"{store}:{account}").config,
-        paths.root / "prefixes",
+        paths.root / "prefixes", paths.import_lock,
     ).run()
     return {}, ""
 
@@ -546,6 +566,7 @@ _HANDLERS = {
     ("install", None): _cmd_install,
     ("acquire", None): _cmd_acquire,
     ("runners", None): _cmd_runners,
+    ("prefixes", None): _cmd_prefixes,
     ("game", "show"): _cmd_game_show,
     ("game", "set"): _cmd_game_set,
     ("launch", None): _cmd_launch,

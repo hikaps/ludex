@@ -1,8 +1,8 @@
 """Terminal UI: browse, search and launch. All behavior comes from the core library.
 
-ponytail: read-only view of the local database (import with ``ludex import`` outside), no merge or
-review screens, first 500 matches only;
-add when the list needs paging or in-app maintenance.
+ponytail: the library is read-only here (import with ``ludex import`` outside), no merge or review
+screens, first 500 matches only; only launch settings and the prefix folder can be edited. Add
+paging or more in-app maintenance when needed.
 """
 from __future__ import annotations
 
@@ -14,11 +14,14 @@ from textual.binding import Binding
 from textual.widgets import DataTable, Footer, Header, Input, Static, TabbedContent, TabPane
 
 from .errors import LudexError
+from .game_settings import get_prefix_root, get_settings, set_prefix_root, update_settings
 from .launch import install_game, launch_game, open_url
 from .find import find_games, owned_keys
 from .library import get_game, list_games
 from .plugins import Provider
-from .storage import connect
+from .runners import find_runners
+from .storage import connect, writer_lock
+from .tui_settings import GameSettingsScreen, PrefixFolderScreen
 
 
 class LudexApp(App[None]):
@@ -32,6 +35,8 @@ class LudexApp(App[None]):
         Binding("enter", "launch", "Launch / open page"),
         Binding("escape", "clear", "Clear search", show=False),
         Binding("i", "install", "Install"),
+        Binding("e", "edit", "Edit settings"),
+        Binding("p", "prefix_folder", "Prefix folder"),
         Binding("r", "reload", "Reload"),
         Binding("q", "quit", "Quit"),
     ]
@@ -43,6 +48,7 @@ class LudexApp(App[None]):
         installed: Callable[[], set[tuple[str, str]]] = lambda: set(),
         config_for: Callable[[str, str], Mapping[str, str]] | None = None,
         prefix_root: Path | None = None,
+        lock: Path | None = None,
     ) -> None:
         super().__init__()
         self._database = database
@@ -50,6 +56,7 @@ class LudexApp(App[None]):
         self._installed = installed
         self._config_for = config_for
         self._prefix_root = prefix_root
+        self._lock = lock
         self._keys: set[tuple[str, str]] = set()
         self._hits: dict[str, dict] = {}
         self._conn = None
@@ -166,6 +173,55 @@ class LudexApp(App[None]):
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         self.action_launch()
 
+    def _prefix(self) -> Path | None:
+        return get_prefix_root(self._conn, self._prefix_root) if self._prefix_root else None
+
+    def _write(self, change: Callable[[], object]) -> None:
+        if self._lock is None:
+            change()
+            return
+        with writer_lock(self._lock):
+            change()
+
+    def action_prefix_folder(self) -> None:
+        default = self._prefix_root or Path.home() / "prefixes"
+
+        def save(value: str | None) -> None:
+            self._write(lambda: set_prefix_root(self._conn, value))
+            self.notify(f"prefix folder: {get_prefix_root(self._conn, default)}")
+
+        self.push_screen(PrefixFolderScreen(get_prefix_root(self._conn, default), default, save))
+
+    def action_edit(self) -> None:
+        game_id = None if self.query_one(TabbedContent).active == "search" else self._current_id()
+        if game_id is None:
+            return
+        game = get_game(self._conn, game_id)
+        copies = sorted(
+            (o["store"], o["store_id"], o["account"]) for o in game["ownership"]
+            if not o["removed"] and getattr(self._sources.get(o["store"]), "game_folder", None)
+        )
+        if not copies:
+            self.notify("launch settings apply to games a provider keeps in a folder (for example local games)", severity="warning")
+            return
+        store, store_id, account = copies[0]
+        folder = None
+        try:
+            folder = Path(self._sources[store].game_folder(self._config_for(store, account), store_id)) if self._config_for else None
+        except Exception:  # the folder is only used for path completion
+            pass
+
+        def save(values: dict) -> None:
+            self._write(lambda: update_settings(self._conn, store, store_id, clear=True, **values))
+            self.notify(f"saved settings for {game['title']}")
+
+        self.push_screen(
+            GameSettingsScreen(
+                game["title"], get_settings(self._conn, store, store_id), find_runners(),
+                self._prefix_root or Path.home() / "prefixes", folder, save,
+            )
+        )
+
     def action_install(self) -> None:
         game_id = None if self.query_one(TabbedContent).active == "search" else self._current_id()
         if game_id is None:
@@ -198,13 +254,13 @@ class LudexApp(App[None]):
             return
         try:
             try:
-                target = launch_game(self._conn, self._sources, game_id, None, self._config_for, self._prefix_root)
+                target = launch_game(self._conn, self._sources, game_id, None, self._config_for, self._prefix())
             except LudexError as exc:
                 if exc.code != "launch_ambiguous":
                     raise
                 # several stores can start it: use the first, alphabetically
                 store = exc.message.split("launched from ")[1].split(";")[0].split(", ")[0]
-                target = launch_game(self._conn, self._sources, game_id, store, self._config_for, self._prefix_root)
+                target = launch_game(self._conn, self._sources, game_id, store, self._config_for, self._prefix())
             self.notify(f"launching {target}")
         except LudexError as exc:
             self.notify(exc.message, severity="error")
