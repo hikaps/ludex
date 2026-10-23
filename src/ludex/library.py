@@ -283,3 +283,38 @@ def merge_games(conn: sqlite3.Connection, keep: int, drop: int) -> int:
         conn.execute("ROLLBACK")
         raise
     return moved
+
+
+def dedupe(conn: sqlite3.Connection) -> tuple[int, int]:
+    """Apply the matching rule to games that already exist; returns (merged, queued).
+
+    Games with the same normalized title merge into the lowest id when no store appears twice in
+    the group; any other group is queued for review (one item per extra game).
+    """
+    groups: dict[str, list[int]] = {}
+    for row in conn.execute(
+        "SELECT g.id, g.normalized_title FROM games g WHERE g.normalized_title != '' "
+        "AND EXISTS (SELECT 1 FROM ownership WHERE game_id = g.id) ORDER BY g.id"
+    ):
+        groups.setdefault(row["normalized_title"], []).append(row["id"])
+    merged = queued = 0
+    for ids in (g for g in groups.values() if len(g) > 1):
+        stores = [
+            r["store"]
+            for r in conn.execute(
+                f"SELECT DISTINCT game_id, store FROM ownership WHERE game_id IN ({','.join('?' * len(ids))})", ids
+            )
+        ]
+        if len(stores) == len(set(stores)):
+            for other in ids[1:]:
+                merge_games(conn, ids[0], other)
+                merged += 1
+            continue
+        for index, game_id in enumerate(ids[1:], start=1):
+            first = conn.execute("SELECT MIN(id) FROM ownership WHERE game_id = ?", (game_id,)).fetchone()[0]
+            if conn.execute(
+                "INSERT OR IGNORE INTO review_queue(ownership_id, candidates_json) VALUES (?, ?)",
+                (first, json.dumps(ids[:index])),
+            ).rowcount:
+                queued += 1
+    return merged, queued
