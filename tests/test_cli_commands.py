@@ -454,7 +454,7 @@ def test_path_completion_lists_matches_and_marks_directories(tmp_path: Path) -> 
     assert [_complete_path(prefix, i) for i in range(3)] == [str(tmp_path / "games") + "/", str(tmp_path / "gzip.txt"), None]
 
 
-def test_account_rm_marks_its_records_removed_and_clears_orphans(
+def test_account_rm_deletes_its_records_and_clears_orphans(
     world: World, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     world.catalogs["me"] = [("1", "Alpha")]
@@ -462,17 +462,17 @@ def test_account_rm_marks_its_records_removed_and_clears_orphans(
     add(capsys, monkeypatch, "other", "me")
     assert run(capsys, "import", "--all")[0] == 0
     code, out, _ = run(capsys, "account", "rm", "other")
-    assert code == 0 and "marked 1 records removed" in out
+    assert code == 0 and "deleted 1 records" in out
     code, out, _ = run(capsys, "ls")
     assert "Alpha" in out  # still owned through main
     code, out, _ = run(capsys, "show", "1")
-    assert out.count("owned") == 1 and out.count("removed") == 1
+    assert out.count("owned") == 1 and "other" not in out
     # orphan: the account vanished from the file but its record remains
     add(capsys, monkeypatch, "ghost", "me")
     assert run(capsys, "import", "ghost")[0] == 0
     path = state_paths().accounts
     path.write_text(json.dumps({k: v for k, v in json.loads(path.read_text()).items() if k != "fake:ghost"}))
     code, out, _ = run(capsys, "account", "rm", "ghost")
-    assert code == 0 and "marked 1 records removed" in out
+    assert code == 0 and "deleted 1 records" in out
     code, _, err = run(capsys, "account", "rm", "ghost")
     assert code == 1 and "not found" in err
