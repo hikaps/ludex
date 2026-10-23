@@ -43,7 +43,10 @@ def add_account(paths: StatePaths, name: str, source: str, config: Mapping[str, 
     _check_name(name)
     data = _load(paths)
     if name in data:
-        raise LudexError("account_exists", f"account {name} already exists")
+        raise LudexError(
+            "account_exists",
+            f"account {name} already exists (source {data[name].get('source')}); account names are shared by all sources, pick another",
+        )
     data[name] = {"source": source, "config": dict(config)}
     write_json_private(paths.accounts, data)
 

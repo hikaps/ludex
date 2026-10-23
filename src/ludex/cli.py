@@ -192,6 +192,9 @@ def _cmd_setup(args: argparse.Namespace) -> tuple[object, str]:
     source = args.source or _ask(f"source ({', '.join(names)}) [{names[0]}]: ", names[0])
     plugin = _plugin(sources, problems, source)
     name = args.name or _ask(f"account name [{source}]: ", source)
+    taken = dict(list_accounts(state_paths()))
+    if name in taken:
+        raise LudexError("account_exists", f"account {name} already exists (source {taken[name]}); account names are shared by all sources, pick another")
     print(f"{plugin.help}\nEnter skips optional fields.", file=sys.stderr)
     added = _cmd_account_add(argparse.Namespace(source=source, name=name, fields=[]))
     try:
