@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import re
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -7,6 +9,7 @@ from typing import Any, Mapping
 
 from .errors import LudexError
 from .paths import StatePaths
+from .plugins import ConfigField
 from .private_io import read_json_private, write_json_private
 
 _NAME = re.compile(r"[a-z][a-z0-9_-]{0,31}")
@@ -74,7 +77,10 @@ def get_account(paths: StatePaths, ref: str) -> Account:
     config = entry.get("config")
     if not isinstance(config, dict):
         config = {}
-    return Account(key.partition(":")[2], entry["source"], MappingProxyType({str(k): str(v) for k, v in config.items()}))
+    from .provider_settings import get_values  # plugin-wide settings sit under the account's own fields
+
+    merged = {**get_values(paths, entry["source"]), **{str(k): str(v) for k, v in config.items()}}
+    return Account(key.partition(":")[2], entry["source"], MappingProxyType(merged))
 
 
 def list_accounts(paths: StatePaths) -> list[tuple[str, str]]:
@@ -90,3 +96,29 @@ def remove_account(paths: StatePaths, ref: str) -> None:
     data = _load(paths)
     del data[_resolve(data, ref)]
     write_json_private(paths.accounts, data)
+
+
+def update_account(
+    paths: StatePaths, ref: str, fields: Sequence[ConfigField], values: Mapping[str, str], unset: Sequence[str] = ()
+) -> list[str]:
+    """Change an account's configuration in place (records are untouched). Returns the keys changed."""
+    known = {f.name: f for f in fields}
+    for key in [*values, *unset]:
+        if key not in known:
+            raise LudexError("unknown_field", f"this account's source has no field {key}")
+    for key, value in values.items():
+        if not value:
+            raise LudexError("empty_value", f"field {key} must not be empty")
+    for key in unset:
+        if not known[key].optional:
+            raise LudexError("required_field", f"field {key} is required; set a new value instead")
+    data = _load(paths)
+    key = _resolve(data, ref)
+    entry = data[key]
+    config = dict(entry["config"]) if isinstance(entry.get("config"), dict) else {}
+    config.update(values)
+    for name in unset:
+        config.pop(name, None)
+    entry["config"] = config
+    write_json_private(paths.accounts, data)
+    return sorted({*values, *unset})

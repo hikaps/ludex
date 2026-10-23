@@ -91,3 +91,25 @@ def test_provider_without_any_capability_is_rejected():
     empty = Provider(name="empty", help="x", config_fields=())
     loaded, problems = load_providers([_Entry("empty", empty)])
     assert loaded == {} and problems == {"empty": "declares no capability"}
+
+
+def test_invalid_plugin_settings_are_rejected():
+    from ludex.plugins import ConfigField
+
+    cases = [
+        ((ConfigField("Bad-Name", "x"),), ()),
+        ((ConfigField("a", "x"), ConfigField("a", "y")), ()),
+        ((ConfigField("shared", "x"),), (ConfigField("shared", "y"),)),
+        (("not a field",), ()),
+    ]
+    for settings, fields in cases:
+        plugin = Provider(name="demo", help="d", config_fields=fields, fetch=lambda c: [], settings=settings)  # type: ignore[arg-type]
+        loaded, problems = load_providers([_Entry("demo", plugin)])
+        assert loaded == {} and "invalid settings" in problems["demo"], settings
+
+
+def test_valid_plugin_settings_load():
+    from ludex.plugins import ConfigField
+
+    plugin = _plugin(settings=(ConfigField("region", "r", optional=True),))
+    assert load_providers([_Entry("demo", plugin)])[0] == {"demo": plugin}

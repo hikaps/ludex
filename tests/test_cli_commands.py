@@ -45,6 +45,7 @@ def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> World:
         help="Fake store",
         config_fields=(ConfigField("user", "account user"), ConfigField("key", "API key", secret=True)),
         fetch=lambda config: FetchResult(w.fetch(config), True, "fake"),
+        settings=(ConfigField("region", "store region", optional=True), ConfigField("token", "API token", secret=True, optional=True)),
     )
     monkeypatch.setattr("ludex.cli.load_providers", lambda: ({"fake": plugin}, {"broken": "failed to import"}))
     return w
@@ -78,6 +79,10 @@ def test_providers_lists_plugins_and_problems(world: World, capsys: pytest.Captu
                     "fields": [
                         {"name": "user", "help": "account user", "secret": False, "optional": False},
                         {"name": "key", "help": "API key", "secret": True, "optional": False},
+                    ],
+                    "settings": [
+                        {"name": "region", "help": "store region", "secret": False, "optional": True},
+                        {"name": "token", "help": "API token", "secret": True, "optional": True},
                     ],
                 }
             ],
@@ -598,8 +603,7 @@ def test_config_command_shows_sets_and_resets(world: World, capsys: pytest.Captu
     assert code == 0 and json.loads(out)["data"]["prefix_dir"] == str(tmp_path / "pfx")
     assert run(capsys, "config", "prefix_dir", "rel")[0] == 1
     assert run(capsys, "config", "--reset")[0] == 1  # no setting named
-    with pytest.raises(SystemExit):
-        run(capsys, "config", "nope")
+    assert run(capsys, "config", "nope")[0] == 1
     assert json.loads(run(capsys, "--json", "config", "prefix_dir", "--reset")[1])["data"]["prefix_dir"] == default
 
 
@@ -610,3 +614,61 @@ def test_config_switch_values_are_validated_and_shown(world: World, capsys: pyte
     assert run(capsys, "config", "steam_shortcuts", "--reset")[0] == 1
     code, out, _ = run(capsys, "config", "steam_shortcuts", "no")  # already off: harmless
     assert code == 0 and out.strip() == "steam_shortcuts: no"
+
+
+def test_account_set_changes_fields_keeps_games_and_never_prints_secrets(
+    world: World, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.catalogs = {"u1": [("1", "Hades")], "u2": [("2", "Doom")]}
+    add(capsys, monkeypatch, "a", "u1")
+    assert run(capsys, "import", "a")[0] == 0
+    code, out, err = run(capsys, "--json", "account", "set", "a", "--set", "user=u2")
+    assert code == 0 and json.loads(out)["data"] == {"account": "a", "changed": ["user"]}
+    assert "Hades" in run(capsys, "ls")[1]  # the games stay until the next import
+    monkeypatch.setattr("sys.stdin", io.StringIO("new-" + SECRET + "\n"))
+    code, out, err = run(capsys, "account", "set", "a", "--secret", "key")
+    assert code == 0 and "new-" + SECRET not in out + err
+    assert run(capsys, "import", "a")[0] == 0 and world.seen_config[-1]["user"] == "u2" and world.seen_config[-1]["key"] == "new-" + SECRET
+    assert "Doom" in run(capsys, "ls")[1]
+
+
+def test_account_set_rejects_bad_input_without_changing_the_account(
+    world: World, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    add(capsys, monkeypatch, "a", "u1")
+    for argv in (
+        ["account", "set", "a"],
+        ["account", "set", "a", "--set", f"key={SECRET}"],  # secret on argv
+        ["account", "set", "a", "--set", "nope=1"],
+        ["account", "set", "a", "--set", "user="],
+        ["account", "set", "a", "--unset", "user"],  # required
+        ["account", "set", "missing", "--set", "user=x"],
+    ):
+        code, out, err = run(capsys, *argv)
+        assert code == 1 and SECRET not in out + err, argv
+    run(capsys, "import", "a")
+    assert world.seen_config[-1]["user"] == "u1"
+
+
+def test_plugin_settings_roundtrip_reach_the_plugin_and_never_print_secrets(
+    world: World, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.catalogs = {"u1": []}
+    add(capsys, monkeypatch, "a", "u1")
+    assert run(capsys, "config", "fake.region", "eu")[1].strip() == "fake.region: eu"
+    monkeypatch.setattr("sys.stdin", io.StringIO(SECRET + "\n"))
+    code, out, err = run(capsys, "config", "fake.token", "--secret")
+    assert code == 0 and out.strip() == "fake.token: (set)" and SECRET not in out + err
+    code, out, _ = run(capsys, "--json", "config")
+    assert json.loads(out)["data"]["plugins"] == {"fake": {"region": "eu", "token": "(set)"}} and SECRET not in out
+    run(capsys, "import", "a")
+    assert world.seen_config[-1]["region"] == "eu" and world.seen_config[-1]["token"] == SECRET
+    assert run(capsys, "config", "fake.region", "--reset")[1].strip() == "fake.region: (not set)"
+    path = Path(state_paths().root) / "plugin-settings.json"
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_plugin_settings_rejects_secret_on_argv_and_unknown_names(world: World, capsys: pytest.CaptureFixture[str]) -> None:
+    for argv in (["config", "fake.token", SECRET], ["config", "fake.nope", "x"], ["config", "ghost.region", "x"], ["config", "fake.region", "--secret"], ["config", "prefix_dir", "--secret"]):
+        code, out, err = run(capsys, *argv)
+        assert code == 1 and SECRET not in out + err, argv
