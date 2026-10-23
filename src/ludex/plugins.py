@@ -9,6 +9,7 @@ calls what is declared (``Provider.capabilities`` lists them):
 - ``install``: ``install_url``, below.
 - ``installed``: ``installed``, below.
 - ``search``: ``search``, below.
+- ``acquire``: ``acquire``, below.
 
 An owned-only provider needs nothing else. ``API_VERSION`` changes only when an existing field
 changes meaning; adding a capability field is compatible and does not change it. A provider whose
@@ -43,6 +44,16 @@ offer to install a game the account owns (for example ``steam://install/<id>``).
 ``launch_url``. This is for the owner's official store client only; the core does not download or
 unpack anything itself.
 
+Acquiring (optional): ``acquire(request, report)`` gets a ``AcquireRequest`` (store id, title, and a
+``destination`` directory the core created) and does the whole job itself: download, unpack, or
+drive an official client. It calls ``report(message)`` with short progress lines and returns an
+``AcquireResult``: the game's ``directory``, which MUST lie inside ``destination`` (the core checks
+this and rejects anything else), and string ``hints`` (for example ``{"executable": "game.sh"}``).
+The core ships no implementation and takes no position on where a plugin gets its files; the
+plugin's author is responsible for what it fetches and for the rights to it. Same rules as
+``search``: bounded responses, verified TLS, fixed secret-free ``SourceError`` messages, nothing
+written outside ``destination``.
+
 Errors raised by ``fetch`` must carry a fixed, secret-free message: never include API keys,
 tokens, or URLs with query strings.
 """
@@ -50,6 +61,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from .errors import LudexError
@@ -89,6 +101,19 @@ class SearchHit:
 
 
 @dataclass(frozen=True, slots=True)
+class AcquireRequest:
+    store_id: str
+    title: str
+    destination: Path
+
+
+@dataclass(frozen=True, slots=True)
+class AcquireResult:
+    directory: Path
+    hints: Mapping[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
 class FetchResult:
     games: Iterable[OwnedGame]
     complete: bool
@@ -104,10 +129,11 @@ class Provider:
     api_version: int = API_VERSION
     launch_url: Callable[[str], str] | None = None
     install_url: Callable[[str], str] | None = None
+    acquire: Callable[[AcquireRequest, Callable[[str], None]], AcquireResult] | None = None
     installed: Callable[[Mapping[str, str]], Iterable[str]] | None = None
     search: Callable[[str], Sequence[SearchHit]] | None = None
 
     @property
     def capabilities(self) -> tuple[str, ...]:
-        found = (("owned", self.fetch), ("installed", self.installed), ("search", self.search), ("launch", self.launch_url), ("install", self.install_url))
+        found = (("owned", self.fetch), ("installed", self.installed), ("search", self.search), ("launch", self.launch_url), ("install", self.install_url), ("acquire", self.acquire))
         return tuple(name for name, value in found if value is not None)
