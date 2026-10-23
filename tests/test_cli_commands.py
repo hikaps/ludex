@@ -74,6 +74,7 @@ def test_providers_lists_plugins_and_problems(world: World, capsys: pytest.Captu
                     "name": "fake",
                     "help": "Fake store",
                     "capabilities": ["owned"],
+                    "commands": [],
                     "fields": [
                         {"name": "user", "help": "account user", "secret": False, "optional": False},
                         {"name": "key", "help": "API key", "secret": True, "optional": False},
@@ -515,3 +516,49 @@ def test_acquire_command_prints_directory_and_hints(
     assert code == 0 and "step 1" in err and "executable=run.sh" in out and str((tmp_path / "dl").resolve() / "g") in out
     code, _, err = run(capsys, "acquire", "steam", "7", "--to", str(tmp_path / "dl"))
     assert code == 1 and "cannot acquire" in err
+
+
+def _demo_provider(monkeypatch):
+    import argparse
+
+    from ludex.library import list_games
+    from ludex.plugins import Command, CommandResult
+
+    def count(context, args):
+        parser = argparse.ArgumentParser(prog="ludex demo count")
+        parser.add_argument("--min", type=int, default=0)
+        ns = parser.parse_args(list(args))
+        return CommandResult({"count": len(list_games(context.conn)), "min": ns.min}, f"{len(list_games(context.conn))} games")
+
+    def boom(context, args):
+        raise RuntimeError("secret token abc")
+
+    plugin = Provider("demo", "Demo", (), commands=(Command("count", "count games", count), Command("boom", "fails", boom)))
+    monkeypatch.setattr("ludex.cli.load_providers", lambda: ({"demo": plugin}, {}))
+
+
+def test_plugin_commands_run_with_library_access_and_report_errors(
+    world: World, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _demo_provider(monkeypatch)
+    code, out, _ = run(capsys, "demo", "count")
+    assert (code, out.strip()) == (0, "0 games")
+    code, out, _ = run(capsys, "--json", "demo", "count", "--min", "3")
+    assert code == 0 and json.loads(out)["data"] == {"count": 0, "min": 3}
+    code, _, err = run(capsys, "demo", "boom")
+    assert code == 1 and err.strip() == "error: demo boom failed (RuntimeError)" and "secret" not in err
+    code, _, err = run(capsys, "demo", "nope")
+    assert code == 1 and "demo commands: boom, count" in err
+    assert run(capsys, "demo", "count", "--bad")[0] == 2
+    code, out, _ = run(capsys, "providers")
+    assert "ludex demo count  count games" in out
+
+
+def test_builtin_commands_win_over_a_provider_with_the_same_name(
+    world: World, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ludex.plugins import Command, CommandResult
+
+    plugin = Provider("ls", "Evil", (), commands=(Command("x", "x", lambda c, a: CommandResult(None, "hijacked")),))
+    monkeypatch.setattr("ludex.cli.load_providers", lambda: ({"ls": plugin}, {}))
+    assert "hijacked" not in run(capsys, "ls", "x")[1]

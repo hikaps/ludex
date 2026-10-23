@@ -10,6 +10,7 @@ calls what is declared (``Provider.capabilities`` lists them):
 - ``installed``: ``installed``, below.
 - ``search``: ``search``, below.
 - ``acquire``: ``acquire``, below.
+- ``commands``: ``commands``, below.
 
 An owned-only provider needs nothing else. ``API_VERSION`` changes only when an existing field
 changes meaning; adding a capability field is compatible and does not change it. A provider whose
@@ -54,12 +55,25 @@ plugin's author is responsible for what it fetches and for the rights to it. Sam
 ``search``: bounded responses, verified TLS, fixed secret-free ``SourceError`` messages, nothing
 written outside ``destination``.
 
+Commands (optional): ``commands`` is a sequence of ``Command(name, help, run)``. Each becomes
+``ludex <provider> <name> [args...]`` (names are lowercase letters, digits and ``-``; a provider
+named like a built-in command cannot have commands, because the built-in wins). ``run(context,
+args)`` receives a ``CommandContext`` (an open library connection and the loaded providers) and
+the raw argument strings after the command name; it parses them itself (``argparse`` is fine;
+``-h`` and usage errors work as usual) and returns a ``CommandResult(data, text)``: ``data`` is
+printed as JSON under ``--json`` and ``text`` otherwise. Act on the library through the functions
+in ``ludex.library`` (``list_games``, ``get_game``, ``resolve_game``, ``run_import``, ...), not raw
+SQL. The core holds the writer lock for the whole run, so commands are serialized with imports.
+Raise ``LudexError`` with a fixed, secret-free message for expected failures; any other exception
+is reported as ``command_failed`` without its text. Commands cannot add TUI tabs.
+
 Errors raised by ``fetch`` must carry a fixed, secret-free message: never include API keys,
 tokens, or URLs with query strings.
 """
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
+import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -114,6 +128,25 @@ class AcquireResult:
 
 
 @dataclass(frozen=True, slots=True)
+class CommandContext:
+    conn: sqlite3.Connection
+    providers: Mapping[str, Provider]
+
+
+@dataclass(frozen=True, slots=True)
+class CommandResult:
+    data: object
+    text: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class Command:
+    name: str
+    help: str
+    run: Callable[[CommandContext, Sequence[str]], CommandResult]
+
+
+@dataclass(frozen=True, slots=True)
 class FetchResult:
     games: Iterable[OwnedGame]
     complete: bool
@@ -132,8 +165,9 @@ class Provider:
     acquire: Callable[[AcquireRequest, Callable[[str], None]], AcquireResult] | None = None
     installed: Callable[[Mapping[str, str]], Iterable[str]] | None = None
     search: Callable[[str], Sequence[SearchHit]] | None = None
+    commands: Sequence[Command] = ()
 
     @property
     def capabilities(self) -> tuple[str, ...]:
-        found = (("owned", self.fetch), ("installed", self.installed), ("search", self.search), ("launch", self.launch_url), ("install", self.install_url), ("acquire", self.acquire))
+        found = (("owned", self.fetch), ("installed", self.installed), ("search", self.search), ("launch", self.launch_url), ("install", self.install_url), ("acquire", self.acquire), ("commands", self.commands or None))
         return tuple(name for name, value in found if value is not None)

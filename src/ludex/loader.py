@@ -6,9 +6,19 @@ from collections import Counter
 from collections.abc import Iterable
 from importlib.metadata import EntryPoint, entry_points as _entry_points
 
-from .plugins import API_VERSION, GROUP, Provider
+from .plugins import API_VERSION, GROUP, Command, Provider
 
 _NAME = re.compile(r"[a-z][a-z0-9-]{0,31}\Z")
+
+
+def _valid_commands(commands) -> bool:
+    try:
+        names = [c.name for c in commands]
+        return len(set(names)) == len(names) and all(
+            isinstance(c, Command) and re.fullmatch(r"[a-z][a-z0-9-]*", c.name) and callable(c.run) for c in commands
+        )
+    except TypeError:
+        return False
 
 
 def load_providers(
@@ -47,6 +57,8 @@ def load_providers(
                 problems[name] = f"unsupported api_version (ludex requires {API_VERSION})"
             elif not value.capabilities:
                 problems[name] = "declares no capability"
+            elif not _valid_commands(value.commands):
+                problems[name] = "has an invalid command (need unique lowercase names and a callable run)"
             else:
                 loaded[name] = value
     return loaded, problems
