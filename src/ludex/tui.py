@@ -41,11 +41,13 @@ class LudexApp(App[None]):
         database: Path,
         sources: Mapping[str, Provider],
         installed: Callable[[], set[tuple[str, str]]] = lambda: set(),
+        config_for: Callable[[str, str], Mapping[str, str]] | None = None,
     ) -> None:
         super().__init__()
         self._database = database
         self._sources = sources
         self._installed = installed
+        self._config_for = config_for
         self._keys: set[tuple[str, str]] = set()
         self._hits: dict[str, dict] = {}
         self._conn = None
@@ -194,13 +196,13 @@ class LudexApp(App[None]):
             return
         try:
             try:
-                target = launch_game(self._conn, self._sources, game_id)
+                target = launch_game(self._conn, self._sources, game_id, None, self._config_for)
             except LudexError as exc:
                 if exc.code != "launch_ambiguous":
                     raise
                 # several stores can start it: use the first, alphabetically
                 store = exc.message.split("launched from ")[1].split(";")[0].split(", ")[0]
-                target = launch_game(self._conn, self._sources, game_id, store)
+                target = launch_game(self._conn, self._sources, game_id, store, self._config_for)
             self.notify(f"launching {target}")
         except LudexError as exc:
             self.notify(exc.message, severity="error")

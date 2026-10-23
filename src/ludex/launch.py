@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import subprocess
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from pathlib import Path
 
 from .errors import LudexError
 from .library import get_game
@@ -19,27 +20,54 @@ def open_url(url: str, what: str) -> None:
         raise LudexError("launch_failed", f"the system could not open {what}") from None
 
 
-def _open_owned(conn, sources: Mapping[str, Provider], game_id: int, store: str | None, field: str, verb: str) -> str:
+def _pick(conn, sources: Mapping[str, Provider], game_id: int, store: str | None, usable, verb: str) -> dict:
     game = get_game(conn, game_id)
-    owned = [o for o in game["ownership"] if not o["removed"]]
-    usable = [o for o in owned if getattr(sources.get(o["store"]), field, None)]
+    candidates = [o for o in game["ownership"] if not o["removed"] and usable(sources.get(o["store"]))]
     if store is not None:
-        usable = [o for o in usable if o["store"] == store]
-    stores = sorted({o["store"] for o in usable})
-    if not usable:
+        candidates = [o for o in candidates if o["store"] == store]
+    stores = sorted({o["store"] for o in candidates})
+    if not candidates:
         raise LudexError(f"not_{verb}able", f"game {game_id} has no owned copy that can be {verb}ed")
     if len(stores) > 1:
         raise LudexError(f"{verb}_ambiguous", f"game {game_id} can be {verb}ed from {', '.join(stores)}; pass --store")
-    record = usable[0]
-    open_url(getattr(sources[record["store"]], field)(record["store_id"]), f"the {record['store']} client for this game")
+    return candidates[0]
+
+
+def launch_game(
+    conn,
+    sources: Mapping[str, Provider],
+    game_id: int,
+    store: str | None = None,
+    config_for: Callable[[str, str], Mapping[str, str]] | None = None,
+) -> str:
+    """Start a game; returns ``store:store_id``. ``config_for(store, account)`` supplies the account configuration for providers that launch by command. ponytail: no installed check, the client reports a game that is not installed; add when launch must pick installed copies."""
+    record = _pick(conn, sources, game_id, store, lambda p: p is not None and (p.launch_url or p.launch_command), "launch")
+    provider = sources[record["store"]]
+    if provider.launch_url:
+        open_url(provider.launch_url(record["store_id"]), f"the {record['store']} client for this game")
+    else:
+        if config_for is None:
+            raise LudexError("launch_failed", "this provider launches by command and no account configuration is available")
+        try:
+            argv = [str(a) for a in provider.launch_command(config_for(record["store"], record["account"]), record["store_id"])]
+        except LudexError:
+            raise
+        except Exception as exc:
+            raise LudexError("launch_failed", f"provider {record['store']} could not build a launch command ({type(exc).__name__})") from None
+        if not argv or not Path(argv[0]).is_absolute():
+            raise LudexError("launch_failed", f"provider {record['store']} returned an invalid launch command")
+        try:
+            subprocess.Popen(
+                argv, cwd=Path(argv[0]).parent, start_new_session=True,
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        except OSError:
+            raise LudexError("launch_failed", "the game could not be started (is it executable?)") from None
     return f"{record['store']}:{record['store_id']}"
-
-
-def launch_game(conn, sources: Mapping[str, Provider], game_id: int, store: str | None = None) -> str:
-    """Open the launch URL of a game; returns ``store:store_id``. ponytail: no installed check, the client reports a game that is not installed; add when launch must pick installed copies."""
-    return _open_owned(conn, sources, game_id, store, "launch_url", "launch")
 
 
 def install_game(conn, sources: Mapping[str, Provider], game_id: int, store: str | None = None) -> str:
     """Ask the owning store's client to install a game you own; returns ``store:store_id``."""
-    return _open_owned(conn, sources, game_id, store, "install_url", "install")
+    record = _pick(conn, sources, game_id, store, lambda p: p is not None and p.install_url, "install")
+    open_url(sources[record["store"]].install_url(record["store_id"]), f"the {record['store']} client for this game")
+    return f"{record['store']}:{record['store_id']}"
