@@ -52,9 +52,14 @@ def test_search_tab_queries_providers_marks_owned_and_enter_opens_the_page(tmp_p
     async def scenario():
         app = LudexApp(db, {"steam": store})
         async with app.run_test() as pilot:
-            await pilot.pause()
-            app.query_one("TabbedContent").active = "search"
-            await pilot.pause()
+            tabs = app.query_one("TabbedContent")
+            for _ in range(50):  # the initial Owned activation can land after the first switch
+                tabs.active = "search"
+                await pilot.pause()
+                if tabs.active == "search":
+                    await pilot.pause()
+                    break
+            assert tabs.active == "search"
             app.query_one(Input).value = "ha"
             app.query_one(Input).focus()
             await pilot.press("enter")
