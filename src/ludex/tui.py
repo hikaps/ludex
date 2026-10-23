@@ -14,13 +14,15 @@ from textual.binding import Binding
 from textual.containers import Horizontal, VerticalScroll
 from textual.widgets import ContentSwitcher, DataTable, Footer, Header, Input, Label, Static, Switch, Tab, Tabs
 
+from .accounts import get_account, list_accounts, update_account
 from .errors import LudexError
 from .game_settings import get_prefix_root, get_settings, set_prefix_root, update_settings
 from .launch import install_game, launch_game, open_url
 from .find import find_games, owned_keys
 from .library import get_game, list_games
 from .paths import StatePaths
-from .plugins import Provider
+from .plugins import ConfigField, Provider
+from .provider_settings import get_values, set_value
 from .runners import find_runners
 from .storage import connect, writer_lock
 from .switches import get_switch, set_switch
@@ -42,15 +44,16 @@ class LudexApp(App[None]):
     #settings-table .section { text-style: bold; margin-top: 1; }
     #settings-table .hint { color: $text-muted; width: 100%; }
     #settings-table .row { height: 1; }
+    #settings-table Input { border: none; height: 1; padding: 0 1; }
     #settings-table Switch { border: none; height: 1; padding: 0 1; background: transparent; }
     """
     BINDINGS = [
         Binding("tab", "next_tab", "Next tab", priority=True),
         Binding("shift+tab", "previous_tab", "Previous tab", priority=True, show=False),
-        Binding("down", "cursor('down')", "Down", show=False),
-        Binding("up", "cursor('up')", "Up", show=False),
-        Binding("pagedown", "cursor('page_down')", "Page down", show=False),
-        Binding("pageup", "cursor('page_up')", "Page up", show=False),
+        Binding("down", "cursor('down')", "Down", show=False, priority=True),
+        Binding("up", "cursor('up')", "Up", show=False, priority=True),
+        Binding("pagedown", "cursor('page_down')", "Page down", show=False, priority=True),
+        Binding("pageup", "cursor('page_up')", "Page up", show=False, priority=True),
         Binding("escape", "clear", "Clear search", show=False),
         Binding("f2", "edit", "Game settings"),
         Binding("f3", "install", "Install"),
@@ -79,6 +82,7 @@ class LudexApp(App[None]):
         self._keys: set[tuple[str, str]] = set()
         self._hits: dict[str, dict] = {}
         self._searched = ""
+        self._fields: dict[str, tuple] = {}  # settings Input id -> what it edits
         self._conn = None
 
     def compose(self) -> ComposeResult:
@@ -164,6 +168,9 @@ class LudexApp(App[None]):
         if event.input.id == "folder":
             self._save_prefix_folder(event.value.strip() or None)
             return
+        if event.input.id in self._fields:
+            self._save_field(event.input.id, event.value.strip())
+            return
         if self._active() == "search":
             query = event.value.strip()
             if query and query != self._searched:
@@ -247,6 +254,54 @@ class LudexApp(App[None]):
             if plugins else "No plugins installed. Add one with: ludex plugin add <git link or package>",
             classes="hint",
         )
+        for plugin in sorted(self._sources.values(), key=lambda p: p.name):
+            if plugin.settings:
+                values = get_values(self._paths, plugin.name)
+                yield Label(f"{plugin.name} settings", classes="section")
+                for field in plugin.settings:
+                    yield from self._field_input(("plugin", plugin, field), field, values.get(field.name))
+        accounts = [(f"{source}:{name}", source) for name, source in list_accounts(self._paths) if source in self._sources]
+        if accounts:
+            yield Label("Accounts", classes="section")
+            yield Label("Enter saves a field. Run 'ludex import' afterwards to pick up the change.", classes="hint")
+        for ref, source in accounts:
+            plugin = self._sources[source]
+            config = get_account(self._paths, ref).config
+            yield Label(ref, classes="section")
+            for field in plugin.config_fields:
+                yield from self._field_input(("account", ref, plugin, field), field, config.get(field.name))
+
+    def _field_input(self, target: tuple, field: ConfigField, value: str | None):
+        input_id = f"field-{len(self._fields)}"
+        self._fields[input_id] = target
+        yield Label(f"{field.name}: {field.help}" + (" (optional)" if field.optional else ""), classes="hint")
+        shown = "" if field.secret else value or ""
+        placeholder = "(set; type to replace)" if field.secret and value else ""
+        if field.path:
+            yield PathInput(shown, suggester=PathSuggester(dirs_only=False), placeholder=placeholder, id=input_id)
+        else:
+            yield Input(shown, placeholder=placeholder, password=field.secret, id=input_id)
+
+    def _save_field(self, input_id: str, text: str) -> None:
+        target = self._fields[input_id]
+        try:
+            if target[0] == "plugin":
+                _, plugin, field = target
+                self._write(lambda: set_value(self._paths, plugin, field.name, text or None))
+                self.notify(f"{plugin.name}.{field.name} {'saved' if text else 'removed'}")
+            else:
+                _, ref, plugin, field = target
+                if not text and field.secret:
+                    self.notify(f"{field.name} unchanged (type a new value to replace it)")
+                    return
+                self._write(
+                    lambda: update_account(
+                        self._paths, ref, plugin.config_fields, {field.name: text} if text else {}, [] if text else [field.name]
+                    )
+                )
+                self.notify(f"{ref}: {field.name} {'saved' if text else 'removed'}; run 'ludex import {ref}'")
+        except LudexError as exc:
+            self.notify(exc.message, severity="error")
 
     def _save_prefix_folder(self, folder: str | None) -> None:
         try:
