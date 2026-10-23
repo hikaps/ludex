@@ -4,6 +4,7 @@ import argparse
 import csv
 import io
 import getpass
+import glob
 import json
 import os
 import sys
@@ -88,9 +89,29 @@ def _plugin(sources: dict[str, SourcePlugin], problems: dict[str, str], name: st
     return plugin
 
 
-def _read_value(prompt: str, secret: bool) -> str:
+def _complete_path(text: str, state: int) -> str | None:
+    matches = sorted(glob.glob(os.path.expanduser(text) + "*"))
+    matches = [m + "/" if os.path.isdir(m) else m for m in matches]
+    return matches[state] if state < len(matches) else None
+
+
+def _input_path(prompt: str) -> str:
+    try:
+        import readline
+    except ImportError:  # no readline: plain prompt
+        return input(prompt)
+    readline.set_completer(_complete_path)
+    readline.set_completer_delims(" \t\n;")
+    readline.parse_and_bind("bind ^I rl_complete" if "libedit" in (readline.__doc__ or "") else "tab: complete")
+    try:
+        return input(prompt)
+    finally:
+        readline.set_completer(None)
+
+
+def _read_value(prompt: str, secret: bool, path: bool = False) -> str:
     if sys.stdin.isatty():
-        value = getpass.getpass(prompt) if secret else input(prompt)
+        value = getpass.getpass(prompt) if secret else _input_path(prompt) if path else input(prompt)
     else:
         value = sys.stdin.readline().rstrip("\r\n")
     return value
@@ -134,7 +155,7 @@ def _cmd_account_add(args: argparse.Namespace) -> tuple[object, str]:
     for field in plugin.config_fields:
         if field.name in config:
             continue
-        value = _read_value(f"{field.name} ({field.help}): ", field.secret)
+        value = _read_value(f"{field.name} ({field.help}): ", field.secret, field.path)
         if not value and not field.optional:
             raise LudexError("empty_value", f"field {field.name} must not be empty")
         if value:

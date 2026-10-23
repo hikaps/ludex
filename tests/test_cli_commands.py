@@ -441,3 +441,12 @@ def test_export_json_and_csv(world: World, capsys: pytest.CaptureFixture[str], m
     assert rows[0][:3] == ["game_id", "title", "store"] and rows[1][1] == 'Alpha, "the" game' and len(rows) == 3
     code, out, _ = run(capsys, "--json", "export")
     assert json.loads(out)["data"]["games"][0]["ownership"][0]["account"] == "main"
+
+
+def test_path_completion_lists_matches_and_marks_directories(tmp_path: Path) -> None:
+    from ludex.cli import _complete_path
+
+    (tmp_path / "games").mkdir()
+    (tmp_path / "gzip.txt").write_text("x")
+    prefix = str(tmp_path / "g")
+    assert [_complete_path(prefix, i) for i in range(3)] == [str(tmp_path / "games") + "/", str(tmp_path / "gzip.txt"), None]
