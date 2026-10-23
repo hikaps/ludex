@@ -427,3 +427,17 @@ def test_same_name_in_two_sources_is_allowed_and_needs_qualifying(
     assert code == 0
     code, out, _ = run(capsys, "account", "ls")
     assert out.split() == ["main", "other"]
+
+
+def test_export_json_and_csv(world: World, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+    world.catalogs["me"] = [("1", 'Alpha, "the" game'), ("2", "Beta")]
+    add(capsys, monkeypatch, "main", "me")
+    assert run(capsys, "import", "main")[0] == 0
+    code, out, _ = run(capsys, "export")
+    assert code == 0 and [g["title"] for g in json.loads(out)] == ['Alpha, "the" game', "Beta"]
+    code, out, _ = run(capsys, "export", "--format", "csv")
+    import csv as _csv
+    rows = list(_csv.reader(out.splitlines()))
+    assert rows[0][:3] == ["game_id", "title", "store"] and rows[1][1] == 'Alpha, "the" game' and len(rows) == 3
+    code, out, _ = run(capsys, "--json", "export")
+    assert json.loads(out)["data"]["games"][0]["ownership"][0]["account"] == "main"

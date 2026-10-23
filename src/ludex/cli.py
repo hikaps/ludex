@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import csv
+import io
 import getpass
 import json
 import os
@@ -10,7 +12,7 @@ from typing import Any
 from . import __version__
 from .accounts import add_account, get_account, list_accounts, remove_account
 from .errors import LudexError
-from .library import dedupe, dismiss_review, get_game, list_games, list_review, merge_games, run_import
+from .library import dedupe, export_games, dismiss_review, get_game, list_games, list_review, merge_games, run_import
 from .loader import load_sources
 from .paths import state_paths
 from .plugins import SourcePlugin
@@ -58,6 +60,10 @@ def _parser() -> argparse.ArgumentParser:
     review.add_argument("--dismiss", type=int, metavar="ID", help="keep this item's game separate and drop it from the list")
 
     commands.add_parser("dedupe", help="merge existing games that clearly are the same; queue unsure ones")
+
+    export = commands.add_parser("export", help="write the library to stdout as JSON or CSV")
+    export.add_argument("--format", choices=("json", "csv"), default="json")
+    export.add_argument("--removed", action="store_true", help="include removed records")
 
     merge = commands.add_parser("merge", help="merge game DROP into game KEEP")
     merge.add_argument("keep", type=int)
@@ -296,7 +302,28 @@ def _cmd_dedupe(args: argparse.Namespace) -> tuple[object, str]:
     return {"merged": merged, "queued": queued}, f"merged {merged} games, queued {queued} for review"
 
 
+_CSV_FIELDS = ("game_id", "title", "store", "store_id", "account", "removed", "first_seen", "last_seen")
+
+
+def _cmd_export(args: argparse.Namespace) -> tuple[object, str]:
+    conn = connect(state_paths().database)
+    try:
+        games = export_games(conn, include_removed=args.removed)
+    finally:
+        conn.close()
+    if args.format == "json":
+        return {"games": games}, json.dumps(games, ensure_ascii=False, indent=2)
+    out = io.StringIO()
+    writer = csv.writer(out, lineterminator="\n")
+    writer.writerow(_CSV_FIELDS)
+    for game in games:
+        for o in game["ownership"]:
+            writer.writerow([game["id"], o["title"], o["store"], o["store_id"], o["account"], int(o["removed"]), o["first_seen"], o["last_seen"]])
+    return {"games": games}, out.getvalue().rstrip("\n")
+
+
 _HANDLERS = {
+    ("export", None): _cmd_export,
     ("dedupe", None): _cmd_dedupe,
     ("review", None): _cmd_review,
     ("merge", None): _cmd_merge,
