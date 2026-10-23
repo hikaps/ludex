@@ -278,5 +278,6 @@ PLUGIN = Provider(
     fetch=fetch,
     installed=installed,
     search=search,
+    install_url=lambda store_id: f"steam://install/{quote(store_id, safe='')}",
     launch_url=lambda store_id: f"steam://rungameid/{quote(store_id, safe='')}",
 )

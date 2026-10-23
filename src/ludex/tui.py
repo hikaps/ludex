@@ -14,7 +14,7 @@ from textual.binding import Binding
 from textual.widgets import DataTable, Footer, Header, Input, Static, TabbedContent, TabPane
 
 from .errors import LudexError
-from .launch import launch_game, open_url
+from .launch import install_game, launch_game, open_url
 from .find import find_games, owned_keys
 from .library import get_game, list_games
 from .plugins import Provider
@@ -31,6 +31,7 @@ class LudexApp(App[None]):
         Binding("slash", "search", "Filter"),
         Binding("enter", "launch", "Launch / open page"),
         Binding("escape", "clear", "Clear search", show=False),
+        Binding("i", "install", "Install"),
         Binding("r", "reload", "Reload"),
         Binding("q", "quit", "Quit"),
     ]
@@ -160,6 +161,22 @@ class LudexApp(App[None]):
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         self.action_launch()
+
+    def action_install(self) -> None:
+        game_id = None if self.query_one(TabbedContent).active == "search" else self._current_id()
+        if game_id is None:
+            return
+        try:
+            try:
+                target = install_game(self._conn, self._sources, game_id)
+            except LudexError as exc:
+                if exc.code != "install_ambiguous":
+                    raise
+                store = exc.message.split("installed from ")[1].split(";")[0].split(", ")[0]
+                target = install_game(self._conn, self._sources, game_id, store)
+            self.notify(f"asked the client to install {target}")
+        except LudexError as exc:
+            self.notify(exc.message, severity="error")
 
     def action_launch(self) -> None:
         if self.query_one(TabbedContent).active == "search":

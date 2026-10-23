@@ -6,6 +6,7 @@ calls what is declared (``Provider.capabilities`` lists them):
 
 - ``owned``: ``fetch``, below.
 - ``launch``: ``launch_url``, below.
+- ``install``: ``install_url``, below.
 - ``installed``: ``installed``, below.
 - ``search``: ``search``, below.
 
@@ -36,6 +37,11 @@ results across providers; a failing provider is reported and skipped.
 Launching (optional): ``launch_url(store_id)`` returns the URL that makes the store's own client
 start the game (for example ``steam://rungameid/<id>``). The core opens it with ``xdg-open``; the
 plugin never spawns processes. The URL must percent-encode ``store_id`` and carry no credentials.
+
+Installing (optional): ``install_url(store_id)`` returns the URL that makes the store's own client
+offer to install a game the account owns (for example ``steam://install/<id>``). Same rules as
+``launch_url``. This is for the owner's official store client only; the core does not download or
+unpack anything itself.
 
 Errors raised by ``fetch`` must carry a fixed, secret-free message: never include API keys,
 tokens, or URLs with query strings.
@@ -97,10 +103,11 @@ class Provider:
     fetch: Callable[[Mapping[str, str]], FetchResult] | None = None
     api_version: int = API_VERSION
     launch_url: Callable[[str], str] | None = None
+    install_url: Callable[[str], str] | None = None
     installed: Callable[[Mapping[str, str]], Iterable[str]] | None = None
     search: Callable[[str], Sequence[SearchHit]] | None = None
 
     @property
     def capabilities(self) -> tuple[str, ...]:
-        found = (("owned", self.fetch), ("installed", self.installed), ("search", self.search), ("launch", self.launch_url))
+        found = (("owned", self.fetch), ("installed", self.installed), ("search", self.search), ("launch", self.launch_url), ("install", self.install_url))
         return tuple(name for name, value in found if value is not None)

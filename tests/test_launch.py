@@ -59,3 +59,15 @@ def test_failed_open_is_reported_without_the_url(conn, monkeypatch):
     with pytest.raises(LudexError) as info:
         launch_mod.launch_game(conn, {"steam": steam.PLUGIN}, 1)
     assert info.value.code == "launch_failed" and "steam://" not in info.value.message
+
+
+def test_install_opens_the_install_url_and_only_for_providers_that_have_one(conn, opened):
+    import_account(conn, "main", [OwnedGame("steam", "220", "HL2")], store="steam")
+    import_account(conn, "main", [OwnedGame("epic", "h", "HL2")], store="epic")
+    sources = {"steam": steam.PLUGIN, "epic": epic.PLUGIN}
+    assert steam.PLUGIN.install_url("220") == "steam://install/220" and epic.PLUGIN.install_url is None
+    assert launch_mod.install_game(conn, sources, 1) == "steam:220"  # epic has no install route, so no ambiguity
+    assert opened == [["xdg-open", "steam://install/220"]]
+    with pytest.raises(LudexError) as info:
+        launch_mod.install_game(conn, sources, 1, "epic")
+    assert info.value.code == "not_installable"

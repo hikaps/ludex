@@ -15,7 +15,7 @@ from .accounts import add_account, get_account, list_accounts, remove_account
 from .errors import LudexError
 from .find import find_games, owned_keys
 from .installed import installed_keys
-from .launch import launch_game
+from .launch import install_game, launch_game
 from .library import resolve_game, delete_account_records, export_games, dismiss_review, get_game, list_games, list_review, merge_games, run_import
 from .loader import load_providers
 from .paths import state_paths
@@ -67,6 +67,10 @@ def _parser() -> argparse.ArgumentParser:
     launch = commands.add_parser("launch", help="start a game through its store's client")
     launch.add_argument("game", help="game id or title")
     launch.add_argument("--store", help="store to launch from when several can")
+
+    install = commands.add_parser("install", help="ask the owning store's client to install a game you own")
+    install.add_argument("game", help="game id or title")
+    install.add_argument("--store", help="store to install from when several can")
 
     commands.add_parser("tui", help="browse, search and launch games in the terminal")
 
@@ -338,6 +342,17 @@ def _cmd_find(args: argparse.Namespace) -> tuple[object, str]:
     return {"hits": hits, "problems": problems}, "\n".join(lines) if lines else "no results"
 
 
+def _cmd_install(args: argparse.Namespace) -> tuple[object, str]:
+    providers, _ = load_providers()
+    conn = connect(state_paths().database)
+    try:
+        game_id = resolve_game(conn, args.game)
+        target = install_game(conn, providers, game_id, args.store)
+    finally:
+        conn.close()
+    return {"id": game_id, "install": target}, f"asking the client to install {target}"
+
+
 def _cmd_launch(args: argparse.Namespace) -> tuple[object, str]:
     sources, _ = load_providers()
     conn = connect(state_paths().database)
@@ -420,6 +435,7 @@ _HANDLERS = {
     ("ls", None): _cmd_ls,
     ("show", None): _cmd_show,
     ("find", None): _cmd_find,
+    ("install", None): _cmd_install,
     ("launch", None): _cmd_launch,
     ("tui", None): _cmd_tui,
 }
