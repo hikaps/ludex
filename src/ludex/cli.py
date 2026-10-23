@@ -20,7 +20,7 @@ from .runners import find_runners
 from .find import find_games, owned_keys
 from .installed import installed_keys
 from .acquire import acquire_game
-from .launch import install_game, launch_game
+from .launch import install_game, launch_game, prepare_launch
 from .library import resolve_game, delete_account_records, export_games, dismiss_review, get_game, list_games, list_review, merge_games, run_import
 from .loader import load_providers
 from .paths import state_paths
@@ -72,6 +72,7 @@ def _parser() -> argparse.ArgumentParser:
     launch = commands.add_parser("launch", help="start a game through its store's client")
     launch.add_argument("game", help="game id or title")
     launch.add_argument("--store", help="store to launch from when several can")
+    launch.add_argument("--dry-run", action="store_true", help="show how the game would be started and do not start it")
 
     install = commands.add_parser("install", help="ask the owning store's client to install a game you own")
     install.add_argument("game", help="game id or title")
@@ -447,13 +448,21 @@ def _cmd_game_set(args: argparse.Namespace) -> tuple[object, str]:
 
 def _cmd_launch(args: argparse.Namespace) -> tuple[object, str]:
     sources, _ = load_providers()
-    conn = connect(state_paths().database)
+    paths = state_paths()
+    conn = connect(paths.database)
+    config_for = lambda store, account: get_account(paths, f"{store}:{account}").config
     try:
         game_id = resolve_game(conn, args.game)
-        paths = state_paths()
-        target = launch_game(
-            conn, sources, game_id, args.store, lambda store, account: get_account(paths, f"{store}:{account}").config
-        )
+        if args.dry_run:
+            plan = prepare_launch(conn, sources, game_id, args.store, config_for, paths.root / "prefixes")
+            data = {
+                "id": game_id, "target": plan.target, "url": plan.url, "argv": list(plan.argv),
+                "cwd": str(plan.cwd) if plan.cwd else None, "env": sorted(plan.env),  # names only: values may be secrets
+            }
+            how = plan.url or shlex.join(plan.argv)
+            env = f"  [env: {', '.join(data['env'])}]" if data["env"] else ""
+            return data, f"would start {plan.target}: {how}{env}"
+        target = launch_game(conn, sources, game_id, args.store, config_for, paths.root / "prefixes")
     finally:
         conn.close()
     return {"id": game_id, "launched": target}, f"launching {target}"
@@ -467,6 +476,7 @@ def _cmd_tui(args: argparse.Namespace) -> tuple[object, str]:
     LudexApp(
         paths.database, sources, lambda: installed_keys(paths, sources)[0],
         lambda store, account: get_account(paths, f"{store}:{account}").config,
+        paths.root / "prefixes",
     ).run()
     return {}, ""
 
