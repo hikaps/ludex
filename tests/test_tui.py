@@ -321,3 +321,20 @@ def test_s_opens_settings_and_letters_only_type_while_the_search_box_has_focus(t
             assert app.query_one("Tabs").active == "owned"
 
     asyncio.run(scenario())
+
+
+def test_an_empty_table_highlight_event_is_ignored(tmp_path):
+    from ludex.plugins import Provider
+
+    db = tmp_path / "db.sqlite3"
+    connect(db).close()
+
+    async def scenario():
+        app = LudexApp(db, {"steam": Provider("steam", "s", (), search=lambda q: [])})
+        async with app.run_test() as pilot:
+            for table in app.query(DataTable):  # newer Textual sends row_key=None when a table is empty
+                app.post_message(DataTable.RowHighlighted(table, -1, None))
+            await pilot.pause()
+            assert app.is_running
+
+    asyncio.run(scenario())
