@@ -80,3 +80,15 @@ def test_every_game_folder_counts_as_installed_and_qualified_ids_match(tmp_path)
     assert PLUGIN.installed(config) == {g.store_id for g in PLUGIN.fetch(config).games} == {"a/g1", "b/g2"}
     with pytest.raises(SourceError):
         PLUGIN.installed({"path": str(tmp_path / "missing")})
+
+
+def test_excluded_folders_are_skipped_by_name_pattern_or_qualified_id(tmp_path):
+    for name in ("a/Hades", "a/_unsorted", "a/Backup old", "b/Hades", "b/Celeste"):
+        (tmp_path / name).mkdir(parents=True)
+    ids = lambda **extra: sorted(g.store_id for g in PLUGIN.fetch({"path": str(tmp_path / "*"), **extra}).games)
+    assert ids() == ["a/Backup old", "a/Hades", "a/_unsorted", "b/Celeste", "b/Hades"]
+    assert ids(exclude="_unsorted, BACKUP*") == ["a/Hades", "b/Celeste", "b/Hades"]  # case-insensitive, comma-separated
+    assert ids(exclude="b/Hades\n_*") == ["a/Backup old", "a/Hades", "b/Celeste"]  # a qualified id and a newline
+    assert PLUGIN.installed({"path": str(tmp_path / "*"), "exclude": "Hades"}) == {"a/Backup old", "a/_unsorted", "b/Celeste"}
+    with pytest.raises(SourceError):  # excluding everything is an empty directory, not a wipe
+        PLUGIN.fetch({"path": str(tmp_path / "a"), "exclude": "*"})
