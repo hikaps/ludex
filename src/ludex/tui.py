@@ -207,7 +207,8 @@ class LudexApp(App[None]):
         return True
 
     def _active(self) -> str:
-        return self.query_one(Tabs).active
+        tabs = self.query(Tabs)  # a key can arrive before the screen has mounted
+        return tabs.first().active if tabs else "owned"
 
     def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
         name = event.tab.id or "owned"
