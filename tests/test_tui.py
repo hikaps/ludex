@@ -421,6 +421,7 @@ def test_vim_keys_move_the_cursor_and_do_not_steal_typing(tmp_path):
     async def scenario():
         app = LudexApp(db, {})
         async with app.run_test() as pilot:
+            await pilot.pause()  # let the app finish mounting before the first key
             table = app.query_one("#owned-table", DataTable)
             await pilot.press("j", "j")
             assert table.cursor_row == 2
