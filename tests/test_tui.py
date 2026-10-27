@@ -410,3 +410,30 @@ def test_search_columns_fit_the_pane_so_price_and_owned_stay_visible(tmp_path):
             assert not table.show_horizontal_scrollbar
 
     asyncio.run(scenario())
+
+
+def test_vim_keys_move_the_cursor_and_do_not_steal_typing(tmp_path):
+    db = tmp_path / "db.sqlite3"
+    conn = connect(db)
+    import_account(conn, "m", [OwnedGame("steam", str(i), t) for i, t in enumerate(["Aa", "Bb", "Cc", "Dd"])], store="steam")
+    conn.close()
+
+    async def scenario():
+        app = LudexApp(db, {})
+        async with app.run_test() as pilot:
+            await pilot.pause()  # let the app finish mounting before the first key
+            table = app.query_one("#owned-table", DataTable)
+            await pilot.press("j", "j")
+            assert table.cursor_row == 2
+            await pilot.press("k")
+            assert table.cursor_row == 1
+            await pilot.press("G")
+            assert table.cursor_row == 3
+            await pilot.press("g")
+            assert table.cursor_row == 0
+            await pilot.press("ctrl+d")
+            assert table.cursor_row > 0
+            await pilot.press("/", "j", "k", "g")  # in the filter box the letters are text
+            assert app.query_one("#filter", Input).value == "jkg"
+
+    asyncio.run(scenario())

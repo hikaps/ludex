@@ -100,6 +100,12 @@ class LudexApp(App[None]):
         Binding("up", "cursor('up')", "Up", show=False, priority=True),
         Binding("pagedown", "cursor('page_down')", "Page down", show=False, priority=True),
         Binding("pageup", "cursor('page_up')", "Page up", show=False, priority=True),
+        Binding("j", "cursor('down')", "Down", show=False),  # vim keys; letters reach the filter and inputs first
+        Binding("k", "cursor('up')", "Up", show=False),
+        Binding("ctrl+d", "cursor('page_down')", "Page down", show=False),
+        Binding("ctrl+u", "cursor('page_up')", "Page up", show=False),
+        Binding("g", "cursor('top')", "Top", show=False),
+        Binding("G", "cursor('bottom')", "Bottom", show=False),
         Binding("enter", "enter_list", "Search", priority=True),  # priority: an empty table swallows Enter
         Binding("slash", "focus_filter", "Search", show=False),
         Binding("escape", "clear", "Back to list", show=False),
@@ -186,6 +192,8 @@ class LudexApp(App[None]):
         self._table().focus()
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        if not self.query(Tabs):  # a key can arrive before the screen has mounted
+            return False
         # tab, arrows and paging belong to the list only on the main screen; forms keep their own
         if len(self.screen_stack) > 1 and action not in {"quit"}:
             return False
@@ -193,6 +201,8 @@ class LudexApp(App[None]):
         if action in {"launch", "edit", "install"}:  # what you can do depends on the tab
             return action in tab_actions.get(self._active(), set())
         if self._active() == "settings" and action in {"focus_filter", "settings"}:
+            return False
+        if action == "cursor" and parameters and parameters[0] in {"top", "bottom"} and self._active() == "settings":
             return False
         if action == "enter_list":  # only from the list; inputs and switches keep their own Enter
             return self._active() != "settings" and (self.focused is None or isinstance(self.focused, (DataTable, Tabs)))
@@ -231,7 +241,11 @@ class LudexApp(App[None]):
         if self._active() == "settings":  # arrows move between the settings
             (self.screen.focus_previous if move in {"up", "page_up"} else self.screen.focus_next)()
             return
-        getattr(self._table(), f"action_cursor_{move}" if move in {"up", "down"} else f"action_{move}")()
+        table = self._table()
+        if move in {"top", "bottom"}:
+            table.move_cursor(row=0 if move == "top" else max(table.row_count - 1, 0))
+            return
+        getattr(table, f"action_cursor_{move}" if move in {"up", "down"} else f"action_{move}")()
 
     def on_unmount(self) -> None:
         if self._conn is not None:
