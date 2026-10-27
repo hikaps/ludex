@@ -3,7 +3,11 @@
 Plugin-wide settings: ``Provider.settings`` (a tuple of ``ConfigField``, names ``[a-z][a-z0-9_]*``,
 distinct from ``config_fields``) are values the user sets once for the whole plugin, in the
 Settings tab or with ``ludex config <plugin>.<name> VALUE`` (secret ones are prompted for and never
-printed). They are merged under the account fields in the config mapping every plugin function
+printed). A field has a ``kind``: ``"text"`` (default), ``"yes_no"`` (a switch; the plugin receives
+``"yes"`` or ``"no"``, and a value that was never set is simply absent, which the Settings tab
+shows as off) or ``"choice"`` (one of ``choices``, a dropdown). The core validates values before
+storing them; ``secret`` and ``path`` apply to ``"text"`` only. Kinds work in ``config_fields`` too.
+They are merged under the account fields in the config mapping every plugin function
 receives, and a plugin command reads them from ``ctx.settings``. ``search`` and ``install_url``
 take no config, so settings do not reach them.
 
@@ -133,6 +137,21 @@ class ConfigField:
     secret: bool = False
     optional: bool = False
     path: bool = False  # value is a filesystem path; interactive prompts offer tab completion
+    kind: str = "text"  # "text", "yes_no" (stored "yes"/"no") or "choice" (one of ``choices``)
+    choices: tuple[str, ...] = ()
+
+    def clean(self, value: str) -> str:
+        """The value as it is stored; raises ``LudexError`` when this kind does not accept it."""
+        if self.kind == "yes_no":
+            word = value.strip().lower()
+            if word in ("yes", "on", "true", "1"):
+                return "yes"
+            if word in ("no", "off", "false", "0"):
+                return "no"
+            raise LudexError("invalid_value", f"{self.name} takes yes or no")
+        if self.kind == "choice" and value not in self.choices:
+            raise LudexError("invalid_value", f"{self.name} must be one of: {', '.join(self.choices)}")
+        return value
 
 
 @dataclass(frozen=True, slots=True)

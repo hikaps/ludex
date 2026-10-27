@@ -38,9 +38,19 @@ def _add_managed_plugins() -> None:
             sys.path.append(str(folder))
 
 
+def _valid_field(f: object) -> bool:
+    if not isinstance(f, ConfigField):
+        return False
+    if f.kind == "choice":
+        ok = isinstance(f.choices, tuple) and bool(f.choices) and all(isinstance(c, str) and c for c in f.choices) and len(set(f.choices)) == len(f.choices)
+    else:
+        ok = f.kind in ("text", "yes_no") and f.choices == ()
+    return ok and (f.kind == "text" or not (f.secret or f.path))
+
+
 def _valid_settings(plugin: Provider) -> bool:
     try:
-        if not all(isinstance(f, ConfigField) for f in plugin.settings):
+        if not all(_valid_field(f) for f in (*plugin.settings, *plugin.config_fields)):
             return False
     except TypeError:
         return False

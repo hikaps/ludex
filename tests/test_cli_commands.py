@@ -77,12 +77,12 @@ def test_providers_lists_plugins_and_problems(world: World, capsys: pytest.Captu
                     "capabilities": ["owned"],
                     "commands": [],
                     "fields": [
-                        {"name": "user", "help": "account user", "secret": False, "optional": False},
-                        {"name": "key", "help": "API key", "secret": True, "optional": False},
+                        {"name": "user", "help": "account user", "secret": False, "optional": False, "kind": "text", "choices": []},
+                        {"name": "key", "help": "API key", "secret": True, "optional": False, "kind": "text", "choices": []},
                     ],
                     "settings": [
-                        {"name": "region", "help": "store region", "secret": False, "optional": True},
-                        {"name": "token", "help": "API token", "secret": True, "optional": True},
+                        {"name": "region", "help": "store region", "secret": False, "optional": True, "kind": "text", "choices": []},
+                        {"name": "token", "help": "API token", "secret": True, "optional": True, "kind": "text", "choices": []},
                     ],
                 }
             ],

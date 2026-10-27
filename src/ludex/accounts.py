@@ -109,6 +109,7 @@ def update_account(
     for key, value in values.items():
         if not value:
             raise LudexError("empty_value", f"field {key} must not be empty")
+    values = {key: known[key].clean(value) for key, value in values.items()}
     for key in unset:
         if not known[key].optional:
             raise LudexError("required_field", f"field {key} is required; set a new value instead")
