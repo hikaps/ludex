@@ -367,7 +367,8 @@ class LudexApp(App[None]):
             lines += [f"[dim]{label}:[/] {escape(', '.join(values))}" for label, values in (("genres", found.genres), ("by", found.developers), ("released", (found.released,) if found.released else ())) if values]
             matched = next((m for o in game["ownership"] if (m := cached_match(self._conn, o["store"], str(o["store_id"])))), None)
             if matched:
-                lines.append(f"[dim]matched to {escape(matched)}[/]")
+                label = escape(f"matched to {matched['plugin']}: {matched['title']}")
+                lines.append(f'[dim][link="{matched["url"]}"]{label}[/link][/]' if matched["url"] and not set(matched["url"]) & set("\"[] \\") else f"[dim]{label}[/]")
         if note:
             lines += ["", note]
         self.query_one("#detail", Static).update("\n".join(lines))

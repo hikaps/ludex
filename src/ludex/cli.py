@@ -466,7 +466,7 @@ def _cmd_metadata(args: argparse.Namespace) -> tuple[object, str]:
         conn.close()
     if found is None:
         return {"id": game_id, "metadata": None}, "no store has details for this game"
-    lines = [found.description or "", f"genres: {', '.join(found.genres)}" if found.genres else "", f"by: {', '.join(found.developers)}" if found.developers else "", f"released: {found.released}" if found.released else "", f"matched to {matched}" if matched else ""]
+    lines = [found.description or "", f"genres: {', '.join(found.genres)}" if found.genres else "", f"by: {', '.join(found.developers)}" if found.developers else "", f"released: {found.released}" if found.released else "", f"matched to {matched['plugin']}: {matched['title']}" + (f" ({matched['url']})" if matched['url'] else "") if matched else ""]
     return {"id": game_id, "metadata": asdict(found), "matched": matched}, "\n".join(x for x in lines if x)
 
 

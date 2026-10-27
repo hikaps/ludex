@@ -108,7 +108,7 @@ def test_match_sets_title_and_details_once_and_is_cached(tmp_path):
     found = game_metadata(conn, sources, game_id, match=True)
     assert found.genres == ("Action",) and calls == ["Hades"]
     assert get_game(conn, game_id)["title"] == "Hades"
-    assert cached_match(conn, "local", "Hades_v1.2_(GOG)") == "db: Hades"
+    assert cached_match(conn, "local", "Hades_v1.2_(GOG)") == {"plugin": "db", "title": "Hades", "url": "https://x/hades"}
     assert game_metadata(conn, sources, game_id, match=True) == found and calls == ["Hades"]
 
 
@@ -138,3 +138,27 @@ def test_auto_match_is_off_until_turned_on(tmp_path):
     assert get_auto_match(conn) is True
     set_auto_match(conn, None)
     assert get_auto_match(conn) is False
+
+
+def test_the_detail_pane_credits_the_match_with_a_link(tmp_path):
+    import asyncio
+
+    from textual.widgets import Static
+
+    from ludex.tui import LudexApp
+
+    conn, game_id = database(tmp_path)
+    game_metadata(conn, {"db": db_provider([SearchHit("db", "7", "Hades", "https://x/hades")])}, game_id, match=True)
+    conn.close()
+
+    async def scenario():
+        app = LudexApp(tmp_path / "db.sqlite3", {})
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._show_game(game_id)
+            await pilot.pause()
+            content = app.query_one("#detail", Static).visual
+            assert "matched to db: Hades" in str(content)
+            assert any("https://x/hades" in str(span.style) for span in content.spans)
+
+    asyncio.run(scenario())

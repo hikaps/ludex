@@ -30,11 +30,17 @@ def cached_metadata(conn: sqlite3.Connection, store: str, store_id: str) -> Meta
     return Metadata(data.get("description"), tuple(data.get("genres", ())), tuple(data.get("developers", ())), data.get("released"))
 
 
-def cached_match(conn: sqlite3.Connection, store: str, store_id: str) -> str | None:
-    """``"<plugin>: <title>"`` when the cached metadata of this copy came from a title match."""
+def cached_match(conn: sqlite3.Connection, store: str, store_id: str) -> dict[str, str] | None:
+    """``{"plugin", "title", "url"}`` when the cached metadata of this copy came from a title match.
+
+    ``url`` is the match's page (an ``https`` link, the credit some databases require) or ``""``.
+    """
     row = conn.execute("SELECT data FROM game_metadata WHERE store = ? AND store_id = ?", (store, store_id)).fetchone()
     matched = json.loads(row["data"]).get("matched") if row else None
-    return f"{matched['plugin']}: {matched['title']}" if isinstance(matched, dict) else None
+    if not isinstance(matched, dict):
+        return None
+    url = matched.get("url")
+    return {"plugin": str(matched["plugin"]), "title": str(matched["title"]), "url": url if isinstance(url, str) and url.startswith("https://") else ""}
 
 
 def _store(conn: sqlite3.Connection, store: str, store_id: str, found: Metadata, extra: dict | None = None) -> None:
@@ -59,7 +65,7 @@ def _match_by_title(conn: sqlite3.Connection, sources: Mapping[str, Provider], g
             continue
         if found is None:
             continue
-        _store(conn, store, store_id, found, {"matched": {"plugin": name, "id": hit.store_id, "title": hit.title}})
+        _store(conn, store, store_id, found, {"matched": {"plugin": name, "id": hit.store_id, "title": hit.title, "url": hit.url}})
         with conn:
             conn.execute("UPDATE games SET title = ?, normalized_title = ? WHERE id = ?", (hit.title, normalize_title(hit.title), game_id))
         return found
