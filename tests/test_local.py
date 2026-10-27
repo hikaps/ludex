@@ -71,3 +71,12 @@ def test_launch_command_resolves_glob_store_ids(tmp_path):
     _game(tmp_path / "d2", "g", {"start.sh": 0o755})
     config = {"path": str(tmp_path / "d*")}
     assert launch_command(config, "d2/g") == [str((tmp_path / "d2" / "g" / "start.sh").resolve())]
+
+
+def test_every_game_folder_counts_as_installed_and_qualified_ids_match(tmp_path):
+    for name in ("a/g1", "b/g2", "b/.hidden"):
+        (tmp_path / name).mkdir(parents=True)
+    config = {"path": str(tmp_path / "*")}
+    assert PLUGIN.installed(config) == {g.store_id for g in PLUGIN.fetch(config).games} == {"a/g1", "b/g2"}
+    with pytest.raises(SourceError):
+        PLUGIN.installed({"path": str(tmp_path / "missing")})
