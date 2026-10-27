@@ -1,14 +1,17 @@
 """Discovery of providers through Python entry points."""
 from __future__ import annotations
 
+import inspect
 import re
 import sys
 from collections import Counter
 from collections.abc import Iterable
+from dataclasses import replace
 from importlib.metadata import EntryPoint, entry_points as _entry_points
 
-from .paths import plugins_dir
+from .paths import plugins_dir, state_paths
 from .plugins import API_VERSION, GROUP, Command, ConfigField, Provider
+from .provider_settings import get_values
 
 _NAME = re.compile(r"[a-z][a-z0-9-]{0,31}\Z")
 
@@ -62,6 +65,20 @@ def _valid_settings(plugin: Provider) -> bool:
     )
 
 
+def _bind_settings(provider: Provider) -> Provider:
+    """Give ``search``/``metadata``/``match`` functions that declare ``settings`` the plugin's settings, read per call."""
+    bound = {}
+    for attr in ("search", "metadata", "match"):
+        function = getattr(provider, attr)
+        try:
+            wants = function is not None and "settings" in inspect.signature(function).parameters
+        except (TypeError, ValueError):
+            wants = False
+        if wants:
+            bound[attr] = lambda arg, _f=function, _n=provider.name: _f(arg, settings=get_values(state_paths(), _n))
+    return replace(provider, **bound) if bound else provider
+
+
 def load_providers(
     entry_points: Iterable[EntryPoint] | None = None,
 ) -> tuple[dict[str, Provider], dict[str, str]]:
@@ -105,5 +122,5 @@ def load_providers(
             elif not _valid_settings(value):
                 problems[name] = "has invalid settings (need unique lowercase names that are not account fields)"
             else:
-                loaded[name] = value
+                loaded[name] = _bind_settings(value)
     return loaded, problems

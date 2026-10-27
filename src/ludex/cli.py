@@ -26,7 +26,7 @@ from .acquire import acquire_game
 from .launch import install_game, launch_game, prepare_launch
 from .library import resolve_game, delete_account_records, export_games, dismiss_review, get_game, list_games, list_review, merge_games, run_import
 from .loader import load_providers
-from .metadata import game_metadata, get_auto_details, set_auto_details
+from .metadata import cached_match, game_metadata, get_auto_details, get_auto_match, set_auto_details, set_auto_match
 from .paths import state_paths
 from .plugins import CommandContext, CommandResult, Provider
 from .storage import connect, writer_lock
@@ -107,6 +107,7 @@ def _parser() -> argparse.ArgumentParser:
     meta = commands.add_parser("metadata", help="show a game's description, genres and developer (asks the store's plugin once, then keeps the answer)")
     meta.add_argument("game", help="game id or title")
     meta.add_argument("--refresh", action="store_true", help="ask the plugin again instead of using the kept answer")
+    meta.add_argument("--match", action="store_true", help="for a game no store describes, look it up by name in a game database plugin (also on with 'ludex config auto_match yes')")
 
     acquire = commands.add_parser("acquire", help="ask a provider to fetch a game into a directory")
     acquire.add_argument("store")
@@ -459,13 +460,14 @@ def _cmd_metadata(args: argparse.Namespace) -> tuple[object, str]:
     conn = connect(state_paths().database)
     try:
         game_id = resolve_game(conn, args.game)
-        found = game_metadata(conn, providers, game_id, args.refresh)
+        found = game_metadata(conn, providers, game_id, args.refresh, args.match or get_auto_match(conn))
+        matched = next((m for o in get_game(conn, game_id)["ownership"] if (m := cached_match(conn, o["store"], str(o["store_id"])))), None)
     finally:
         conn.close()
     if found is None:
         return {"id": game_id, "metadata": None}, "no store has details for this game"
-    lines = [found.description or "", f"genres: {', '.join(found.genres)}" if found.genres else "", f"by: {', '.join(found.developers)}" if found.developers else "", f"released: {found.released}" if found.released else ""]
-    return {"id": game_id, "metadata": asdict(found)}, "\n".join(x for x in lines if x)
+    lines = [found.description or "", f"genres: {', '.join(found.genres)}" if found.genres else "", f"by: {', '.join(found.developers)}" if found.developers else "", f"released: {found.released}" if found.released else "", f"matched to {matched}" if matched else ""]
+    return {"id": game_id, "metadata": asdict(found), "matched": matched}, "\n".join(x for x in lines if x)
 
 
 def _cmd_acquire(args: argparse.Namespace) -> tuple[object, str]:
@@ -543,7 +545,7 @@ def _cmd_config(args: argparse.Namespace) -> tuple[object, str]:
     default = paths.root / "prefixes"
     sources, _ = load_providers()
     key = args.key
-    core = {"prefix_dir", "auto_details", *SWITCHES}
+    core = {"prefix_dir", "auto_details", "auto_match", *SWITCHES}
     changing = bool(args.value or args.reset or args.secret)
     if changing and not key:
         raise LudexError("invalid_setting", "name the setting to change")
@@ -564,7 +566,7 @@ def _cmd_config(args: argparse.Namespace) -> tuple[object, str]:
             raise LudexError("invalid_setting", f"{key} is not a secret setting")
         if args.reset and key in SWITCHES:
             raise LudexError("invalid_setting", f"{key} has no default to reset to; set yes or no")
-        if args.value and (key in SWITCHES or key == "auto_details") and args.value.lower() not in _YES_NO:
+        if args.value and (key in SWITCHES or key in {"auto_details", "auto_match"}) and args.value.lower() not in _YES_NO:
             raise LudexError("invalid_setting", f"{key} takes yes or no")
     with writer_lock(paths.import_lock):
         conn = connect(paths.database)
@@ -573,21 +575,25 @@ def _cmd_config(args: argparse.Namespace) -> tuple[object, str]:
                 set_prefix_root(conn, None if args.reset else args.value)
             elif changing and key == "auto_details":
                 set_auto_details(conn, None if args.reset else _YES_NO[args.value.lower()])
+            elif changing and key == "auto_match":
+                set_auto_match(conn, None if args.reset else _YES_NO[args.value.lower()])
             elif changing and key in SWITCHES:
                 set_switch(paths, conn, sources, key, _YES_NO[args.value.lower()])
             folder = get_prefix_root(conn, default)
             auto = get_auto_details(conn)
+            match = get_auto_match(conn)
         finally:
             conn.close()
     plugin_values = {name: describe(paths, plugin) for name, plugin in sorted(sources.items()) if plugin.settings}
     data: dict[str, Any] = {
         "prefix_dir": str(folder),
         "auto_details": auto,
+        "auto_match": match,
         **{k: get_switch(paths, k) for k in sorted(SWITCHES)},
         "plugins": plugin_values,
     }
     shown = {"prefix_dir": f"prefix_dir: {folder}" + (" (default)" if folder == default else "")}
-    shown.update({k: f"{k}: {'yes' if data[k] else 'no'}" for k in ("auto_details", *sorted(SWITCHES))})
+    shown.update({k: f"{k}: {'yes' if data[k] else 'no'}" for k in ("auto_details", "auto_match", *sorted(SWITCHES))})
     for name, values in plugin_values.items():
         shown.update({f"{name}.{k}": f"{name}.{k}: {v if v is not None else '(not set)'}" for k, v in values.items()})
     return data, "\n".join(shown.values() if key is None else [shown[key]])

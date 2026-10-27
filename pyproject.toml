@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ludex"
-version = "0.45.1"
+version = "0.46.0"
 description = "Headless, scriptable library of the games you own across stores"
 readme = "README.md"
 license = "GPL-3.0-or-later"
@@ -24,6 +24,7 @@ epic = "ludex.sources.epic:PLUGIN"
 local = "ludex.sources.local:PLUGIN"
 shortcuts = "ludex.sources.shortcuts:PLUGIN"
 heroic = "ludex.sources.heroic:PLUGIN"
+rawg = "ludex.sources.rawg:PLUGIN"
 
 [tool.setuptools.packages.find]
 where = ["src"]

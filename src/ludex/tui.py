@@ -13,13 +13,15 @@ from rich.markup import escape
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.coordinate import Coordinate
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, ContentSwitcher, DataTable, Button, Footer, Input, Label, OptionList, Select, Static, Switch, Tab, Tabs
+from textual.widgets import Button, ContentSwitcher, DataTable, Footer, Input, Label, OptionList, Select, Static, Switch, Tab, Tabs
+from textual.widgets.data_table import RowDoesNotExist
 
 from .accounts import get_account, list_accounts, update_account
 from .errors import LudexError
 from .game_settings import get_prefix_root, get_settings, set_prefix_root, update_settings
-from .metadata import cached_metadata, game_metadata, get_auto_details, set_auto_details
+from .metadata import cached_match, cached_metadata, game_metadata, get_auto_details, get_auto_match, set_auto_details, set_auto_match
 from .launch import install_game, launch_game, open_url
 from .find import find_games, owned_keys
 from .library import get_game, list_games
@@ -143,6 +145,7 @@ class LudexApp(App[None]):
         self._keys: set[tuple[str, str]] = set()
         self._hits: dict[str, dict] = {}
         self._auto = True
+        self._match = False
         self._tried: set[int] = set()
         self._details_timer = None
         self._searched = ""
@@ -187,8 +190,10 @@ class LudexApp(App[None]):
         self.theme = "tokyo-night"  # colourful default; ctrl+p opens the theme picker
         self._conn = connect(self._database)
         self._auto = get_auto_details(self._conn)
+        self._match = get_auto_match(self._conn)
         with self.prevent(Switch.Changed):
             self.query_one("#opt-auto_details", Switch).value = self._auto
+            self.query_one("#opt-auto_match", Switch).value = self._match
         for table in self.query(DataTable):
             if table.id == "search-table":
                 for name, width in (("store", 6), ("title", 30), ("price", 10), ("owned", 7)):
@@ -360,9 +365,12 @@ class LudexApp(App[None]):
         if found is not None:
             lines += [""] + ([escape(found.description)] if found.description else [])
             lines += [f"[dim]{label}:[/] {escape(', '.join(values))}" for label, values in (("genres", found.genres), ("by", found.developers), ("released", (found.released,) if found.released else ())) if values]
-        self.query_one("#detail", Static).update("\n".join(lines))
+            matched = next((m for o in game["ownership"] if (m := cached_match(self._conn, o["store"], str(o["store_id"])))), None)
+            if matched:
+                lines.append(f"[dim]matched to {escape(matched)}[/]")
         if note:
             lines += ["", note]
+        self.query_one("#detail", Static).update("\n".join(lines))
         if found is None and note is None:
             self._queue_details(game_id)
 
@@ -386,18 +394,29 @@ class LudexApp(App[None]):
     def _fetch_details(self, game_id: int) -> None:
         conn = connect(self._database)  # a worker thread needs its own connection
         try:
-            found, problem = game_metadata(conn, self._sources, game_id), None
+            found, problem = game_metadata(conn, self._sources, game_id, False, self._match), None
         except LudexError as exc:
             found, problem = None, None if exc.code == "metadata_unavailable" else exc.message
         finally:
             conn.close()
         self.call_from_thread(self._details_ready, game_id, found is not None, problem)
 
+    def _retitle(self, game_id: int) -> None:
+        """Show the game's current title in its list rows (a match can change it)."""
+        title = get_game(self._conn, game_id)["title"]
+        for name in ("owned", "installed"):
+            table = self.query_one(f"#{name}-table", DataTable)
+            try:
+                table.update_cell_at(Coordinate(table.get_row_index(str(game_id)), 1), title)
+            except RowDoesNotExist:
+                pass
+
     def _details_ready(self, game_id: int, found: bool, problem: str | None) -> None:
         if self._active() not in {"owned", "installed"} or self._current_id() != game_id:
             return
         if found:
             self._show_game(game_id)
+            self._retitle(game_id)
         elif problem:
             self._show_game(game_id, f"[dim]no details: {escape(problem)}[/]")
 
@@ -449,6 +468,9 @@ class LudexApp(App[None]):
         with Horizontal(classes="row"):
             yield Switch(True, id="opt-auto_details")
             yield Label(" Fetch details for the highlighted game (the store sees its id)")
+        with Horizontal(classes="row"):
+            yield Switch(False, id="opt-auto_match")
+            yield Label(" Match games no store describes by name (sends the folder name to the database plugin)")
         if self._paths is None:
             return
         yield Label("Sources", classes="section")
@@ -608,8 +630,13 @@ class LudexApp(App[None]):
                 )
                 self.action_reload()
             elif kind == "opt":
-                self._write(lambda: set_auto_details(self._conn, event.value))
-                self._auto = event.value
+                if name == "auto_match":
+                    self._write(lambda: set_auto_match(self._conn, event.value))
+                    self._match = event.value
+                    self._tried.clear()
+                else:
+                    self._write(lambda: set_auto_details(self._conn, event.value))
+                    self._auto = event.value
             elif kind == "plg":
                 self._write(lambda: set_plugin_enabled(name, event.value))
                 self.notify(f"{name} {'enabled' if event.value else 'disabled'}; applies the next time ludex starts")

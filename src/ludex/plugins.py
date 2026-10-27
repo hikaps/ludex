@@ -56,6 +56,17 @@ it only when the user asks (``ludex metadata``, the TUI ``m`` key) and caches th
 library database. It may use the network under the same rules as ``search``. Several providers
 may offer it; the core uses the first one that owns a copy of the game.
 
+Match (optional): ``match(title)`` returns ``SearchHit`` records for catalog games with a similar
+title, best first, so the core can attach a proper title and details to a game whose own store
+supplies none (a folder of local games). Same network rules as ``search``. A provider that offers
+``match`` should also offer ``metadata``; the core accepts only a hit whose title equals the
+cleaned folder name (case and punctuation aside), asks the same provider for its ``metadata``, and
+does so only when the user has turned ``auto_match`` on, since it sends the title to that service.
+
+Settings in ``search``, ``metadata`` and ``match``: when one of these functions declares a
+parameter named ``settings``, the core passes the plugin's ``Provider.settings`` values (a mapping
+of strings, read at call time) as that keyword argument; functions without it are called as before.
+
 Launching (optional): ``launch_url(store_id)`` returns the URL that makes the store's own client
 start the game (for example ``steam://rungameid/<id>``). The core opens it with ``xdg-open``; the
 plugin never spawns processes. The URL must percent-encode ``store_id`` and carry no credentials.
@@ -228,8 +239,9 @@ class Provider:
     metadata: Callable[[str], Metadata | None] | None = None
     commands: Sequence[Command] = ()
     settings: tuple[ConfigField, ...] = ()
+    match: Callable[..., Sequence[SearchHit]] | None = None
 
     @property
     def capabilities(self) -> tuple[str, ...]:
-        found = (("owned", self.fetch), ("installed", self.installed), ("search", self.search), ("metadata", self.metadata), ("launch", self.launch_url or self.launch_command or self.game_folder), ("install", self.install_url), ("acquire", self.acquire), ("commands", self.commands or None))
+        found = (("owned", self.fetch), ("installed", self.installed), ("search", self.search), ("metadata", self.metadata), ("match", self.match), ("launch", self.launch_url or self.launch_command or self.game_folder), ("install", self.install_url), ("acquire", self.acquire), ("commands", self.commands or None))
         return tuple(name for name, value in found if value is not None)
