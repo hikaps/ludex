@@ -440,7 +440,7 @@ class LudexApp(App[None]):
     def _settings_widgets(self):
         yield Label("Default prefix folder", classes="section")
         yield Label("Each game gets its own prefix inside it. Right arrow completes, blank resets.", classes="hint")
-        yield PathInput("", suggester=PathSuggester(dirs_only=True), id="folder")
+        yield PathInput("", suggester=PathSuggester(dirs_only=True), select_on_focus=False, id="folder")
         self._groups["save-folder"] = ["folder"]
         self._group_of["folder"] = "save-folder"
         yield from self._save_button("save-folder")
@@ -512,9 +512,9 @@ class LudexApp(App[None]):
         self._saved[input_id] = shown
         placeholder = "(set; type to replace)" if field.secret and value else ""
         if field.path:
-            yield PathInput(shown, suggester=PathSuggester(dirs_only=False), placeholder=placeholder, id=input_id)
+            yield PathInput(shown, suggester=PathSuggester(dirs_only=False), placeholder=placeholder, select_on_focus=False, id=input_id)
         else:
-            yield Input(shown, placeholder=placeholder, password=field.secret, id=input_id)
+            yield Input(shown, placeholder=placeholder, password=field.secret, select_on_focus=False, id=input_id)
 
     def _save_field(self, input_id: str, text: str) -> bool:
         target = self._fields[input_id]

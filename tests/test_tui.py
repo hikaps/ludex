@@ -475,3 +475,23 @@ def test_settings_text_fields_save_with_enter_or_save_and_discard_with_esc_or_di
             assert get_prefix_root(app._conn, app._default_prefix()) == tmp_path / "other"
 
     asyncio.run(scenario())
+
+
+def test_settings_input_does_not_select_its_text_on_focus_so_backspace_removes_one_character(tmp_path):
+    db = tmp_path / "db.sqlite3"
+    connect(db).close()
+
+    async def scenario():
+        app = LudexApp(db, {})
+        async with app.run_test() as pilot:
+            await pilot.press("s")
+            await pilot.pause()
+            box = app.query_one("#folder", Input)
+            box.value = "/mnt/games"
+            app.query_one("#filter", Input).focus()
+            await pilot.pause()
+            box.focus()
+            await pilot.press("backspace")
+            assert box.value == "/mnt/game"
+
+    asyncio.run(scenario())
