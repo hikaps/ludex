@@ -192,6 +192,8 @@ class LudexApp(App[None]):
         self._table().focus()
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        if not self.query(Tabs):  # a key can arrive before the screen has mounted
+            return False
         # tab, arrows and paging belong to the list only on the main screen; forms keep their own
         if len(self.screen_stack) > 1 and action not in {"quit"}:
             return False
@@ -207,8 +209,7 @@ class LudexApp(App[None]):
         return True
 
     def _active(self) -> str:
-        tabs = self.query(Tabs)  # a key can arrive before the screen has mounted
-        return tabs.first().active if tabs else "owned"
+        return self.query_one(Tabs).active
 
     def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
         name = event.tab.id or "owned"
