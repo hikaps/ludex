@@ -57,9 +57,11 @@ def field_for(plugin: Provider, key: str) -> ConfigField:
 
 def set_value(paths: StatePaths, plugin: Provider, key: str, value: str | None) -> None:
     """Set ``key`` (``None`` removes it, back to the plugin's own default)."""
-    field_for(plugin, key)
+    field = field_for(plugin, key)
     if value is not None and not value.strip():
         raise LudexError("empty_value", f"setting {key} must not be empty; use --reset to remove it")
+    if value is not None:
+        value = field.clean(value)
     data = _load(paths)
     values = data.setdefault(plugin.name, {})
     if value is None:

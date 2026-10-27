@@ -214,8 +214,8 @@ def _cmd_providers(args: argparse.Namespace) -> tuple[object, str]:
                 "help": plugin.help,
                 "capabilities": list(plugin.capabilities),
                 "commands": [{"name": c.name, "help": c.help} for c in plugin.commands],
-                "fields": [{"name": f.name, "help": f.help, "secret": f.secret, "optional": f.optional} for f in plugin.config_fields],
-                "settings": [{"name": f.name, "help": f.help, "secret": f.secret, "optional": f.optional} for f in plugin.settings],
+                "fields": [{"name": f.name, "help": f.help, "secret": f.secret, "optional": f.optional, "kind": f.kind, "choices": list(f.choices)} for f in plugin.config_fields],
+                "settings": [{"name": f.name, "help": f.help, "secret": f.secret, "optional": f.optional, "kind": f.kind, "choices": list(f.choices)} for f in plugin.settings],
             }
             for _, plugin in sorted(sources.items())
         ],
@@ -246,16 +246,17 @@ def _cmd_account_add(args: argparse.Namespace) -> tuple[object, str]:
             raise LudexError("secret_via_argv", f"field {key} is secret; enter it at the prompt or on stdin")
         if not value:
             raise LudexError("empty_value", f"field {key} must not be empty")
-        config[key] = value
+        config[key] = fields[key].clean(value)
     paths = state_paths()
     for field in plugin.config_fields:
         if field.name in config:
             continue
-        value = _read_value(f"{field.name} ({field.help}): ", field.secret, field.path)
+        hint = " [yes/no]" if field.kind == "yes_no" else f" [{'/'.join(field.choices)}]" if field.kind == "choice" else ""
+        value = _read_value(f"{field.name} ({field.help}){hint}: ", field.secret, field.path)
         if not value and not field.optional:
             raise LudexError("empty_value", f"field {field.name} must not be empty")
         if value:
-            config[field.name] = value
+            config[field.name] = field.clean(value)
     add_account(paths, args.name, plugin.name, config)
     return {"account": args.name, "source": plugin.name}, f"added account {args.name} ({plugin.name})"
 

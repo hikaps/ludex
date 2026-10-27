@@ -14,7 +14,7 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import ContentSwitcher, DataTable, Footer, Input, Label, Static, Switch, Tab, Tabs
+from textual.widgets import ContentSwitcher, DataTable, Footer, Input, Label, OptionList, Select, Static, Switch, Tab, Tabs
 
 from .accounts import get_account, list_accounts, update_account
 from .errors import LudexError
@@ -85,6 +85,9 @@ class LudexApp(App[None]):
     #settings-table .row:focus-within { border-left: thick $success; background: $surface; }
     #settings-table Input { border: none; border-left: thick $panel; height: 1; padding: 0 1; max-width: 80; background: $background; }
     #settings-table Input:focus { border-left: thick $success; background: $surface; }
+    #settings-table Select { height: 1; max-width: 80; }
+    #settings-table SelectCurrent { border: none; border-left: thick $panel; height: 1; padding: 0 1; background: $background; }
+    #settings-table Select:focus > SelectCurrent { border: none; border-left: thick $success; background: $surface; }
     #settings-table Switch { border: none; height: 1; padding: 0 1; background: transparent; }
     #settings-table Switch > .switch--slider { color: $text-muted; background: $panel; }
     #settings-table Switch.-on > .switch--slider { color: $success; }
@@ -222,6 +225,9 @@ class LudexApp(App[None]):
         self.query_one(Tabs).action_previous_tab()
 
     def action_cursor(self, move: str) -> None:
+        if isinstance(self.focused, OptionList):  # an open dropdown keeps the arrows
+            getattr(self.focused, "action_" + {"up": "cursor_up", "down": "cursor_down"}.get(move, move))()
+            return
         if self._active() == "settings":  # arrows move between the settings
             (self.screen.focus_previous if move in {"up", "page_up"} else self.screen.focus_next)()
             return
@@ -408,7 +414,7 @@ class LudexApp(App[None]):
         yield Label("Game details", classes="section")
         with Horizontal(classes="row"):
             yield Switch(True, id="opt-auto_details")
-            yield Label(" Fetch description, genres and developer for the highlighted game (the store sees the game id)")
+            yield Label(" Fetch details for the highlighted game (the store sees its id)")
         if self._paths is None:
             return
         yield Label("Sources", classes="section")
@@ -448,6 +454,14 @@ class LudexApp(App[None]):
         input_id = f"field-{len(self._fields)}"
         self._fields[input_id] = target
         yield Label(f"{field.name}: {field.help}" + (" (optional)" if field.optional else ""), classes="hint")
+        if field.kind == "yes_no":
+            with Horizontal(classes="row"):
+                yield Switch(value == "yes", id=input_id)
+            return
+        if field.kind == "choice":
+            chosen = {"value": value} if value in field.choices else {}
+            yield Select([(c, c) for c in field.choices], allow_blank=field.optional, id=input_id, **chosen)
+            return
         shown = "" if field.secret else value or ""
         placeholder = "(set; type to replace)" if field.secret and value else ""
         if field.path:
@@ -484,8 +498,15 @@ class LudexApp(App[None]):
             return
         self.notify(f"prefix folder: {get_prefix_root(self._conn, self._default_prefix())}")
 
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id in self._fields:
+            self._save_field(event.select.id, event.value if isinstance(event.value, str) else "")
+
     def on_switch_changed(self, event: Switch.Changed) -> None:
         kind, _, name = (event.switch.id or "").partition("-")
+        if event.switch.id in self._fields:
+            self._save_field(event.switch.id, "yes" if event.value else "no")
+            return
         try:
             if kind == "src":
                 count = []
