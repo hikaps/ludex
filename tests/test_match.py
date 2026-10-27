@@ -6,7 +6,7 @@ import pytest
 from ludex.errors import LudexError
 from ludex.library import get_game, import_account
 from ludex.loader import load_providers
-from ludex.metadata import cached_match, clean_title, game_metadata, get_auto_match, set_auto_match
+from ludex.metadata import cached_match, choose_match, clean_title, clear_match, default_query, game_metadata, get_auto_match, match_candidates, set_auto_match
 from ludex.plugins import ConfigField, Metadata, OwnedGame, Provider, SearchHit, SourceError
 from ludex.provider_settings import set_value
 from ludex.sources import rawg
@@ -108,7 +108,7 @@ def test_match_sets_title_and_details_once_and_is_cached(tmp_path):
     found = game_metadata(conn, sources, game_id, match=True)
     assert found.genres == ("Action",) and calls == ["Hades"]
     assert get_game(conn, game_id)["title"] == "Hades"
-    assert cached_match(conn, "local", "Hades_v1.2_(GOG)") == {"plugin": "db", "title": "Hades", "url": "https://x/hades"}
+    assert cached_match(conn, "local", "Hades_v1.2_(GOG)") == {"plugin": "db", "title": "Hades", "url": "https://x/hades", "manual": False}
     assert game_metadata(conn, sources, game_id, match=True) == found and calls == ["Hades"]
 
 
@@ -160,5 +160,67 @@ def test_the_detail_pane_credits_the_match_with_a_link(tmp_path):
             content = app.query_one("#detail", Static).visual
             assert "matched to db: Hades" in str(content)
             assert any("https://x/hades" in str(span.style) for span in content.spans)
+
+    asyncio.run(scenario())
+
+
+def test_the_users_pick_replaces_an_automatic_match_survives_refresh_and_can_be_cleared(tmp_path):
+    conn, game_id = database(tmp_path)
+    auto = SearchHit("db", "7", "Hades", "https://x/hades")
+    other = SearchHit("db", "9", "Hades (2016)", "https://x/hades-2016")
+    sources = {"db": Provider("db", "d", (), metadata=lambda store_id: Metadata("D" + store_id, (), (), None), match=lambda title: [auto, other])}
+    assert default_query(conn, game_id) == "Hades"
+    hits, problems = match_candidates(sources, "Hades")
+    assert [(p, h.store_id) for p, h in hits] == [("db", "7"), ("db", "9")] and not problems
+    game_metadata(conn, sources, game_id, match=True)
+    assert get_game(conn, game_id)["title"] == "Hades"
+    assert choose_match(conn, sources, game_id, "db", other).description == "D9"
+    assert get_game(conn, game_id)["title"] == "Hades (2016)"
+    assert cached_match(conn, "local", "Hades_v1.2_(GOG)")["manual"] is True
+    assert game_metadata(conn, sources, game_id, refresh=True, match=True).description == "D9"  # not replaced by the automatic match
+    assert clear_match(conn, game_id) is True and clear_match(conn, game_id) is False
+    assert get_game(conn, game_id)["title"] == "Hades_v1.2_(GOG)"
+    assert cached_match(conn, "local", "Hades_v1.2_(GOG)") is None
+    with pytest.raises(LudexError, match="no details"):
+        choose_match(conn, {"db": Provider("db", "d", (), metadata=lambda s: None, match=lambda t: [])}, game_id, "db", other)
+    with pytest.raises(LudexError, match="no installed plugin"):
+        choose_match(conn, {}, game_id, "db", other)
+
+
+def test_match_candidates_report_failing_plugins_and_skip_plugins_without_match():
+    broken = db_provider(SourceError("rawg_no_key", "set a key"))
+    plain = Provider("plain", "p", (), metadata=lambda s: None)
+    hits, problems = match_candidates({"a": broken, "b": plain, "c": db_provider([SearchHit("db", "1", "X", "https://x/1")])}, "x")
+    assert [p for p, _ in hits] == ["c"] and problems == {"a": "set a key"}
+
+
+def test_m_opens_the_picker_and_a_choice_sets_the_title_and_details(tmp_path):
+    import asyncio
+
+    from textual.widgets import OptionList
+
+    from ludex.tui import LudexApp
+
+    conn, game_id = database(tmp_path)
+    conn.close()
+    hit = SearchHit("db", "7", "Hades", "https://x/hades")
+    sources = {"db": Provider("db", "d", (), metadata=lambda store_id: Metadata("Slash.", (), (), None), match=lambda title: [hit])}
+
+    async def scenario():
+        app = LudexApp(tmp_path / "db.sqlite3", sources)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("m")
+            await pilot.pause(0.5)
+            results = app.screen.query_one(OptionList)
+            assert results.option_count == 1
+            await pilot.press("enter")
+            await app.workers.wait_for_complete()
+            await pilot.pause(0.5)
+            assert str(app.query_one("#owned-table").get_row_at(0)[1]) == "Hades"
+            await pilot.press("m", "ctrl+r")
+            await app.workers.wait_for_complete()
+            await pilot.pause(0.5)
+            assert str(app.query_one("#owned-table").get_row_at(0)[1]) == "Hades_v1.2_(GOG)"
 
     asyncio.run(scenario())
