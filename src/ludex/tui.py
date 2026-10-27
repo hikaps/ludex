@@ -14,7 +14,7 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import ContentSwitcher, DataTable, Footer, Input, Label, OptionList, Select, Static, Switch, Tab, Tabs
+from textual.widgets import Button, ContentSwitcher, DataTable, Button, Footer, Input, Label, OptionList, Select, Static, Switch, Tab, Tabs
 
 from .accounts import get_account, list_accounts, update_account
 from .errors import LudexError
@@ -85,6 +85,11 @@ class LudexApp(App[None]):
     #settings-table .row:focus-within { border-left: thick $success; background: $surface; }
     #settings-table Input { border: none; border-left: thick $panel; height: 1; padding: 0 1; max-width: 80; background: $background; }
     #settings-table Input:focus { border-left: thick $success; background: $surface; }
+    #settings-table Input.dirty { border-left: thick $warning; }
+    #settings-table .buttons { height: 1; }
+    #settings-table Button { border: none; height: 1; min-width: 16; margin: 0 0 0 1; background: $panel; color: $text; }
+    #settings-table Button:disabled { color: $text-muted; text-style: none; }
+    #settings-table Button:focus { background: $success; color: $background; text-style: bold; }
     #settings-table Select { height: 1; max-width: 80; }
     #settings-table SelectCurrent { border: none; border-left: thick $panel; height: 1; padding: 0 1; background: $background; }
     #settings-table Select:focus > SelectCurrent { border: none; border-left: thick $success; background: $surface; }
@@ -142,6 +147,9 @@ class LudexApp(App[None]):
         self._details_timer = None
         self._searched = ""
         self._fields: dict[str, tuple] = {}  # settings Input id -> what it edits
+        self._groups: dict[str, list[str]] = {}  # Save button id -> the text inputs it saves
+        self._group_of: dict[str, str] = {}  # text input id -> its Save button id
+        self._saved: dict[str, str] = {}  # text input id -> the text last saved (secrets: "")
         self._conn = None
 
     def compose(self) -> ComposeResult:
@@ -187,7 +195,9 @@ class LudexApp(App[None]):
                     table.add_column(name, width=width, key=name)
             else:
                 table.add_columns("", "title", "stores")
-        self.query_one("#folder", Input).value = str(get_prefix_root(self._conn, self._default_prefix()))
+        shown = str(get_prefix_root(self._conn, self._default_prefix()))
+        self._saved["folder"] = shown
+        self.query_one("#folder", Input).value = shown
         self.action_reload()
         self._table().focus()
 
@@ -291,13 +301,12 @@ class LudexApp(App[None]):
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "filter":
             self._reload()
+        elif event.input.id in self._group_of:
+            self._mark(self._group_of[event.input.id])
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        if event.input.id == "folder":
-            self._save_prefix_folder(event.value.strip() or None)
-            return
-        if event.input.id in self._fields:
-            self._save_field(event.input.id, event.value.strip())
+        if event.input.id in self._group_of:
+            self._save_group(self._group_of[event.input.id])
             return
         if self._active() == "search":
             query = event.value.strip()
@@ -367,6 +376,8 @@ class LudexApp(App[None]):
 
     def _start_details(self, game_id: int) -> None:
         self._details_timer = None
+        if not self.query(Tabs):  # the timer can fire while the app is closing
+            return
         if self._active() not in {"owned", "installed"} or self._current_id() != game_id or game_id in self._tried:
             return
         self._tried.add(game_id)
@@ -391,9 +402,14 @@ class LudexApp(App[None]):
             self._show_game(game_id, f"[dim]no details: {escape(problem)}[/]")
 
     def action_clear(self) -> None:
+        if self._active() == "settings":  # Esc throws away the unsaved edits of the focused section
+            focus_id = getattr(self.focused, "id", None) or ""
+            group = focus_id if focus_id in self._groups else self._group_of.get(focus_id)
+            if group:
+                self._discard(group)
+            return
         self.query_one("#filter", Input).value = ""
-        if self._active() != "settings":
-            self._table().focus()
+        self._table().focus()
 
     def action_enter_list(self) -> None:
         self.action_focus_filter()  # Enter goes to the search box; l launches
@@ -423,8 +439,12 @@ class LudexApp(App[None]):
 
     def _settings_widgets(self):
         yield Label("Default prefix folder", classes="section")
-        yield Label("Each game gets its own prefix inside it. Enter saves, Right arrow completes, blank resets.", classes="hint")
+        yield Label("Each game gets its own prefix inside it. Right arrow completes, blank resets.", classes="hint")
         yield PathInput("", suggester=PathSuggester(dirs_only=True), id="folder")
+        self._groups["save-folder"] = ["folder"]
+        self._group_of["folder"] = "save-folder"
+        yield from self._save_button("save-folder")
+        yield Label("Edited fields are marked in orange. Enter or Save saves them; Esc or Discard drops the edit.", classes="hint")
         yield Label("Game details", classes="section")
         with Horizontal(classes="row"):
             yield Switch(True, id="opt-auto_details")
@@ -451,20 +471,30 @@ class LudexApp(App[None]):
             if plugin.settings:
                 values = get_values(self._paths, plugin.name)
                 yield Label(f"{plugin.name} settings", classes="section")
+                group = f"save-p{len(self._groups)}"
                 for field in plugin.settings:
-                    yield from self._field_input(("plugin", plugin, field), field, values.get(field.name))
+                    yield from self._field_input(("plugin", plugin, field), field, values.get(field.name), group)
+                yield from self._save_button(group)
         accounts = [(f"{source}:{name}", source) for name, source in list_accounts(self._paths) if source in self._sources]
         if accounts:
             yield Label("Accounts", classes="section")
-            yield Label("Enter saves a field. Run 'ludex import' afterwards to pick up the change.", classes="hint")
+            yield Label("Save, then run 'ludex import' to pick up the change.", classes="hint")
         for ref, source in accounts:
             plugin = self._sources[source]
             config = get_account(self._paths, ref).config
             yield Label(ref, classes="section")
+            group = f"save-a{len(self._groups)}"
             for field in plugin.config_fields:
-                yield from self._field_input(("account", ref, plugin, field), field, config.get(field.name))
+                yield from self._field_input(("account", ref, plugin, field), field, config.get(field.name), group)
+            yield from self._save_button(group)
 
-    def _field_input(self, target: tuple, field: ConfigField, value: str | None):
+    def _save_button(self, group: str):
+        if group in self._groups:  # only sections with text fields need one
+            with Horizontal(classes="buttons"):
+                yield Button("Save", id=group, disabled=True)
+                yield Button("Discard", id=group.replace("save-", "discard-", 1), disabled=True)
+
+    def _field_input(self, target: tuple, field: ConfigField, value: str | None, group: str):
         input_id = f"field-{len(self._fields)}"
         self._fields[input_id] = target
         yield Label(f"{field.name}: {field.help}" + (" (optional)" if field.optional else ""), classes="hint")
@@ -477,13 +507,16 @@ class LudexApp(App[None]):
             yield Select([(c, c) for c in field.choices], allow_blank=field.optional, id=input_id, **chosen)
             return
         shown = "" if field.secret else value or ""
+        self._groups.setdefault(group, []).append(input_id)
+        self._group_of[input_id] = group
+        self._saved[input_id] = shown
         placeholder = "(set; type to replace)" if field.secret and value else ""
         if field.path:
             yield PathInput(shown, suggester=PathSuggester(dirs_only=False), placeholder=placeholder, id=input_id)
         else:
             yield Input(shown, placeholder=placeholder, password=field.secret, id=input_id)
 
-    def _save_field(self, input_id: str, text: str) -> None:
+    def _save_field(self, input_id: str, text: str) -> bool:
         target = self._fields[input_id]
         try:
             if target[0] == "plugin":
@@ -492,9 +525,6 @@ class LudexApp(App[None]):
                 self.notify(f"{plugin.name}.{field.name} {'saved' if text else 'removed'}")
             else:
                 _, ref, plugin, field = target
-                if not text and field.secret:
-                    self.notify(f"{field.name} unchanged (type a new value to replace it)")
-                    return
                 self._write(
                     lambda: update_account(
                         self._paths, ref, plugin.config_fields, {field.name: text} if text else {}, [] if text else [field.name]
@@ -503,14 +533,61 @@ class LudexApp(App[None]):
                 self.notify(f"{ref}: {field.name} {'saved' if text else 'removed'}; run 'ludex import {ref}'")
         except LudexError as exc:
             self.notify(exc.message, severity="error")
+            return False
+        return True
 
-    def _save_prefix_folder(self, folder: str | None) -> None:
+    def _save_prefix_folder(self, folder: str | None) -> bool:
         try:
             self._write(lambda: set_prefix_root(self._conn, folder))
         except LudexError as exc:
             self.notify(exc.message, severity="error")
-            return
+            return False
         self.notify(f"prefix folder: {get_prefix_root(self._conn, self._default_prefix())}")
+        return True
+
+    def _mark(self, group: str) -> None:
+        """Show which inputs of a section are edited and enable its Save button accordingly."""
+        button = self.query(f"#{group}")
+        if not button:  # not mounted yet
+            return
+        dirty = False
+        for input_id in self._groups[group]:
+            box = self.query_one(f"#{input_id}", Input)
+            changed = box.value != self._saved[input_id]
+            box.set_class(changed, "dirty")
+            dirty = dirty or changed
+        for button_id in (group, group.replace("save-", "discard-", 1)):
+            self.query_one(f"#{button_id}", Button).disabled = not dirty
+
+    def _save_group(self, group: str) -> None:
+        for input_id in self._groups[group]:
+            box = self.query_one(f"#{input_id}", Input)
+            text = box.value.strip()
+            if box.value == self._saved[input_id]:
+                continue
+            if input_id == "folder":
+                if not self._save_prefix_folder(text or None):
+                    continue
+                text = str(get_prefix_root(self._conn, self._default_prefix()))
+            elif not self._save_field(input_id, text):
+                continue
+            secret = input_id != "folder" and self._fields[input_id][-1].secret
+            self._saved[input_id] = "" if secret else text
+            box.value = "" if secret else text
+            if secret:
+                box.placeholder = "(set; type to replace)"
+        self._mark(group)
+
+    def _discard(self, group: str) -> None:
+        for input_id in self._groups[group]:
+            self.query_one(f"#{input_id}", Input).value = self._saved[input_id]
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        button_id = event.button.id or ""
+        group = button_id.replace("discard-", "save-", 1)
+        if group in self._groups:
+            (self._discard if button_id.startswith("discard-") else self._save_group)(group)
+            self.query_one(f"#{self._groups[group][0]}").focus()  # a disabled button cannot keep focus
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id in self._fields:

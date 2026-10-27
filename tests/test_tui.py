@@ -8,9 +8,10 @@ from ludex import launch as launch_mod
 from ludex.library import import_account
 from ludex.plugins import OwnedGame
 from ludex.sources import epic, steam
+from ludex.game_settings import get_prefix_root
 from ludex.storage import connect
 from ludex.tui import LudexApp
-from textual.widgets import DataTable, Input, Static
+from textual.widgets import Button, DataTable, Input, Static
 
 
 def test_search_narrows_the_list_and_enter_launches(tmp_path, monkeypatch):
@@ -435,5 +436,42 @@ def test_vim_keys_move_the_cursor_and_do_not_steal_typing(tmp_path):
             assert table.cursor_row > 0
             await pilot.press("/", "j", "k", "g")  # in the filter box the letters are text
             assert app.query_one("#filter", Input).value == "jkg"
+
+    asyncio.run(scenario())
+
+
+def test_settings_text_fields_save_with_enter_or_save_and_discard_with_esc_or_discard(tmp_path):
+    db = tmp_path / "db.sqlite3"
+    connect(db).close()
+
+    async def scenario():
+        app = LudexApp(db, {})
+        async with app.run_test() as pilot:
+            await pilot.press("s")
+            await pilot.pause()
+            box = app.query_one("#folder", Input)
+            saved = box.value
+            save, discard = app.query_one("#save-folder", Button), app.query_one("#discard-folder", Button)
+            assert save.disabled and discard.disabled
+            box.focus()
+            await pilot.press("x")
+            assert box.has_class("dirty") and not save.disabled and not discard.disabled
+            await pilot.press("escape")  # discards the edit
+            assert box.value == saved and not box.has_class("dirty") and save.disabled
+            box.value = str(tmp_path / "pfx")
+            await pilot.press("enter")  # saves it
+            await pilot.pause()
+            assert not box.has_class("dirty") and save.disabled
+            assert get_prefix_root(app._conn, app._default_prefix()) == tmp_path / "pfx"
+            box.value = "/elsewhere"
+            await pilot.pause()
+            discard.press()  # the buttons do the same
+            await pilot.pause()
+            assert box.value == str(tmp_path / "pfx")
+            box.value = str(tmp_path / "other")
+            await pilot.pause()
+            save.press()
+            await pilot.pause()
+            assert get_prefix_root(app._conn, app._default_prefix()) == tmp_path / "other"
 
     asyncio.run(scenario())
