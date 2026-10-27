@@ -21,7 +21,7 @@ from textual.widgets.data_table import RowDoesNotExist
 from .accounts import get_account, list_accounts, update_account
 from .errors import LudexError
 from .game_settings import get_prefix_root, get_settings, set_prefix_root, update_settings
-from .metadata import cached_match, cached_metadata, game_metadata, get_auto_details, get_auto_match, set_auto_details, set_auto_match
+from .metadata import cached_match, cached_metadata, choose_match, clear_match, default_query, game_metadata, match_candidates, get_auto_details, get_auto_match, set_auto_details, set_auto_match
 from .launch import install_game, launch_game, open_url
 from .find import find_games, owned_keys
 from .library import get_game, list_games
@@ -32,7 +32,7 @@ from .runners import find_runners
 from .storage import connect, writer_lock
 from .switches import get_switch, set_switch
 from .plugin_manager import list_plugins, set_plugin_enabled
-from .tui_settings import GameSettingsScreen, PathInput, PathSuggester
+from .tui_settings import GameSettingsScreen, MatchScreen, PathInput, PathSuggester
 
 
 _SOURCE_LABELS = {
@@ -118,6 +118,7 @@ class LudexApp(App[None]):
         Binding("escape", "clear", "Back to list", show=False),
         Binding("l", "launch", "Launch"),
         Binding("e", "edit", "Game settings"),
+        Binding("m", "match", "Match title"),
         Binding("i", "install", "Install"),
         Binding("s", "settings", "Settings"),
         Binding("r", "reload", "Reload"),
@@ -212,8 +213,8 @@ class LudexApp(App[None]):
         # tab, arrows and paging belong to the list only on the main screen; forms keep their own
         if len(self.screen_stack) > 1 and action not in {"quit"}:
             return False
-        tab_actions = {"owned": {"install", "edit"}, "installed": {"launch", "edit"}, "search": {"install"}}
-        if action in {"launch", "edit", "install"}:  # what you can do depends on the tab
+        tab_actions = {"owned": {"install", "edit", "match"}, "installed": {"launch", "edit", "match"}, "search": {"install"}}
+        if action in {"launch", "edit", "install", "match"}:  # what you can do depends on the tab
             return action in tab_actions.get(self._active(), set())
         if self._active() == "settings" and action in {"focus_filter", "settings"}:
             return False
@@ -675,6 +676,55 @@ class LudexApp(App[None]):
                 self._prefix_root or Path.home() / "prefixes", folder, save,
             )
         )
+
+    def action_match(self) -> None:
+        game_id = self._current_id()
+        if game_id is None:
+            return
+        if not any(p.match and p.metadata for p in self._sources.values()):
+            self.notify("no installed plugin can match titles (try the rawg or steam plugin)", severity="warning")
+            return
+        try:
+            query = default_query(self._conn, game_id)
+        except LudexError as exc:
+            self.notify(exc.message, severity="error")
+            return
+        title = get_game(self._conn, game_id)["title"]
+        self.push_screen(
+            MatchScreen(title, query, lambda q: match_candidates(self._sources, q)),
+            lambda result: self._chosen(game_id, result),
+        )
+
+    def _chosen(self, game_id: int, result) -> None:
+        if result is None:
+            return
+
+        def work() -> None:
+            conn = connect(self._database)
+            message = error = None
+            try:
+                if result == "clear":
+                    message = "match cleared" if clear_match(conn, game_id) else "no match to clear"
+                else:
+                    choose_match(conn, self._sources, game_id, result[0], result[1])
+                    message = f"matched to {result[0]}: {result[1].title}"
+            except Exception as exc:  # a plugin may raise anything; show its fixed message only
+                error = getattr(exc, "message", f"failed ({type(exc).__name__})")
+            finally:
+                conn.close()
+            self.call_from_thread(self._match_done, game_id, message, error)
+
+        self.run_worker(work, thread=True, group="match")
+
+    def _match_done(self, game_id: int, message: str | None, error: str | None) -> None:
+        if error:
+            self.notify(error, severity="error")
+            return
+        self.notify(message or "")
+        self._tried.add(game_id)  # do not match it again by itself this run
+        if self._current_id() == game_id:
+            self._show_game(game_id)
+        self._retitle(game_id)
 
     def _install_hit(self) -> None:
         table = self.query_one("#search-table", DataTable)

@@ -6,10 +6,11 @@ import re
 import sqlite3
 from collections.abc import Mapping
 from dataclasses import asdict
+from typing import Any
 
 from .errors import LudexError
 from .library import get_game
-from .plugins import Metadata, Provider
+from .plugins import Metadata, Provider, SearchHit
 from .storage import normalize_title
 
 _BRACKETS = re.compile(r"[(\[{][^)\]}]*[)\]}]")
@@ -30,17 +31,18 @@ def cached_metadata(conn: sqlite3.Connection, store: str, store_id: str) -> Meta
     return Metadata(data.get("description"), tuple(data.get("genres", ())), tuple(data.get("developers", ())), data.get("released"))
 
 
-def cached_match(conn: sqlite3.Connection, store: str, store_id: str) -> dict[str, str] | None:
-    """``{"plugin", "title", "url"}`` when the cached metadata of this copy came from a title match.
+def cached_match(conn: sqlite3.Connection, store: str, store_id: str) -> dict[str, Any] | None:
+    """``{"plugin", "title", "url", "manual"}`` when the cached metadata of this copy came from a title match.
 
-    ``url`` is the match's page (an ``https`` link, the credit some databases require) or ``""``.
+    ``url`` is the match's page (an ``https`` link, the credit some databases require) or ``""``;
+    ``manual`` is true when the user chose the match (a refresh never replaces it).
     """
     row = conn.execute("SELECT data FROM game_metadata WHERE store = ? AND store_id = ?", (store, store_id)).fetchone()
     matched = json.loads(row["data"]).get("matched") if row else None
     if not isinstance(matched, dict):
         return None
     url = matched.get("url")
-    return {"plugin": str(matched["plugin"]), "title": str(matched["title"]), "url": url if isinstance(url, str) and url.startswith("https://") else ""}
+    return {"plugin": str(matched["plugin"]), "title": str(matched["title"]), "url": url if isinstance(url, str) and url.startswith("https://") else "", "manual": matched.get("manual") is True}
 
 
 def _store(conn: sqlite3.Connection, store: str, store_id: str, found: Metadata, extra: dict | None = None) -> None:
@@ -65,11 +67,70 @@ def _match_by_title(conn: sqlite3.Connection, sources: Mapping[str, Provider], g
             continue
         if found is None:
             continue
-        _store(conn, store, store_id, found, {"matched": {"plugin": name, "id": hit.store_id, "title": hit.title, "url": hit.url}})
-        with conn:
-            conn.execute("UPDATE games SET title = ?, normalized_title = ? WHERE id = ?", (hit.title, normalize_title(hit.title), game_id))
+        _keep(conn, game_id, store, store_id, name, hit, found, manual=False)
         return found
     return None
+
+
+def _keep(conn: sqlite3.Connection, game_id: int, store: str, store_id: str, plugin: str, hit: SearchHit, found: Metadata, manual: bool) -> None:
+    """Store the match's details under the copy and give the game the match's title."""
+    _store(conn, store, store_id, found, {"matched": {"plugin": plugin, "id": hit.store_id, "title": hit.title, "url": hit.url, "manual": manual}})
+    with conn:
+        conn.execute("UPDATE games SET title = ?, normalized_title = ? WHERE id = ?", (hit.title, normalize_title(hit.title), game_id))
+
+
+def _live(conn: sqlite3.Connection, game_id: int) -> list[Any]:
+    live = [o for o in get_game(conn, game_id)["ownership"] if not o["removed"]]
+    if not live:
+        raise LudexError("not_found", "the game has no copy you still own")
+    return live
+
+
+def default_query(conn: sqlite3.Connection, game_id: int) -> str:
+    """The cleaned folder name of the game's first copy: what automatic matching searches for."""
+    return clean_title(_live(conn, game_id)[0]["title"])
+
+
+def match_candidates(sources: Mapping[str, Provider], query: str) -> tuple[list[tuple[str, SearchHit]], dict[str, str]]:
+    """Every ``match`` plugin's hits for ``query`` as ``(plugin, hit)``, plus ``{plugin: reason}`` for the ones that failed."""
+    hits: list[tuple[str, SearchHit]] = []
+    problems: dict[str, str] = {}
+    for name, provider in sorted(sources.items()):
+        if provider.match is None or provider.metadata is None:
+            continue
+        try:
+            hits += [(name, h) for h in provider.match(query) if isinstance(h, SearchHit)]
+        except Exception as exc:
+            problems[name] = getattr(exc, "message", f"failed ({type(exc).__name__})")
+    return hits, problems
+
+
+def choose_match(conn: sqlite3.Connection, sources: Mapping[str, Provider], game_id: int, plugin: str, hit: SearchHit) -> Metadata:
+    """The user's pick: keep ``hit``'s details and title for the game (a manual match is never replaced by a refresh)."""
+    provider = sources.get(plugin)
+    if provider is None or provider.metadata is None:
+        raise LudexError("unknown_plugin", f"no installed plugin {plugin!r} supplies details")
+    found = provider.metadata(hit.store_id)
+    if found is None:
+        raise LudexError("no_details", "that entry has no details")
+    live = _live(conn, game_id)
+    _keep(conn, game_id, live[0]["store"], str(live[0]["store_id"]), plugin, hit, found, manual=True)
+    return found
+
+
+def clear_match(conn: sqlite3.Connection, game_id: int) -> bool:
+    """Forget the match: drop the kept details and go back to the folder name. ``False`` when there was none."""
+    live = _live(conn, game_id)
+    cleared = False
+    for o in live:
+        if cached_match(conn, o["store"], str(o["store_id"])):
+            with conn:
+                conn.execute("DELETE FROM game_metadata WHERE store = ? AND store_id = ?", (o["store"], str(o["store_id"])))
+            cleared = True
+    if cleared:
+        with conn:
+            conn.execute("UPDATE games SET title = ?, normalized_title = ? WHERE id = ?", (live[0]["title"], normalize_title(live[0]["title"]), game_id))
+    return cleared
 
 
 def game_metadata(conn: sqlite3.Connection, sources: Mapping[str, Provider], game_id: int, refresh: bool = False, match: bool = False) -> Metadata | None:
@@ -80,11 +141,11 @@ def game_metadata(conn: sqlite3.Connection, sources: Mapping[str, Provider], gam
     """
     live = [o for o in get_game(conn, game_id)["ownership"] if not o["removed"]]
     copies = [(o["store"], str(o["store_id"])) for o in live]
-    if not refresh:
-        for store, store_id in copies:
-            found = cached_metadata(conn, store, store_id)
-            if found is not None:
-                return found
+    for store, store_id in copies:
+        found = cached_metadata(conn, store, store_id)
+        chosen = (cached_match(conn, store, store_id) or {}).get("manual")
+        if found is not None and (not refresh or chosen):  # a refresh never replaces the user's pick
+            return found
     for store, store_id in copies:
         provider = sources.get(store)
         if provider is None or provider.metadata is None:

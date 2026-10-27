@@ -7,18 +7,20 @@ detected list only; add cycling or a free path when that gets in the way.
 from __future__ import annotations
 
 import shlex
+from rich.text import Text
 from collections.abc import Callable
 from pathlib import Path
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import VerticalScroll
+from textual.containers import Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.suggester import Suggester
-from textual.widgets import Input, Label, Select, Static, TextArea
+from textual.widgets import Input, Label, OptionList, Select, Static, TextArea
 
 from .errors import LudexError
 from .game_settings import GameSettings
+from .plugins import SearchHit
 from .runners import Runner
 
 
@@ -150,3 +152,65 @@ class GameSettingsScreen(_Form):
             "args": args,
             "env": env,
         }
+
+
+class MatchScreen(ModalScreen["tuple[str, SearchHit] | str | None"]):
+    """Pick which database entry a game's title and details come from (or clear the match)."""
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel"), Binding("ctrl+r", "clear", "Clear match")]
+    DEFAULT_CSS = """
+    MatchScreen { align: center middle; }
+    #match { width: 80%; max-width: 100; height: auto; max-height: 90%; border: thick $primary; background: $surface; padding: 1 2; }
+    #match-results { height: 12; margin-top: 1; }
+    #match-note { color: $text-muted; height: auto; }
+    #match-hint { color: $text-muted; margin-top: 1; }
+    """
+
+    def __init__(self, heading: str, query: str, search: Callable[[str], "tuple[list[tuple[str, SearchHit]], dict[str, str]]"]) -> None:
+        super().__init__()
+        self._heading = heading
+        self._query = query
+        self._search = search
+        self._hits: list[tuple[str, SearchHit]] = []
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="match"):
+            yield Label(f"Match: {self._heading}")
+            yield Input(self._query, select_on_focus=False, id="match-query")
+            yield OptionList(id="match-results")
+            yield Static("", id="match-note")
+            yield Static("Enter searches (in the box) or picks (in the list)   tab switches   ctrl+r clears the match   esc cancels", id="match-hint")
+
+    def on_mount(self) -> None:
+        self._run(self._query)
+
+    def _run(self, query: str) -> None:
+        self.query_one("#match-note", Static).update("searching...")
+        self.run_worker(lambda: self._look(query), thread=True, exclusive=True, group="match")
+
+    def _look(self, query: str) -> None:
+        found = self._search(query)
+        self.app.call_from_thread(self._show, *found)
+
+    def _show(self, hits: "list[tuple[str, SearchHit]]", problems: dict[str, str]) -> None:
+        self._hits = hits
+        results = self.query_one("#match-results", OptionList)
+        results.clear_options()
+        results.add_options([Text(f"{hit.title}   [{plugin}]  {hit.url.removeprefix('https://')}") for plugin, hit in hits])
+        notes = [f"{name}: {reason}" for name, reason in problems.items()] or ([] if hits else ["no match; edit the name and press Enter"])
+        self.query_one("#match-note", Static).update("\n".join(notes))
+        if hits:
+            results.highlighted = 0
+            results.focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        self._run(event.value.strip())
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        self.dismiss(self._hits[event.option_index])
+
+    def action_clear(self) -> None:
+        self.dismiss("clear")
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)

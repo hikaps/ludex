@@ -26,7 +26,7 @@ from .acquire import acquire_game
 from .launch import install_game, launch_game, prepare_launch
 from .library import resolve_game, delete_account_records, export_games, dismiss_review, get_game, list_games, list_review, merge_games, run_import
 from .loader import load_providers
-from .metadata import cached_match, game_metadata, get_auto_details, get_auto_match, set_auto_details, set_auto_match
+from .metadata import cached_match, choose_match, clear_match, default_query, game_metadata, match_candidates, get_auto_details, get_auto_match, set_auto_details, set_auto_match
 from .paths import state_paths
 from .plugins import CommandContext, CommandResult, Provider
 from .storage import connect, writer_lock
@@ -108,6 +108,12 @@ def _parser() -> argparse.ArgumentParser:
     meta.add_argument("game", help="game id or title")
     meta.add_argument("--refresh", action="store_true", help="ask the plugin again instead of using the kept answer")
     meta.add_argument("--match", action="store_true", help="for a game no store describes, look it up by name in a game database plugin (also on with 'ludex config auto_match yes')")
+
+    match = commands.add_parser("match", help="choose which database entry a game's title and details come from (lists the candidates; --use picks one)")
+    match.add_argument("game", help="game id or title")
+    match.add_argument("query", nargs="?", help="what to search for (default: the game's folder name without tags and version)")
+    match.add_argument("--use", metavar="PLUGIN:ID", help="keep this candidate's title and details for the game")
+    match.add_argument("--clear", action="store_true", help="forget the match and go back to the folder name")
 
     acquire = commands.add_parser("acquire", help="ask a provider to fetch a game into a directory")
     acquire.add_argument("store")
@@ -455,6 +461,31 @@ def _cmd_install(args: argparse.Namespace) -> tuple[object, str]:
     return {"id": game_id, "install": target}, f"asking the client to install {target}"
 
 
+def _cmd_match(args: argparse.Namespace) -> tuple[object, str]:
+    providers, _ = load_providers()
+    conn = connect(state_paths().database)
+    try:
+        game_id = resolve_game(conn, args.game)
+        if args.clear:
+            cleared = clear_match(conn, game_id)
+            return {"id": game_id, "cleared": cleared}, "match cleared" if cleared else "no match to clear"
+        query = args.query or default_query(conn, game_id)
+        hits, problems = match_candidates(providers, query)
+        if not args.use:
+            data = {"id": game_id, "query": query, "candidates": [{"plugin": p, "id": h.store_id, "title": h.title, "url": h.url} for p, h in hits], "problems": problems}
+            lines = [f"{p}:{h.store_id}  {h.title}  {h.url}" for p, h in hits] or [f"no match for {query!r}"]
+            lines += [f"{name}: {reason}" for name, reason in problems.items()]
+            return data, "\n".join(lines)
+        plugin, _, store_id = args.use.partition(":")
+        hit = next((h for p, h in hits if p == plugin and h.store_id == store_id), None)
+        if hit is None:
+            raise LudexError("not_found", f"{args.use} is not among the candidates for {query!r}; list them first")
+        choose_match(conn, providers, game_id, plugin, hit)
+    finally:
+        conn.close()
+    return {"id": game_id, "matched": {"plugin": plugin, "id": hit.store_id, "title": hit.title, "url": hit.url}}, f"matched to {plugin}: {hit.title} ({hit.url})"
+
+
 def _cmd_metadata(args: argparse.Namespace) -> tuple[object, str]:
     providers, _ = load_providers()
     conn = connect(state_paths().database)
@@ -749,6 +780,7 @@ _HANDLERS = {
     ("find", None): _cmd_find,
     ("install", None): _cmd_install,
     ("metadata", None): _cmd_metadata,
+    ("match", None): _cmd_match,
     ("acquire", None): _cmd_acquire,
     ("runners", None): _cmd_runners,
     ("config", None): _cmd_config,
