@@ -249,7 +249,7 @@ def test_settings_tab_saves_the_prefix_folder_and_toggles_sources_and_plugins(tm
             app.query_one("#folder", Input).value = str(tmp_path / "all-prefixes")
             await pilot.press("enter")
             await pilot.pause()
-            await pilot.press("down", "down")  # arrows move between the settings
+            await pilot.press("down", "down", "down")  # arrows move between the settings
             await pilot.pause()
             assert app.focused is app.query_one("#src-steam_shortcuts", Switch)
             app.query_one("#src-steam_shortcuts", Switch).value = False  # off: account and games go, no dialog
