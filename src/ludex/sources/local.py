@@ -2,7 +2,7 @@
 
 ``path`` may be a glob such as ``/mnt/games/*``: every matching folder is searched, and the store
 id becomes ``<matched folder>/<game folder>`` so equal names under different folders stay distinct.
-A plain path keeps the folder name as store id. The title is always the folder name. Complete: a folder that disappears is marked
+A plain path keeps the folder name as store id. The title is always the folder name. Every game folder is also reported installed. Complete: a folder that disappears is marked
 removed. An unreadable or empty ``path`` raises instead, so an unmounted drive never wipes the
 library. ponytail: launching runs one executable per game (no launcher menus); folders only (no loose files such as AppImages or ROMs) and no title cleanup
 (scene tags, versions); add when a real library needs them.
@@ -27,7 +27,7 @@ def _roots(config: Mapping[str, str]) -> tuple[list[Path], bool]:
     return [Path(pattern)], False
 
 
-def fetch(config: Mapping[str, str]) -> FetchResult:
+def _scan(config: Mapping[str, str]) -> list[OwnedGame]:
     roots, qualify = _roots(config)
     games: list[OwnedGame] = []
     try:
@@ -42,7 +42,16 @@ def fetch(config: Mapping[str, str]) -> FetchResult:
         raise SourceError("directory_unreadable", "games directory is missing or unreadable")
     if not games:
         raise SourceError("directory_empty", "games directory has no game folders (is the drive mounted?)")
-    return FetchResult(games, True, "directory")
+    return games
+
+
+def fetch(config: Mapping[str, str]) -> FetchResult:
+    return FetchResult(_scan(config), True, "directory")
+
+
+def installed(config: Mapping[str, str]) -> set[str]:
+    """Every game folder on disk counts as installed (an unmounted drive raises, as in ``fetch``)."""
+    return {g.store_id for g in _scan(config)}
 
 
 def game_folder(config: Mapping[str, str], store_id: str) -> Path:
@@ -79,6 +88,7 @@ PLUGIN = Provider(
     help="A folder of games: each subfolder is one game (add one account per folder)",
     config_fields=(ConfigField("path", "games directory, or a pattern like /mnt/games/* to search every folder in it", path=True),),
     fetch=fetch,
+    installed=installed,
     launch_command=launch_command,
     game_folder=game_folder,
 )
