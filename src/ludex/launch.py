@@ -14,7 +14,7 @@ from .errors import LudexError
 from .game_settings import get_settings
 from .library import get_game
 from .runners import resolve_runner
-from .plugins import Provider
+from .plugins import Provider, SourceError
 
 
 def open_url(url: str, what: str) -> None:
@@ -145,8 +145,53 @@ def launch_game(
     return plan.target
 
 
-def install_game(conn, sources: Mapping[str, Provider], game_id: int, store: str | None = None) -> str:
-    """Ask the owning store's client to install a game you own; returns ``store:store_id``."""
-    record = _pick(conn, sources, game_id, store, lambda p: p is not None and p.install_url, "install")
-    open_url(sources[record["store"]].install_url(record["store_id"]), f"the {record['store']} client for this game")
-    return f"{record['store']}:{record['store_id']}"
+def prepare_install(
+    conn, sources: Mapping[str, Provider], game_id: int, store: str | None = None, config_for: Callable[[str, str], Mapping[str, str]] | None = None
+) -> LaunchPlan:
+    record = _pick(conn, sources, game_id, store, lambda p: p is not None and (p.install_url or p.install_command), "install")
+    target = f"{record['store']}:{record['store_id']}"
+    provider = sources[record["store"]]
+    if provider.install_url:
+        return LaunchPlan(target, url=provider.install_url(record["store_id"]))
+    if config_for is None:
+        raise LudexError("install_failed", "this provider installs by command and no account configuration is available")
+    try:
+        argv = [str(a) for a in provider.install_command(config_for(record["store"], record["account"]), record["store_id"])]
+    except LudexError:
+        raise
+    except SourceError as exc:
+        raise LudexError("install_failed", exc.message) from None
+    except Exception as exc:
+        raise LudexError("install_failed", f"provider {record['store']} could not build an install command ({type(exc).__name__})") from None
+    if not argv or not Path(argv[0]).is_absolute():
+        raise LudexError("install_failed", f"provider {record['store']} returned an invalid install command")
+    return LaunchPlan(target, argv=tuple(argv))
+
+
+def install_game(
+    conn,
+    sources: Mapping[str, Provider],
+    game_id: int,
+    store: str | None = None,
+    config_for: Callable[[str, str], Mapping[str, str]] | None = None,
+    log_dir: Path | None = None,
+) -> tuple[str, Path | None]:
+    """Ask the owning store's client to install a game you own, or start the plugin's install command in the background.
+
+    Returns ``(store:store_id, log file)``; the log is ``None`` when a client was asked. ponytail: the command is not
+    tracked, so a failed or finished install is only visible in its log; add a job record with the daemon.
+    """
+    plan = prepare_install(conn, sources, game_id, store, config_for)
+    if plan.url is not None:
+        open_url(plan.url, f"the {plan.target.partition(':')[0]} client for this game")
+        return plan.target, None
+    if log_dir is None:
+        raise LudexError("install_failed", "no state folder to write the install log in")
+    log_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    log = log_dir / f"install-{plan.target.replace(':', '-').replace('/', '_')}.log"
+    try:
+        with open(os.open(log, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600), "ab", closefd=True) as out:
+            subprocess.Popen(list(plan.argv), env=os.environ, start_new_session=True, stdin=subprocess.DEVNULL, stdout=out, stderr=out)
+    except OSError:
+        raise LudexError("install_failed", "the install command could not be started") from None
+    return plan.target, log

@@ -11,6 +11,8 @@ from __future__ import annotations
 from urllib.parse import quote
 
 import json
+import re
+import shutil
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -23,6 +25,9 @@ _DIRS = (
     "~/.var/app/com.heroicgameslauncher.hgl/config/heroic/legendaryConfig/legendary",
 )
 _MAX_FILE_BYTES = 8 * 1024 * 1024
+_APP_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
+_FLATPAK_ID = "com.heroicgameslauncher.hgl"
+_FLATPAK_LEGENDARY = "/app/bin/heroic/resources/app.asar.unpacked/build/bin/x64/linux/legendary"  # seen in the Heroic Flatpak
 
 
 def _legendary_dir(config: Mapping[str, str]) -> Path:
@@ -69,11 +74,39 @@ def fetch(config: Mapping[str, str]) -> FetchResult:
     return FetchResult(_games(_legendary_dir(config)), False, "local")
 
 
+def install_command(config: Mapping[str, str], store_id: str) -> list[str]:
+    """Legendary's own ``install``: through the Heroic Flatpak's bundled copy, else a ``legendary`` on PATH.
+
+    Heroic has no install link, so this drives the tool Heroic itself uses, on Heroic's config (so Heroic sees the
+    result). Installs under ``install_dir`` (default ``~/Games/Heroic``, which the Heroic Flatpak may write to).
+    """
+    if not _APP_NAME.fullmatch(store_id):
+        raise SourceError("epic_bad_id", "this Epic game id cannot be installed from here")
+    base = Path(config.get("install_dir") or "~/Games/Heroic").expanduser()
+    if not base.is_absolute():
+        raise SourceError("invalid_config", "install_dir must be absolute (a leading ~ is fine)")
+    directory = _legendary_dir(config)
+    tail = ["-y", "install", store_id, "--base-path", str(base), "--skip-sdl"]
+    if directory.is_relative_to(Path.home() / ".var" / "app" / _FLATPAK_ID):
+        flatpak = shutil.which("flatpak")
+        if flatpak is None:
+            raise SourceError("epic_no_legendary", "flatpak is not installed (Heroic is the Flatpak here)")
+        return [flatpak, "run", f"--env=LEGENDARY_CONFIG_PATH={directory}", f"--command={_FLATPAK_LEGENDARY}", _FLATPAK_ID, *tail]
+    legendary, env = shutil.which("legendary"), shutil.which("env")
+    if legendary is None or env is None:
+        raise SourceError("epic_no_legendary", "legendary is not installed (install it, or use Heroic's Flatpak)")
+    return [env, f"LEGENDARY_CONFIG_PATH={directory}", legendary, *tail]
+
+
 PLUGIN = Provider(
     name="epic",
     help="Epic library from the Legendary or Heroic cache on this machine (no login; refresh it in Heroic first)",
-    config_fields=(ConfigField("legendary_dir", "Legendary config folder; blank to auto-detect", optional=True),),
+    config_fields=(
+        ConfigField("legendary_dir", "Legendary config folder; blank to auto-detect", optional=True),
+        ConfigField("install_dir", "folder games are installed under; blank: ~/Games/Heroic", optional=True, path=True),
+    ),
     fetch=fetch,
     installed=installed,
     launch_url=lambda store_id: f"heroic://launch?appName={quote(store_id, safe='')}&runner=legendary",
+    install_command=install_command,
 )
