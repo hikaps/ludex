@@ -12,6 +12,7 @@ from pathlib import Path
 
 from .errors import LudexError
 from .game_settings import get_settings
+from .jobs import Job, start_job
 from .library import get_game
 from .runners import resolve_runner
 from .plugins import Provider, SourceError
@@ -175,11 +176,10 @@ def install_game(
     store: str | None = None,
     config_for: Callable[[str, str], Mapping[str, str]] | None = None,
     log_dir: Path | None = None,
-) -> tuple[str, Path | None]:
+) -> tuple[str, Job | None]:
     """Ask the owning store's client to install a game you own, or start the plugin's install command in the background.
 
-    Returns ``(store:store_id, log file)``; the log is ``None`` when a client was asked. ponytail: the command is not
-    tracked, so a failed or finished install is only visible in its log; add a job record with the daemon.
+    Returns ``(store:store_id, job)``; the job (see ``ludex.jobs``) is ``None`` when a client was asked.
     """
     plan = prepare_install(conn, sources, game_id, store, config_for)
     if plan.url is not None:
@@ -187,11 +187,4 @@ def install_game(
         return plan.target, None
     if log_dir is None:
         raise LudexError("install_failed", "no state folder to write the install log in")
-    log_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-    log = log_dir / f"install-{plan.target.replace(':', '-').replace('/', '_')}.log"
-    try:
-        with open(os.open(log, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600), "ab", closefd=True) as out:
-            subprocess.Popen(list(plan.argv), env=os.environ, start_new_session=True, stdin=subprocess.DEVNULL, stdout=out, stderr=out)
-    except OSError:
-        raise LudexError("install_failed", "the install command could not be started") from None
-    return plan.target, log
+    return plan.target, start_job(conn, "install", game_id, plan.target, get_game(conn, game_id)["title"], list(plan.argv), log_dir)

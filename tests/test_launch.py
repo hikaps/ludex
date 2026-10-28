@@ -73,16 +73,14 @@ def test_install_opens_the_install_url_and_only_for_providers_that_have_one(conn
     assert info.value.code == "not_installable"
 
 
-def test_install_command_runs_detached_with_its_output_in_a_private_log(conn, monkeypatch, tmp_path):
+def test_install_command_runs_in_the_background_as_a_tracked_job(conn, tmp_path):
     import_account(conn, "main", [OwnedGame("epic", "Quail", "Quail")], store="epic")
-    seen = {}
-    monkeypatch.setattr(launch_mod.subprocess, "Popen", lambda argv, **kw: seen.update(argv=argv, **kw))
-    tool = Provider("epic", "e", (), install_command=lambda config, store_id: ["/bin/legendary-fake", store_id, config["dir"]])
-    target, log = launch_mod.install_game(conn, {"epic": tool}, 1, None, lambda store, account: {"dir": "/x"}, tmp_path / "logs")
-    assert target == "epic:Quail" and seen["argv"] == ["/bin/legendary-fake", "Quail", "/x"] and seen["start_new_session"]
-    assert log.parent == tmp_path / "logs" and oct(log.stat().st_mode & 0o777) == "0o600" and oct(log.parent.stat().st_mode & 0o777) == "0o700"
+    tool = Provider("epic", "e", (), install_command=lambda config, store_id: ["/bin/echo", store_id, config["dir"]])
+    target, job = launch_mod.install_game(conn, {"epic": tool}, 1, None, lambda store, account: {"dir": "/x"}, tmp_path / "logs")
+    assert target == "epic:Quail" and job.target == "epic:Quail" and job.title == "Quail" and job.kind == "install"
+    assert job.log.parent == tmp_path / "logs" and oct(job.log.parent.stat().st_mode & 0o777) == "0o700"
     plan = launch_mod.prepare_install(conn, {"epic": tool}, 1, None, lambda store, account: {"dir": "/x"})
-    assert plan.argv[0] == "/bin/legendary-fake" and plan.url is None
+    assert plan.argv[0] == "/bin/echo" and plan.url is None
     bad = Provider("epic", "e", (), install_command=lambda config, store_id: ["relative"])
     with pytest.raises(LudexError, match="invalid install command"):
         launch_mod.prepare_install(conn, {"epic": bad}, 1, None, lambda store, account: {})
