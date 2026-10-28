@@ -90,6 +90,13 @@ offer to install a game the account owns (for example ``steam://install/<id>``).
 ``launch_url``. This is for the owner's official store client only; the core does not download or
 unpack anything itself.
 
+Installing without a client URL (optional): ``install_command(config, store_id)`` takes the owning
+account's configuration and returns an argument list (no shell; ``argv[0]`` an absolute path) that
+installs the game with the store's own tool, for example Legendary. The core starts it detached with its
+output in a log file under the state directory and does not track it. Raise ``SourceError`` when no
+command can be built. ``install_url`` wins when both are present; both count as the ``install``
+capability. ludex ships no downloader: this only drives the owner's official tool.
+
 Acquiring (optional): ``acquire(request, report)`` gets a ``AcquireRequest`` (store id, title, and a
 ``destination`` directory the core created) and does the whole job itself: download, unpack, or
 drive an official client. It calls ``report(message)`` with short progress lines and returns an
@@ -240,8 +247,9 @@ class Provider:
     commands: Sequence[Command] = ()
     settings: tuple[ConfigField, ...] = ()
     match: Callable[..., Sequence[SearchHit]] | None = None
+    install_command: Callable[[Mapping[str, str], str], Sequence[str]] | None = None
 
     @property
     def capabilities(self) -> tuple[str, ...]:
-        found = (("owned", self.fetch), ("installed", self.installed), ("search", self.search), ("metadata", self.metadata), ("match", self.match), ("launch", self.launch_url or self.launch_command or self.game_folder), ("install", self.install_url), ("acquire", self.acquire), ("commands", self.commands or None))
+        found = (("owned", self.fetch), ("installed", self.installed), ("search", self.search), ("metadata", self.metadata), ("match", self.match), ("launch", self.launch_url or self.launch_command or self.game_folder), ("install", self.install_url or self.install_command), ("acquire", self.acquire), ("commands", self.commands or None))
         return tuple(name for name, value in found if value is not None)

@@ -746,14 +746,15 @@ class LudexApp(App[None]):
         if game_id is None:
             return
         try:
+            logs = self._database.parent / "logs"
             try:
-                target = install_game(self._conn, self._sources, game_id)
+                target, log = install_game(self._conn, self._sources, game_id, None, self._config_for, logs)
             except LudexError as exc:
                 if exc.code != "install_ambiguous":
                     raise
                 store = exc.message.split("installed from ")[1].split(";")[0].split(", ")[0]
-                target = install_game(self._conn, self._sources, game_id, store)
-            self.notify(f"asked the client to install {target}")
+                target, log = install_game(self._conn, self._sources, game_id, store, self._config_for, logs)
+            self.notify(f"asked the client to install {target}" if log is None else f"installing {target} in the background; log: {log}")
         except LudexError as exc:
             self.notify(exc.message, severity="error")
 

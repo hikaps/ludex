@@ -23,7 +23,7 @@ from .runners import find_runners
 from .find import find_games, owned_keys
 from .installed import installed_keys
 from .acquire import acquire_game
-from .launch import install_game, launch_game, prepare_launch
+from .launch import install_game, launch_game, prepare_install, prepare_launch
 from .library import resolve_game, delete_account_records, export_games, dismiss_review, get_game, list_games, list_review, merge_games, run_import
 from .loader import load_providers
 from .metadata import cached_match, choose_match, clear_match, default_query, game_metadata, match_candidates, get_auto_details, get_auto_match, set_auto_details, set_auto_match
@@ -103,6 +103,7 @@ def _parser() -> argparse.ArgumentParser:
     install = commands.add_parser("install", help="ask the owning store's client to install a game you own")
     install.add_argument("game", help="game id or title")
     install.add_argument("--store", help="store to install from when several can")
+    install.add_argument("--dry-run", action="store_true", help="show what would be run and do not start it")
 
     meta = commands.add_parser("metadata", help="show a game's description, genres and developer (asks the store's plugin once, then keeps the answer)")
     meta.add_argument("game", help="game id or title")
@@ -452,13 +453,20 @@ def _cmd_find(args: argparse.Namespace) -> tuple[object, str]:
 
 def _cmd_install(args: argparse.Namespace) -> tuple[object, str]:
     providers, _ = load_providers()
-    conn = connect(state_paths().database)
+    paths = state_paths()
+    config_for = lambda store, account: get_account(paths, f"{store}:{account}").config
+    conn = connect(paths.database)
     try:
         game_id = resolve_game(conn, args.game)
-        target = install_game(conn, providers, game_id, args.store)
+        if args.dry_run:
+            plan = prepare_install(conn, providers, game_id, args.store, config_for)
+            return {"id": game_id, "install": plan.target, "url": plan.url, "argv": list(plan.argv)}, f"would install {plan.target}: {plan.url or shlex.join(plan.argv)}"
+        target, log = install_game(conn, providers, game_id, args.store, config_for, paths.root / "logs")
     finally:
         conn.close()
-    return {"id": game_id, "install": target}, f"asking the client to install {target}"
+    if log is None:
+        return {"id": game_id, "install": target}, f"asking the client to install {target}"
+    return {"id": game_id, "install": target, "log": str(log)}, f"installing {target} in the background; follow it with: tail -f {shlex.quote(str(log))}"
 
 
 def _cmd_match(args: argparse.Namespace) -> tuple[object, str]:

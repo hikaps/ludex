@@ -8,7 +8,7 @@ import pytest
 from ludex import launch as launch_mod
 from ludex.errors import LudexError
 from ludex.library import import_account
-from ludex.plugins import OwnedGame, Provider
+from ludex.plugins import OwnedGame, Provider, SourceError
 from ludex.sources import epic, steam
 from ludex.storage import connect
 
@@ -64,14 +64,31 @@ def test_failed_open_is_reported_without_the_url(conn, monkeypatch):
 
 def test_install_opens_the_install_url_and_only_for_providers_that_have_one(conn, opened):
     import_account(conn, "main", [OwnedGame("steam", "220", "HL2")], store="steam")
-    import_account(conn, "main", [OwnedGame("epic", "h", "HL2")], store="epic")
-    sources = {"steam": steam.PLUGIN, "epic": epic.PLUGIN}
-    assert steam.PLUGIN.install_url("220") == "steam://install/220" and epic.PLUGIN.install_url is None
-    assert launch_mod.install_game(conn, sources, 1) == "steam:220"  # epic has no install route, so no ambiguity
+    import_account(conn, "main", [OwnedGame("plain", "h", "HL2")], store="plain")
+    sources = {"steam": steam.PLUGIN, "plain": Provider("plain", "no install route", ())}
+    assert launch_mod.install_game(conn, sources, 1) == ("steam:220", None)  # the other provider has no install route, so no ambiguity
     assert opened == [["xdg-open", "steam://install/220"]]
     with pytest.raises(LudexError) as info:
-        launch_mod.install_game(conn, sources, 1, "epic")
+        launch_mod.install_game(conn, sources, 1, "plain")
     assert info.value.code == "not_installable"
+
+
+def test_install_command_runs_detached_with_its_output_in_a_private_log(conn, monkeypatch, tmp_path):
+    import_account(conn, "main", [OwnedGame("epic", "Quail", "Quail")], store="epic")
+    seen = {}
+    monkeypatch.setattr(launch_mod.subprocess, "Popen", lambda argv, **kw: seen.update(argv=argv, **kw))
+    tool = Provider("epic", "e", (), install_command=lambda config, store_id: ["/bin/legendary-fake", store_id, config["dir"]])
+    target, log = launch_mod.install_game(conn, {"epic": tool}, 1, None, lambda store, account: {"dir": "/x"}, tmp_path / "logs")
+    assert target == "epic:Quail" and seen["argv"] == ["/bin/legendary-fake", "Quail", "/x"] and seen["start_new_session"]
+    assert log.parent == tmp_path / "logs" and oct(log.stat().st_mode & 0o777) == "0o600" and oct(log.parent.stat().st_mode & 0o777) == "0o700"
+    plan = launch_mod.prepare_install(conn, {"epic": tool}, 1, None, lambda store, account: {"dir": "/x"})
+    assert plan.argv[0] == "/bin/legendary-fake" and plan.url is None
+    bad = Provider("epic", "e", (), install_command=lambda config, store_id: ["relative"])
+    with pytest.raises(LudexError, match="invalid install command"):
+        launch_mod.prepare_install(conn, {"epic": bad}, 1, None, lambda store, account: {})
+    failing = Provider("epic", "e", (), install_command=lambda config, store_id: (_ for _ in ()).throw(SourceError("epic_no_legendary", "legendary is not installed")))
+    with pytest.raises(LudexError, match="legendary is not installed"):
+        launch_mod.prepare_install(conn, {"epic": failing}, 1, None, lambda store, account: {})
 
 
 def test_command_launch_runs_detached_in_the_game_folder_with_the_account_config(conn, monkeypatch, tmp_path):
