@@ -92,3 +92,16 @@ def test_excluded_folders_are_skipped_by_name_pattern_or_qualified_id(tmp_path):
     assert PLUGIN.installed({"path": str(tmp_path / "*"), "exclude": "Hades"}) == {"a/Backup old", "a/_unsorted", "b/Celeste"}
     with pytest.raises(SourceError):  # excluding everything is an empty directory, not a wipe
         PLUGIN.fetch({"path": str(tmp_path / "a"), "exclude": "*"})
+
+
+def test_a_relative_path_and_a_glob_matching_too_many_folders_are_refused(tmp_path, monkeypatch):
+    (tmp_path / "g" / "Hades").mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+    for path in ("g", "*/*", "./g"):
+        with pytest.raises(SourceError, match="absolute"):
+            PLUGIN.fetch({"path": path})
+    assert [g.store_id for g in PLUGIN.fetch({"path": str(tmp_path / "g")}).games] == ["Hades"]
+    monkeypatch.setattr("ludex.sources.local.MAX_GLOB_ROOTS", 1)
+    (tmp_path / "h").mkdir()
+    with pytest.raises(SourceError, match="narrower"):
+        PLUGIN.fetch({"path": str(tmp_path / "*")})

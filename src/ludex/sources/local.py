@@ -7,6 +7,8 @@ removed. An unreadable or empty ``path`` raises instead, so an unmounted drive n
 library. ponytail: launching runs one executable per game (no launcher menus); folders only (no loose files such as AppImages or ROMs) and no title cleanup
 (scene tags, versions); add when a real library needs them.
 
+``path`` must be absolute (a leading ``~`` is fine); a glob may match at most 200 folders.
+
 ``exclude`` (optional) lists folder names to skip, separated by commas or newlines. Each entry is a
 case-insensitive pattern (``*`` and ``?``) matched against the folder name, and against
 ``<matched folder>/<game folder>`` when ``path`` is a glob, so ``_unsorted`` or ``backup*`` or
@@ -23,13 +25,21 @@ from pathlib import Path
 from ..plugins import ConfigField, FetchResult, OwnedGame, SourceError, Provider
 
 
+MAX_GLOB_ROOTS = 200
+
+
 def _roots(config: Mapping[str, str]) -> tuple[list[Path], bool]:
     raw = config.get("path")
     if not raw:
         raise SourceError("invalid_config", "path is required")
     pattern = str(Path(raw).expanduser())
+    if not Path(pattern).is_absolute():  # a relative path (or glob like */*) would depend on where ludex was started
+        raise SourceError("invalid_config", "path must be absolute (a leading ~ is fine)")
     if glob.has_magic(pattern):
-        return sorted(Path(m) for m in glob.glob(pattern) if Path(m).is_dir()), True
+        roots = sorted(Path(m) for m in glob.glob(pattern) if Path(m).is_dir())
+        if len(roots) > MAX_GLOB_ROOTS:  # ponytail: a fixed ceiling; a real library with more library folders can raise it
+            raise SourceError("invalid_config", f"path matches {len(roots)} folders (more than {MAX_GLOB_ROOTS}); make the pattern narrower")
+        return roots, True
     return [Path(pattern)], False
 
 
