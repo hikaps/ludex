@@ -23,6 +23,7 @@ from .runners import find_runners
 from .find import find_games, owned_keys
 from .installed import installed_keys
 from .acquire import acquire_game
+from .jobs import Job, last_line, list_jobs, stop_job
 from .launch import install_game, launch_game, prepare_install, prepare_launch
 from .library import resolve_game, delete_account_records, export_games, dismiss_review, get_game, list_games, list_review, merge_games, run_import
 from .loader import load_providers
@@ -101,9 +102,11 @@ def _parser() -> argparse.ArgumentParser:
     launch.add_argument("--dry-run", action="store_true", help="show how the game would be started and do not start it")
 
     install = commands.add_parser("install", help="ask the owning store's client to install a game you own")
-    install.add_argument("game", help="game id or title")
+    install.add_argument("game", nargs="?", help="game id or title")
     install.add_argument("--store", help="store to install from when several can")
     install.add_argument("--dry-run", action="store_true", help="show what would be run and do not start it")
+    install.add_argument("--status", action="store_true", help="list installs ludex started (of the game, when one is named) and how far they are")
+    install.add_argument("--stop", action="store_true", help="stop the game's running install")
 
     meta = commands.add_parser("metadata", help="show a game's description, genres and developer (asks the store's plugin once, then keeps the answer)")
     meta.add_argument("game", help="game id or title")
@@ -457,16 +460,40 @@ def _cmd_install(args: argparse.Namespace) -> tuple[object, str]:
     config_for = lambda store, account: get_account(paths, f"{store}:{account}").config
     conn = connect(paths.database)
     try:
+        if args.status:
+            return _install_status(conn, resolve_game(conn, args.game) if args.game else None)
+        if not args.game:
+            raise LudexError("missing_game", "name the game to install (or use --status)")
         game_id = resolve_game(conn, args.game)
+        if args.stop:
+            running = list_jobs(conn, "install", game_id, running=True)
+            if not running:
+                raise LudexError("job_not_running", "no install of that game is running")
+            job = stop_job(conn, running[0].id)
+            return {"id": game_id, "job": _job_data(job)}, f"stopped the install of {job.title} (job {job.id}); run it again to resume"
         if args.dry_run:
             plan = prepare_install(conn, providers, game_id, args.store, config_for)
             return {"id": game_id, "install": plan.target, "url": plan.url, "argv": list(plan.argv)}, f"would install {plan.target}: {plan.url or shlex.join(plan.argv)}"
-        target, log = install_game(conn, providers, game_id, args.store, config_for, paths.root / "logs")
+        target, job = install_game(conn, providers, game_id, args.store, config_for, paths.root / "logs")
     finally:
         conn.close()
-    if log is None:
+    if job is None:
         return {"id": game_id, "install": target}, f"asking the client to install {target}"
-    return {"id": game_id, "install": target, "log": str(log)}, f"installing {target} in the background; follow it with: tail -f {shlex.quote(str(log))}"
+    return {"id": game_id, "install": target, "job": _job_data(job)}, f"installing {target} in the background (job {job.id}); 'ludex install --status' shows progress, '--stop' cancels; log: {job.log}"
+
+
+def _job_data(job: Job) -> dict[str, object]:
+    return {"id": job.id, "game_id": job.game_id, "target": job.target, "title": job.title, "state": job.state, "exit_code": job.exit_code,
+            "started_at": job.started_at, "ended_at": job.ended_at, "log": str(job.log), "progress": last_line(job) if job.state == "running" else ""}
+
+
+def _install_status(conn, game_id: int | None) -> tuple[object, str]:
+    jobs = list_jobs(conn, "install", game_id)
+    lines = [
+        f"#{j.id}  {j.state:<8} {j.title}  ({j.target})  " + (last_line(j) if j.state == "running" else f"exit {j.exit_code}" if j.exit_code not in (None, 0) else j.ended_at or "")
+        for j in jobs
+    ]
+    return {"jobs": [_job_data(j) for j in jobs]}, "\n".join(lines) if lines else "no installs started by ludex"
 
 
 def _cmd_match(args: argparse.Namespace) -> tuple[object, str]:
