@@ -1,3 +1,3 @@
 """Headless library of the games you own across stores."""
 
-__version__ = "0.48.1"
+__version__ = "0.49.0"

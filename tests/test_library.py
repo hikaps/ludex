@@ -432,3 +432,16 @@ def test_resolve_game_by_id_exact_title_or_unique_partial(conn):
         with pytest.raises(LudexError) as info:
             library.resolve_game(conn, ref)
         assert info.value.code == code
+
+
+def test_fuzzy_filter_tolerates_missing_letters_and_ranks_exact_first(conn):
+    import_account(conn, "main", FetchResult([g("1", "Hollow Knight"), g("2", "Knight Hollow Tales"), g("3", "Celeste"), g("4", "Hades")], True, "api").games, complete=True, store="steam")
+    titles = lambda q, **kw: [x["title"] for x in list_games(conn, query=q, fuzzy=True, **kw)]
+    assert titles("hllw knght") == ["Hollow Knight", "Knight Hollow Tales"]
+    assert titles("hollow knight") == ["Hollow Knight", "Knight Hollow Tales"]  # exact phrase first, then all words in any order
+    assert titles("knight hollow")[0] == "Knight Hollow Tales"  # exact phrase ranks first
+    assert titles("cls") == ["Celeste"]
+    assert titles("hd") == []  # two letters must be a real substring
+    assert titles("Héllo") == []
+    assert [x["title"] for x in list_games(conn, query="hllw knght")] == []  # the default stays a substring
+    assert titles("hllw knght", limit=1, offset=1) == ["Knight Hollow Tales"]

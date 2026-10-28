@@ -495,3 +495,20 @@ def test_settings_input_does_not_select_its_text_on_focus_so_backspace_removes_o
             assert box.value == "/mnt/game"
 
     asyncio.run(scenario())
+
+
+def test_the_filter_finds_a_title_typed_with_missing_letters(tmp_path):
+    db = tmp_path / "db.sqlite3"
+    conn = connect(db)
+    import_account(conn, "m", [OwnedGame("steam", "1", "Hollow Knight"), OwnedGame("steam", "2", "Celeste")], store="steam")
+    conn.close()
+
+    async def scenario():
+        app = LudexApp(db, {"steam": steam.PLUGIN})
+        async with app.run_test() as pilot:
+            await pilot.press("slash", *"hllw knght")
+            await pilot.pause()
+            owned = app.query_one("#owned-table", DataTable)
+            assert [str(owned.get_row_at(i)[1]) for i in range(owned.row_count)] == ["Hollow Knight"]
+
+    asyncio.run(scenario())

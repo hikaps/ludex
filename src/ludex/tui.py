@@ -275,7 +275,7 @@ class LudexApp(App[None]):
         counts = []
         installed_ids: set[int] = set()
         for name, only in (("installed", self._keys), ("owned", None)):
-            games = list_games(self._conn, query=query, only=only, limit=500)
+            games = list_games(self._conn, query=query, only=only, limit=500, fuzzy=True)
             table = self.query_one(f"#{name}-table", DataTable)
             table.clear()
             if name == "installed":

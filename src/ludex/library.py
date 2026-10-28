@@ -170,6 +170,24 @@ def _escape_like(text: str) -> str:
     return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+def _subsequence(needle: str, haystack: str) -> bool:
+    letters = iter(haystack)
+    return all(ch in letters for ch in needle)
+
+
+def _fuzzy_rank(normalized: str, query: str) -> int | None:
+    """0: the whole query is inside the title; 1: every word is; 2: every word of 3+ letters is, at least, in order
+    (``hllw knght`` finds ``hollow knight``); ``None``: no match."""
+    if query in normalized:
+        return 0
+    words = query.split()
+    if all(w in normalized for w in words):
+        return 1
+    if all(w in normalized or (len(w) >= 3 and _subsequence(w, normalized)) for w in words):
+        return 2
+    return None
+
+
 def list_games(
     conn: sqlite3.Connection,
     *,
@@ -180,8 +198,14 @@ def list_games(
     only: Collection[tuple[str, str]] | None = None,
     limit: int = 50,
     offset: int = 0,
+    fuzzy: bool = False,
 ) -> list[dict[str, Any]]:
-    """``only``: restrict to games owning one of these (store, store_id) pairs."""
+    """``only``: restrict to games owning one of these (store, store_id) pairs.
+
+    ``query`` is a substring of the normalized title; with ``fuzzy`` the words may also be typed with letters
+    missing (best matches first). ponytail: fuzzy reads every matching title and ranks in Python, fine for a library
+    of thousands; never use it to resolve a game by name.
+    """
     if not 1 <= limit <= _MAX_LIMIT:
         raise LudexError("invalid_pagination", f"limit must be between 1 and {_MAX_LIMIT}")
     if offset < 0:
@@ -201,14 +225,23 @@ def list_games(
         own_clauses.append(f"(o.store || char(31) || o.store_id) IN ({','.join('?' * len(only)) or 'NULL'})")
         params.extend(f"{store}\x1f{store_id}" for store, store_id in only)
     where = [f"EXISTS (SELECT 1 FROM ownership o WHERE {' AND '.join(own_clauses)})"]
-    if query is not None:
+    if query is not None and not fuzzy:
         where.append("g.normalized_title LIKE ? ESCAPE '\\'")
         params.append(f"%{_escape_like(normalize_title(query))}%")
-    rows = conn.execute(
-        f"SELECT g.id, g.title FROM games g WHERE {' AND '.join(where)} "
-        "ORDER BY g.normalized_title, g.id LIMIT ? OFFSET ?",
-        (*params, limit, offset),
-    ).fetchall()
+    if query is not None and fuzzy:
+        wanted = normalize_title(query)
+        titles = conn.execute(
+            f"SELECT g.id, g.title, g.normalized_title FROM games g WHERE {' AND '.join(where)} ORDER BY g.normalized_title, g.id",
+            params,
+        ).fetchall()
+        ranked = [(rank, row) for row in titles if (rank := _fuzzy_rank(row["normalized_title"], wanted)) is not None]
+        rows = [row for _, row in sorted(ranked, key=lambda r: r[0])][offset : offset + limit]
+    else:
+        rows = conn.execute(
+            f"SELECT g.id, g.title FROM games g WHERE {' AND '.join(where)} "
+            "ORDER BY g.normalized_title, g.id LIMIT ? OFFSET ?",
+            (*params, limit, offset),
+        ).fetchall()
     result = []
     for row in rows:
         owned = conn.execute(
