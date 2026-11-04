@@ -1,0 +1,13 @@
+site_name: ludex
+site_description: A headless, scriptable library of the games you own across stores.
+site_url: https://hikaps.github.io/ludex/
+repo_url: https://github.com/hikaps/ludex
+theme:
+  name: readthedocs
+strict: true
+nav:
+  - Home: index.md
+  - Use cases:
+      - List games across stores: use-cases/list-games-across-stores.md
+      - Import Steam library: use-cases/import-steam-library.md
+      - Write a plugin: use-cases/write-a-plugin.md

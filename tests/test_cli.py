@@ -13,7 +13,7 @@ def test_version_matches_installed_metadata(capsys: pytest.CaptureFixture[str]) 
         main(["--version"])
     assert exit_info.value.code == 0
     out = capsys.readouterr().out
-    assert out == f"ludex {importlib.metadata.version('ludex')}\n"
+    assert out == f"ludex {importlib.metadata.version('ludex-games')}\n"
     assert out == f"ludex {ludex.__version__}\n"
 
 
