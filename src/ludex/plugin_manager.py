@@ -34,6 +34,7 @@ _NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,63}\Z")
 _REPO_LINK = re.compile(r"https://(?:www\.)?(?:github|gitlab)\.com/[\w.-]+/[\w.-]+?(?:\.git)?/?\Z")
 _CREDENTIALS = re.compile(r"://[^/@\s]*:[^/@\s]*@")
 _RELEASES = "https://github.com/hikaps/ludex/releases/download/{channel}/ludex.tar.gz"
+_DIST = "ludex-games"
 CHANNELS = ("stable", "beta")
 
 
@@ -152,7 +153,7 @@ def add_plugin(spec: str, *, upgrade: bool = False) -> dict[str, Any]:
                 else "that spec installs more than one plugin; add them one at a time",
             )
         name, ver, provider_names = found[0]
-        if not _NAME.fullmatch(name) or name == "ludex":
+        if not _NAME.fullmatch(name) or name in (_DIST, "ludex"):
             raise LudexError("not_a_plugin", "that package name cannot be used as a plugin")
         taken = {ep.name for ep in entry_points(group=GROUP) if ep.dist is not None and _canonical(ep.dist.name) != name}
         clash = sorted(set(provider_names) & taken)
@@ -213,7 +214,7 @@ def _is_editable() -> bool:
     try:
         from importlib.metadata import distribution
 
-        return bool(json.loads(distribution("ludex").read_text("direct_url.json") or "{}").get("dir_info", {}).get("editable"))
+        return bool(json.loads(distribution(_DIST).read_text("direct_url.json") or "{}").get("dir_info", {}).get("editable"))
     except (PackageNotFoundError, ValueError, AttributeError):
         return False
 
@@ -221,7 +222,7 @@ def _is_editable() -> bool:
 def update_core(channel: str | None, dry_run: bool) -> dict[str, Any]:
     """Reinstall ludex from the rolling release for ``channel`` (default: the channel installed)."""
     try:
-        current = version("ludex")
+        current = version(_DIST)
     except PackageNotFoundError:
         raise LudexError("not_installed", "ludex is not installed as a package, so it cannot update itself") from None
     if _is_editable():
@@ -244,7 +245,7 @@ def update_core(channel: str | None, dry_run: bool) -> dict[str, Any]:
     _run(command)
     try:
         done = subprocess.run(
-            [sys.executable, "-c", "import importlib.metadata as m; print(m.version('ludex'))"],
+            [sys.executable, "-c", f"import importlib.metadata as m; print(m.version({_DIST!r}))"],
             capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL,
         )
         result["to"] = done.stdout.strip() or None
