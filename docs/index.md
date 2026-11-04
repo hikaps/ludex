@@ -32,12 +32,7 @@ ludex ls             # list your games
 ## Use cases
 
 - [List the games you own across stores on Linux](use-cases/list-games-across-stores.md)
-- [Export your game library to JSON or CSV](use-cases/export-library-json.md)
 - [Import your Steam library](use-cases/import-steam-library.md)
-- [Import Epic and Heroic games](use-cases/import-epic-heroic-games.md)
-- [Add local, non-store games and exclude folders](use-cases/add-local-games.md)
-- [Match games to metadata by title or by hand](use-cases/match-games-to-metadata.md)
-- [Find installed games and install an Epic game through Legendary](use-cases/install-epic-game-legendary.md)
 - [Write a ludex plugin](use-cases/write-a-plugin.md)
 
 Source code and issues: <https://github.com/hikaps/ludex>.

@@ -11,7 +11,7 @@ ludex setup heroic
 ludex setup local
 ```
 
-Each `setup` asks for the source's settings, adds an account and imports it. See the per-store pages: [Steam](import-steam-library.md), [Epic and Heroic](import-epic-heroic-games.md), [local folders](add-local-games.md). To refresh everything later:
+Each `setup` asks for the source's settings, adds an account and imports it. For Steam see [Import your Steam library](import-steam-library.md). To refresh everything later:
 
 ```sh
 ludex import --all
