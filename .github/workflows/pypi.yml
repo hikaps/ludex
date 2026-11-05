@@ -2,7 +2,14 @@ name: PyPI
 
 on:
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build and check only; do not publish, tag or release
+        type: boolean
+        default: false
   push:
+    branches:
+      - main
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+"
 
@@ -13,6 +20,9 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    outputs:
+      version: ${{ steps.decide.outputs.version }}
+      publish: ${{ steps.decide.outputs.publish }}
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -24,13 +34,15 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Verify versions
+      - name: Verify versions and decide whether to release
+        id: decide
         env:
           REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
-          python - <<'PY'
+          VERSION="$(python - <<'PY'
           import os
           import re
           import tomllib
@@ -47,7 +59,39 @@ jobs:
               tag = os.environ["REF_NAME"]
               if tag != f"v{base}":
                   raise SystemExit(f"tag {tag!r} does not match package version v{base}")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"version={base}\n")
+          print(base)
           PY
+          )"
+
+          # A version is released once: its tag exists, or this run creates it. A push to main that does not
+          # change the version (anything but a release PR) therefore only builds and checks.
+          if [[ "$REF_TYPE" == "tag" ]]; then
+            PUBLISH=1 # the tag was just pushed; publish it
+          elif [[ "$REF_NAME" == "main" ]]; then
+            set +e
+            git ls-remote --exit-code --refs origin "refs/tags/v$VERSION" >/dev/null 2>&1
+            STATUS=$?
+            set -e
+            if [[ "$STATUS" == "0" ]]; then
+              PUBLISH=0
+              echo "v$VERSION is already tagged; nothing to publish." >> "$GITHUB_STEP_SUMMARY"
+            elif [[ "$STATUS" == "2" ]]; then
+              PUBLISH=1
+            else
+              echo "Could not check whether tag v$VERSION exists (git ls-remote exit $STATUS)" >&2
+              exit 1
+            fi
+          else
+            PUBLISH=0
+            echo "Not on main or a version tag; build only." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [[ "${DRY_RUN:-false}" == "true" ]]; then
+            PUBLISH=0
+            echo "Dry run: nothing will be published, tagged or released." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "publish=$PUBLISH" >> "$GITHUB_OUTPUT"
 
       - name: Build wheel and source distribution
         run: |
@@ -66,12 +110,13 @@ jobs:
 
   publish:
     needs: build
-    if: github.ref_type == 'tag'
+    if: needs.build.outputs.publish == '1'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: pypi
     permissions:
       id-token: write
+      contents: write # to create the tag and the GitHub Release after publishing
     steps:
       - name: Download distributions
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -83,3 +128,23 @@ jobs:
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
           packages-dir: dist/
+          skip-existing: true # a re-run after a failed tag or release step must not fail on the upload
+
+      - name: Tag the version and create its release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.build.outputs.version }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          tag="v$VERSION"
+          if ! gh api "repos/$GH_REPO/git/ref/tags/$tag" >/dev/null 2>&1; then
+            gh api --method POST "repos/$GH_REPO/git/refs" -f ref="refs/tags/$tag" -f sha="$SHA" >/dev/null
+            echo "Created tag $tag at $SHA." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            # not "latest": the rolling Stable release keeps that badge and moves with main
+            gh release create "$tag" dist/* --verify-tag --title "$tag" --generate-notes --latest=false
+            echo "Created the release for $tag." >> "$GITHUB_STEP_SUMMARY"
+          fi
