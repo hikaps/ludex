@@ -36,27 +36,12 @@ ludex --version
 - Parameterized SQL only; keep schema-version checks and WAL.
 - Never print or log credentials; redact URLs in output.
 
-## Branching, PRs and Releases
-
-- `main`: stable. Every push publishes the rolling `stable` GitHub Release (`X.Y.Z.postN`).
-- `develop`: integration. Every push publishes the rolling `beta` prerelease (`X.Y.Z.devN`).
-- One feature or fix per branch, created from `develop`, named after the change (for example `steam-import`, `ls-filters`). Open the PR with `gh pr create --base develop`; the repo default branch is `main`, so `--base` is required.
-- Feature PRs are squash-merged into `develop`; the PR title becomes the commit subject and must follow the commit conventions below.
-- Releases: open a PR from `develop` to `main` and merge it with a merge commit (never squash, or the branches diverge). Bump `version` in `pyproject.toml` and `__version__` in `src/ludex/__init__.py` together, in a feature PR on `develop`, before a release that changes behavior; both must be plain `X.Y.Z` and equal or the release build fails.
-- PyPI releases: merging the release PR into `main` releases the version. `.github/workflows/pypi.yml` checks both versions agree and are plain `X.Y.Z`, and that tag `vX.Y.Z` does not exist yet; it then publishes to PyPI via trusted publishing (no API token), creates the tag on the merged commit and a GitHub Release with the sdist and wheel. A push to `main` that keeps the same version only builds and checks. Pushing tag `vX.Y.Z` by hand still publishes it, and is the way to release a version that was merged earlier. Nothing else gates the upload, and a PyPI version number can never be reused: keep a required reviewer on the `pypi` environment (GitHub Settings, Environments) so a release waits for approval. Re-running after a failed tag or release step is safe. Rolling `beta`/`stable` builds never publish to PyPI. The PyPI project is `ludex-games` (`ludex` is too close to an existing project name); the command and import package stay `ludex`. One-time setup: a PyPI pending publisher for project `ludex-games`, owner `hikaps`, repository `ludex`, workflow `pypi.yml`, environment `pypi`.
-- Both branches are protected: changes land only through PRs, and `Tests (Python 3.11)` and `Tests (Python 3.14)` must pass. Never force-push `main` or `develop`.
-- CI: `.github/workflows/tests.yml` runs on every push, PR and manual dispatch. `.github/workflows/releases.yml` builds the sdist and wheel, smoke-installs them with uv, pipx and pip, and then moves the `beta` or `stable` tag and release.
-
-## Commit Conventions
-
-- Conventional Commits: `<type>(<optional-scope>): <summary>`; types `feat`, `fix`, `docs`, `test`, `refactor`, `perf`, `build`, `ci`, `chore`. Scopes name the subsystem (`import`, `matching`, `storage`, `plugins`, `accounts`, `steam`, `cli`, `tui`).
-- Imperative subject, no trailing period, at most 72 characters including the `(#N)` that squash merges append, so keep PR titles to 68 or fewer.
-- One logical change per commit, with its tests and docs. A change to a command or convention updates this file or the README in the same PR. Body: motivation, constraints, and verification actually performed.
-- Breaking CLI, `--json` or persisted-state changes: `!` after the type/scope and a `BREAKING CHANGE:` body.
-- PR descriptions follow `.github/pull_request_template.md` (What, Why, Verification) and state what was not verified. Keep PR communication in the description and update it when scope or verification changes; do not post progress comments.
-
 ## Testing
 
 - Pytest with `tmp_path`, `monkeypatch`, `capsys`; mock store APIs (for example `httpx.MockTransport`). Tests are offline and need no credentials.
 - Add behavioral regressions for changed paths: idempotent re-import, removal and restore, partial-fetch safety, credential redaction, and broken-plugin skipping.
 - Exercise the real CLI (`ludex ...`) for user-visible changes; mocked APIs do not prove live store compatibility.
+
+## Workflow
+
+Branching, commit conventions, PRs and releases are in [CONTRIBUTING.md](CONTRIBUTING.md). A change to a command or convention updates README.md or this file in the same PR.

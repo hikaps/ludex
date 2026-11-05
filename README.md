@@ -68,7 +68,7 @@ Lutris, Heroic, Playnite and GOG Galaxy are full game launchers with graphical i
 
 ## Contributing
 
-See [AGENTS.md](AGENTS.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
