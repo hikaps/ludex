@@ -24,14 +24,16 @@ Status: early development.
 
 ## Install
 
-`main` publishes the rolling **stable** build and `develop` the rolling **beta** build. See [releases](https://github.com/hikaps/ludex/releases).
-
 ```sh
-uv tool install https://github.com/hikaps/ludex/releases/download/stable/ludex.tar.gz
-# Or: pipx install https://github.com/hikaps/ludex/releases/download/stable/ludex.tar.gz
+uv tool install ludex-games
+# Or: pipx install ludex-games
 ```
 
-Replace `stable` with `beta` for the beta channel.
+The package is `ludex-games`; the command is `ludex`. Rolling builds are also published from `main` (**stable**) and `develop` (**beta**); see [releases](https://github.com/hikaps/ludex/releases):
+
+```sh
+uv tool install https://github.com/hikaps/ludex/releases/download/beta/ludex.tar.gz
+```
 
 ## Quick start
 
