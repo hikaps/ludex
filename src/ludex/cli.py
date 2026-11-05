@@ -1,20 +1,37 @@
 from __future__ import annotations
 
 import argparse
+import csv
+import io
 import getpass
+import glob
 import json
 import os
+import shlex
 import sys
+from dataclasses import asdict
+from pathlib import Path
 from typing import Any
 
 from . import __version__
-from .accounts import add_account, get_account, list_accounts, remove_account
+from .accounts import add_account, get_account, list_accounts, remove_account, update_account
+from .provider_settings import describe, field_for, get_values, set_value
 from .errors import LudexError
-from .library import get_game, list_games, run_import
-from .loader import load_sources
+from .game_settings import get_prefix_root, get_settings, pick_copy, set_prefix_root, update_settings
+from .plugin_manager import CHANNELS, add_plugin, list_plugins, remove_plugin, set_plugin_enabled, update_core, update_plugins
+from .runners import find_runners
+from .find import find_games, owned_keys
+from .installed import installed_keys
+from .acquire import acquire_game
+from .jobs import Job, last_line, list_jobs, stop_job
+from .launch import install_game, launch_game, prepare_install, prepare_launch
+from .library import resolve_game, delete_account_records, export_games, dismiss_review, get_game, list_games, list_review, merge_games, run_import
+from .loader import load_providers
+from .metadata import cached_match, choose_match, clear_match, default_query, game_metadata, match_candidates, get_auto_details, get_auto_match, set_auto_details, set_auto_match
 from .paths import state_paths
-from .plugins import SourcePlugin
+from .plugins import CommandContext, CommandResult, Provider
 from .storage import connect, writer_lock
+from .switches import SWITCHES, get_switch, set_switch
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -23,7 +40,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--json", action="store_true", help="machine-readable output (before the subcommand)")
     commands = parser.add_subparsers(dest="command", metavar="command")
 
-    commands.add_parser("sources", help="list available source plugins")
+    commands.add_parser("providers", help="list available providers and their capabilities")
 
     account = commands.add_parser("account", help="manage store accounts")
     account_commands = account.add_subparsers(dest="account_command", metavar="action")
@@ -31,9 +48,30 @@ def _parser() -> argparse.ArgumentParser:
     add.add_argument("source")
     add.add_argument("name")
     add.add_argument("--set", dest="fields", action="append", default=[], metavar="KEY=VALUE", help="non-secret field value")
+    change = account_commands.add_parser("set", help="change an account's settings (its games are kept; import again afterwards)")
+    change.add_argument("name")
+    change.add_argument("--set", dest="fields", action="append", default=[], metavar="KEY=VALUE", help="non-secret field value")
+    change.add_argument("--secret", dest="secrets", action="append", default=[], metavar="KEY", help="read this secret field from the prompt or stdin")
+    change.add_argument("--unset", dest="unset", action="append", default=[], metavar="KEY", help="remove an optional field")
     account_commands.add_parser("ls", help="list accounts")
     remove = account_commands.add_parser("rm", help="remove an account")
     remove.add_argument("name")
+
+    plugin = commands.add_parser("plugin", help="manage plugins installed by ludex (one folder each in the state directory)")
+    plugin_commands = plugin.add_subparsers(dest="plugin_command", metavar="action")
+    plugin_add = plugin_commands.add_parser("add", help="install a plugin (a package name, URL or path; it runs with your permissions)")
+    plugin_add.add_argument("spec")
+    plugin_commands.add_parser("ls", help="list installed plugins")
+    plugin_rm = plugin_commands.add_parser("rm", help="remove a plugin (its accounts and games stay until 'account rm')")
+    plugin_rm.add_argument("name")
+    for action, text in (("enable", "load a disabled plugin again"), ("disable", "keep a plugin installed but do not load it")):
+        plugin_commands.add_parser(action, help=text).add_argument("name")
+    plugin_up = plugin_commands.add_parser("update", help="reinstall plugins from the spec they were added with")
+    plugin_up.add_argument("name", nargs="?", help="one plugin (default: all)")
+
+    update = commands.add_parser("update", help="update ludex itself from its release channel")
+    update.add_argument("--channel", choices=CHANNELS, help="default: the channel this install came from")
+    update.add_argument("--dry-run", action="store_true", help="show the command without running it")
 
     setup = commands.add_parser("setup", help="guided: add an account for a source and import it")
     setup.add_argument("source", nargs="?")
@@ -48,11 +86,86 @@ def _parser() -> argparse.ArgumentParser:
     listing.add_argument("--store")
     listing.add_argument("--account")
     listing.add_argument("--removed", action="store_true", help="include removed games")
+    listing.add_argument("--installed", action="store_true", help="only games installed on this machine")
     listing.add_argument("--limit", type=int, default=50)
     listing.add_argument("--offset", type=int, default=0)
 
     show = commands.add_parser("show", help="show one game")
-    show.add_argument("id", type=int)
+    show.add_argument("game", help="game id or title")
+
+    find = commands.add_parser("find", help="search the stores' catalogs (uses the network)")
+    find.add_argument("query")
+
+    launch = commands.add_parser("launch", help="start a game through its store's client")
+    launch.add_argument("game", help="game id or title")
+    launch.add_argument("--store", help="store to launch from when several can")
+    launch.add_argument("--dry-run", action="store_true", help="show how the game would be started and do not start it")
+
+    install = commands.add_parser("install", help="ask the owning store's client to install a game you own")
+    install.add_argument("game", nargs="?", help="game id or title")
+    install.add_argument("--store", help="store to install from when several can")
+    install.add_argument("--dry-run", action="store_true", help="show what would be run and do not start it")
+    install.add_argument("--status", action="store_true", help="list installs ludex started (of the game, when one is named) and how far they are")
+    install.add_argument("--stop", action="store_true", help="stop the game's running install")
+
+    meta = commands.add_parser("metadata", help="show a game's description, genres and developer (asks the store's plugin once, then keeps the answer)")
+    meta.add_argument("game", help="game id or title")
+    meta.add_argument("--refresh", action="store_true", help="ask the plugin again instead of using the kept answer")
+    meta.add_argument("--match", action="store_true", help="for a game no store describes, look it up by name in a game database plugin (also on with 'ludex config auto_match yes')")
+
+    match = commands.add_parser("match", help="choose which database entry a game's title and details come from (lists the candidates; --use picks one)")
+    match.add_argument("game", help="game id or title")
+    match.add_argument("query", nargs="?", help="what to search for (default: the game's folder name without tags and version)")
+    match.add_argument("--use", metavar="PLUGIN:ID", help="keep this candidate's title and details for the game")
+    match.add_argument("--clear", action="store_true", help="forget the match and go back to the folder name")
+
+    acquire = commands.add_parser("acquire", help="ask a provider to fetch a game into a directory")
+    acquire.add_argument("store")
+    acquire.add_argument("store_id")
+    acquire.add_argument("--to", required=True, help="destination directory")
+    acquire.add_argument("--title", default="", help="game title, if the provider wants one")
+
+    commands.add_parser("runners", help="list detected Proton builds")
+
+    config = commands.add_parser(
+        "config",
+        help="show or change global settings: prefix_dir (folder for default Wine prefixes), "
+        "steam_shortcuts and heroic_sideload (yes/no; no removes those games from the library), "
+        "and <plugin>.<setting> for plugins that declare settings",
+    )
+    config.add_argument("key", nargs="?", help="setting to show or change")
+    config.add_argument("value", nargs="?", help="new value: an absolute folder, yes/no, or text")
+    config.add_argument("--reset", action="store_true", help="go back to the built-in value (removes a plugin setting)")
+    config.add_argument("--secret", action="store_true", help="read a secret plugin setting from the prompt or stdin")
+
+    game = commands.add_parser("game", help="per-game launch settings (runner, prefix, executable, environment)")
+    game_commands = game.add_subparsers(dest="game_command", metavar="action")
+    game_show = game_commands.add_parser("show", help="show a game's launch settings")
+    game_show.add_argument("game", help="game id or title")
+    game_show.add_argument("--store", help="store whose copy to use when several exist")
+    game_set = game_commands.add_parser("set", help="change a game's launch settings")
+    game_set.add_argument("game", help="game id or title")
+    game_set.add_argument("--store", help="store whose copy to use when several exist")
+    game_set.add_argument("--runner", help="runner name from 'ludex runners', or the path of a Proton folder")
+    game_set.add_argument("--prefix", help="absolute path of the Wine prefix folder")
+    game_set.add_argument("--exe", help="executable, relative to the game folder or absolute")
+    game_set.add_argument("--args", help="arguments passed to the game, one quoted string; write --args='-w' when it starts with a dash")
+    game_set.add_argument("--env", action="append", default=[], metavar="NAME=VALUE", help="environment variable (repeatable)")
+    game_set.add_argument("--unset-env", action="append", default=[], metavar="NAME", help="remove an environment variable (repeatable)")
+    game_set.add_argument("--clear", action="store_true", help="reset all settings first")
+
+    commands.add_parser("tui", help="browse, search and launch games in the terminal")
+
+    review = commands.add_parser("review", help="list title matches that need a decision")
+    review.add_argument("--dismiss", type=int, metavar="ID", help="keep this item's game separate and drop it from the list")
+
+    export = commands.add_parser("export", help="write the library to stdout as JSON or CSV")
+    export.add_argument("--format", choices=("json", "csv"), default="json")
+    export.add_argument("--removed", action="store_true", help="include removed records")
+
+    merge = commands.add_parser("merge", help="merge game DROP into game KEEP")
+    merge.add_argument("keep", type=int)
+    merge.add_argument("drop", type=int)
     return parser
 
 
@@ -67,7 +180,7 @@ def _emit_json(ok: bool, data: object | None = None, error: LudexError | None = 
     print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), file=target)
 
 
-def _plugin(sources: dict[str, SourcePlugin], problems: dict[str, str], name: str) -> SourcePlugin:
+def _plugin(sources: dict[str, Provider], problems: dict[str, str], name: str) -> Provider:
     plugin = sources.get(name)
     if plugin is None:
         detail = f" ({problems[name]})" if name in problems else ""
@@ -75,35 +188,63 @@ def _plugin(sources: dict[str, SourcePlugin], problems: dict[str, str], name: st
     return plugin
 
 
-def _read_value(prompt: str, secret: bool) -> str:
+def _complete_path(text: str, state: int) -> str | None:
+    matches = sorted(glob.glob(os.path.expanduser(text) + "*"))
+    matches = [m + "/" if os.path.isdir(m) else m for m in matches]
+    return matches[state] if state < len(matches) else None
+
+
+def _input_path(prompt: str) -> str:
+    try:
+        import readline
+    except ImportError:  # no readline: plain prompt
+        return input(prompt)
+    readline.set_completer(_complete_path)
+    readline.set_completer_delims(" \t\n;")
+    readline.parse_and_bind("bind ^I rl_complete" if "libedit" in (readline.__doc__ or "") else "tab: complete")
+    try:
+        return input(prompt)
+    finally:
+        readline.set_completer(None)
+
+
+def _read_value(prompt: str, secret: bool, path: bool = False) -> str:
     if sys.stdin.isatty():
-        value = getpass.getpass(prompt) if secret else input(prompt)
+        value = getpass.getpass(prompt) if secret else _input_path(prompt) if path else input(prompt)
     else:
         value = sys.stdin.readline().rstrip("\r\n")
     return value
 
 
-def _cmd_sources(args: argparse.Namespace) -> tuple[object, str]:
-    sources, problems = load_sources()
+def _cmd_providers(args: argparse.Namespace) -> tuple[object, str]:
+    sources, problems = load_providers()
     data = {
-        "sources": [
+        "providers": [
             {
                 "name": plugin.name,
                 "help": plugin.help,
-                "fields": [{"name": f.name, "help": f.help, "secret": f.secret, "optional": f.optional} for f in plugin.config_fields],
+                "capabilities": list(plugin.capabilities),
+                "commands": [{"name": c.name, "help": c.help} for c in plugin.commands],
+                "fields": [{"name": f.name, "help": f.help, "secret": f.secret, "optional": f.optional, "kind": f.kind, "choices": list(f.choices)} for f in plugin.config_fields],
+                "settings": [{"name": f.name, "help": f.help, "secret": f.secret, "optional": f.optional, "kind": f.kind, "choices": list(f.choices)} for f in plugin.settings],
             }
             for _, plugin in sorted(sources.items())
         ],
         "problems": dict(sorted(problems.items())),
     }
-    lines = [f"{s['name']}  {s['help']}" for s in data["sources"]]
+    lines = []
+    for p in data["providers"]:
+        lines.append(f"{p['name']}  [{', '.join(p['capabilities'])}]  {p['help']}")
+        lines += [f"  ludex {p['name']} {c['name']}  {c['help']}" for c in p["commands"]]
     lines += [f"problem: {name}: {reason}" for name, reason in data["problems"].items()]
-    return data, "\n".join(lines) if lines else "no sources available"
+    return data, "\n".join(lines) if lines else "no providers available"
 
 
 def _cmd_account_add(args: argparse.Namespace) -> tuple[object, str]:
-    sources, problems = load_sources()
+    sources, problems = load_providers()
     plugin = _plugin(sources, problems, args.source)
+    if plugin.fetch is None:
+        raise LudexError("no_owned_capability", f"provider {plugin.name} cannot list owned games, so it has no accounts")
     fields = {f.name: f for f in plugin.config_fields}
     config: dict[str, str] = {}
     for item in args.fields:
@@ -116,18 +257,43 @@ def _cmd_account_add(args: argparse.Namespace) -> tuple[object, str]:
             raise LudexError("secret_via_argv", f"field {key} is secret; enter it at the prompt or on stdin")
         if not value:
             raise LudexError("empty_value", f"field {key} must not be empty")
-        config[key] = value
+        config[key] = fields[key].clean(value)
     paths = state_paths()
     for field in plugin.config_fields:
         if field.name in config:
             continue
-        value = _read_value(f"{field.name} ({field.help}): ", field.secret)
+        hint = " [yes/no]" if field.kind == "yes_no" else f" [{'/'.join(field.choices)}]" if field.kind == "choice" else ""
+        value = _read_value(f"{field.name} ({field.help}){hint}: ", field.secret, field.path)
         if not value and not field.optional:
             raise LudexError("empty_value", f"field {field.name} must not be empty")
         if value:
-            config[field.name] = value
+            config[field.name] = field.clean(value)
     add_account(paths, args.name, plugin.name, config)
     return {"account": args.name, "source": plugin.name}, f"added account {args.name} ({plugin.name})"
+
+
+def _cmd_account_set(args: argparse.Namespace) -> tuple[object, str]:
+    if not (args.fields or args.secrets or args.unset):
+        raise LudexError("nothing_to_change", "give --set KEY=VALUE, --secret KEY or --unset KEY")
+    sources, problems = load_providers()
+    paths = state_paths()
+    account = get_account(paths, args.name)
+    plugin = _plugin(sources, problems, account.source)
+    by_name = {f.name: f for f in plugin.config_fields}
+    values: dict[str, str] = {}
+    for item in args.fields:
+        key, separator, value = item.partition("=")
+        if not separator:
+            raise LudexError("invalid_field", "--set expects KEY=VALUE")
+        if key in by_name and by_name[key].secret:
+            raise LudexError("secret_via_argv", f"field {key} is secret; use --secret {key}")
+        values[key] = value
+    for key in args.secrets:
+        if key not in by_name:
+            raise LudexError("unknown_field", f"source {plugin.name} has no field {key}")
+        values[key] = _read_value(f"{key} ({by_name[key].help}): ", True)
+    changed = update_account(paths, args.name, plugin.config_fields, values, args.unset)
+    return {"account": args.name, "changed": changed}, f"changed {', '.join(changed)} on account {args.name}; run: ludex import {args.name}"
 
 
 def _cmd_account_ls(args: argparse.Namespace) -> tuple[object, str]:
@@ -137,15 +303,33 @@ def _cmd_account_ls(args: argparse.Namespace) -> tuple[object, str]:
 
 
 def _cmd_account_rm(args: argparse.Namespace) -> tuple[object, str]:
-    remove_account(state_paths(), args.name)
-    return {"account": args.name}, f"removed account {args.name}"
+    paths = state_paths()
+    try:
+        account = get_account(paths, args.name)
+    except LudexError as exc:
+        if exc.code != "account_not_found" or ":" in args.name:
+            raise
+        # an account already gone from the file can still have stale records: clear those
+        name, scope = args.name, {"keep_stores": [s for n, s in list_accounts(paths) if n == args.name]}
+    else:
+        remove_account(paths, args.name)
+        name, scope = account.name, {"store": account.source}
+    with writer_lock(paths.import_lock):
+        conn = connect(paths.database)
+        try:
+            changed = delete_account_records(conn, name, **scope)
+        finally:
+            conn.close()
+    if "keep_stores" in scope and not changed:
+        raise LudexError("account_not_found", f"account {args.name} not found")
+    return {"account": args.name, "records_removed": changed}, f"removed account {args.name}; deleted {changed} records"
 
 
-def _import_one(conn: Any, paths: Any, sources: dict[str, SourcePlugin], problems: dict[str, str], name: str) -> dict[str, Any]:
+def _import_one(conn: Any, paths: Any, sources: dict[str, Provider], problems: dict[str, str], name: str) -> dict[str, Any]:
     account = get_account(paths, name)
     plugin = _plugin(sources, problems, account.source)
-    summary = run_import(conn, name, plugin, account.config)
-    return {"account": name, "ok": True, **summary.as_dict()}
+    summary = run_import(conn, account.name, plugin, account.config)
+    return {"account": account.name, "source": account.source, "ok": True, **summary.as_dict()}
 
 
 def _cmd_import(args: argparse.Namespace) -> tuple[object, str, int]:
@@ -153,19 +337,19 @@ def _cmd_import(args: argparse.Namespace) -> tuple[object, str, int]:
     with writer_lock(paths.import_lock):
         conn = connect(paths.database)
         try:
-            sources, problems = load_sources()
+            sources, problems = load_providers()
             if not args.all:
                 result = _import_one(conn, paths, sources, problems, args.account)
                 return {k: v for k, v in result.items() if k != "ok"}, _import_line(result), 0
             results: list[dict[str, Any]] = []
-            for name, _ in list_accounts(paths):
+            for name, source in list_accounts(paths):
                 try:
-                    results.append(_import_one(conn, paths, sources, problems, name))
+                    results.append(_import_one(conn, paths, sources, problems, f"{source}:{name}"))
                 except LudexError as exc:
-                    results.append({"account": name, "ok": False, "error": {"code": exc.code, "message": exc.message}})
+                    results.append({"account": name, "source": source, "ok": False, "error": {"code": exc.code, "message": exc.message}})
         finally:
             conn.close()
-    lines = [_import_line(r) if r["ok"] else f"{r['account']}: error: {r['error']['message']}" for r in results]
+    lines = [_import_line(r) if r["ok"] else f"{r['source']}:{r['account']}: error: {r['error']['message']}" for r in results]
     status = 1 if any(not r["ok"] for r in results) else 0
     return {"results": results}, "\n".join(lines) if lines else "no accounts", status
 
@@ -176,19 +360,21 @@ def _ask(prompt: str, default: str) -> str:
 
 
 def _cmd_setup(args: argparse.Namespace) -> tuple[object, str]:
-    sources, problems = load_sources()
+    sources, problems = load_providers()
     if not sources:
         raise LudexError("no_sources", "no source plugins are available")
     names = sorted(sources)
     source = args.source or _ask(f"source ({', '.join(names)}) [{names[0]}]: ", names[0])
     plugin = _plugin(sources, problems, source)
     name = args.name or _ask(f"account name [{source}]: ", source)
+    if (name, source) in list_accounts(state_paths()):
+        raise LudexError("account_exists", f"account {name} already exists for source {source}")
     print(f"{plugin.help}\nEnter skips optional fields.", file=sys.stderr)
     added = _cmd_account_add(argparse.Namespace(source=source, name=name, fields=[]))
     try:
-        data, human, _ = _cmd_import(argparse.Namespace(account=name, all=False))
+        data, human, _ = _cmd_import(argparse.Namespace(account=f"{source}:{name}", all=False))
     except LudexError as exc:
-        raise LudexError(exc.code, f"{exc.message}; account {name} was saved, fix the cause and run: ludex import {name}") from None
+        raise LudexError(exc.code, f"{exc.message}; account {name} was saved, fix the cause and run: ludex import {source}:{name}") from None
     return data, f"{added[1]}\n{human}"
 
 
@@ -197,7 +383,7 @@ def _import_line(result: dict[str, Any]) -> str:
     if not result["complete"]:
         note += " partial: nothing removed"
     return (
-        f"{result['account']}: {result['added']} added, {result['restored']} restored, "
+        f"{result['source']}:{result['account']}: {result['added']} added, {result['restored']} restored, "
         f"{result['removed']} removed, {result['total']} total{note}"
     )
 
@@ -206,10 +392,17 @@ def _cmd_ls(args: argparse.Namespace) -> tuple[object, str]:
     if args.limit < 1 or args.offset < 0:
         raise LudexError("invalid_paging", "--limit must be at least 1 and --offset must not be negative")
     paths = state_paths()
+    only = None
+    if args.installed:
+        providers, _ = load_providers()
+        only, problems = installed_keys(paths, providers)
+        for ref, reason in sorted(problems.items()):
+            print(f"warning: {ref}: {reason}", file=sys.stderr)
     conn = connect(paths.database)
     try:
         games = list_games(
             conn,
+            only=only,
             query=args.query,
             store=args.store,
             account=args.account,
@@ -232,7 +425,7 @@ def _cmd_show(args: argparse.Namespace) -> tuple[object, str]:
     paths = state_paths()
     conn = connect(paths.database)
     try:
-        game = get_game(conn, args.id)
+        game = get_game(conn, resolve_game(conn, args.game))
     finally:
         conn.close()
     lines = [f"{game['id']}  {game['title']}  (added {game['created_at']})"]
@@ -245,23 +438,403 @@ def _cmd_show(args: argparse.Namespace) -> tuple[object, str]:
     return game, "\n".join(lines)
 
 
+def _cmd_find(args: argparse.Namespace) -> tuple[object, str]:
+    providers, _ = load_providers()
+    conn = connect(state_paths().database)
+    try:
+        owned = owned_keys(conn)
+    finally:
+        conn.close()
+    hits, problems = find_games(providers, args.query, owned)
+    for name, reason in sorted(problems.items()):
+        print(f"warning: {name}: {reason}", file=sys.stderr)
+    lines = [
+        f"[{h['store']}] {h['title']}  {h['price'] or '-'}  {h['url']}" + ("  (owned)" if h["owned"] else "") for h in hits
+    ]
+    return {"hits": hits, "problems": problems}, "\n".join(lines) if lines else "no results"
+
+
+def _cmd_install(args: argparse.Namespace) -> tuple[object, str]:
+    providers, _ = load_providers()
+    paths = state_paths()
+    config_for = lambda store, account: get_account(paths, f"{store}:{account}").config
+    conn = connect(paths.database)
+    try:
+        if args.status:
+            return _install_status(conn, resolve_game(conn, args.game) if args.game else None)
+        if not args.game:
+            raise LudexError("missing_game", "name the game to install (or use --status)")
+        game_id = resolve_game(conn, args.game)
+        if args.stop:
+            running = list_jobs(conn, "install", game_id, running=True)
+            if not running:
+                raise LudexError("job_not_running", "no install of that game is running")
+            job = stop_job(conn, running[0].id)
+            return {"id": game_id, "job": _job_data(job)}, f"stopped the install of {job.title} (job {job.id}); run it again to resume"
+        if args.dry_run:
+            plan = prepare_install(conn, providers, game_id, args.store, config_for)
+            return {"id": game_id, "install": plan.target, "url": plan.url, "argv": list(plan.argv)}, f"would install {plan.target}: {plan.url or shlex.join(plan.argv)}"
+        target, job = install_game(conn, providers, game_id, args.store, config_for, paths.root / "logs")
+    finally:
+        conn.close()
+    if job is None:
+        return {"id": game_id, "install": target}, f"asking the client to install {target}"
+    return {"id": game_id, "install": target, "job": _job_data(job)}, f"installing {target} in the background (job {job.id}); 'ludex install --status' shows progress, '--stop' cancels; log: {job.log}"
+
+
+def _job_data(job: Job) -> dict[str, object]:
+    return {"id": job.id, "game_id": job.game_id, "target": job.target, "title": job.title, "state": job.state, "exit_code": job.exit_code,
+            "started_at": job.started_at, "ended_at": job.ended_at, "log": str(job.log), "progress": last_line(job) if job.state == "running" else ""}
+
+
+def _install_status(conn, game_id: int | None) -> tuple[object, str]:
+    jobs = list_jobs(conn, "install", game_id)
+    lines = [
+        f"#{j.id}  {j.state:<8} {j.title}  ({j.target})  " + (last_line(j) if j.state == "running" else f"exit {j.exit_code}" if j.exit_code not in (None, 0) else j.ended_at or "")
+        for j in jobs
+    ]
+    return {"jobs": [_job_data(j) for j in jobs]}, "\n".join(lines) if lines else "no installs started by ludex"
+
+
+def _cmd_match(args: argparse.Namespace) -> tuple[object, str]:
+    providers, _ = load_providers()
+    conn = connect(state_paths().database)
+    try:
+        game_id = resolve_game(conn, args.game)
+        if args.clear:
+            cleared = clear_match(conn, game_id)
+            return {"id": game_id, "cleared": cleared}, "match cleared" if cleared else "no match to clear"
+        query = args.query or default_query(conn, game_id)
+        hits, problems = match_candidates(providers, query)
+        if not args.use:
+            data = {"id": game_id, "query": query, "candidates": [{"plugin": p, "id": h.store_id, "title": h.title, "url": h.url} for p, h in hits], "problems": problems}
+            lines = [f"{p}:{h.store_id}  {h.title}  {h.url}" for p, h in hits] or [f"no match for {query!r}"]
+            lines += [f"{name}: {reason}" for name, reason in problems.items()]
+            return data, "\n".join(lines)
+        plugin, _, store_id = args.use.partition(":")
+        hit = next((h for p, h in hits if p == plugin and h.store_id == store_id), None)
+        if hit is None:
+            raise LudexError("not_found", f"{args.use} is not among the candidates for {query!r}; list them first")
+        choose_match(conn, providers, game_id, plugin, hit)
+    finally:
+        conn.close()
+    return {"id": game_id, "matched": {"plugin": plugin, "id": hit.store_id, "title": hit.title, "url": hit.url}}, f"matched to {plugin}: {hit.title} ({hit.url})"
+
+
+def _cmd_metadata(args: argparse.Namespace) -> tuple[object, str]:
+    providers, _ = load_providers()
+    conn = connect(state_paths().database)
+    try:
+        game_id = resolve_game(conn, args.game)
+        found = game_metadata(conn, providers, game_id, args.refresh, args.match or get_auto_match(conn))
+        matched = next((m for o in get_game(conn, game_id)["ownership"] if (m := cached_match(conn, o["store"], str(o["store_id"])))), None)
+    finally:
+        conn.close()
+    if found is None:
+        return {"id": game_id, "metadata": None}, "no store has details for this game"
+    lines = [found.description or "", f"genres: {', '.join(found.genres)}" if found.genres else "", f"by: {', '.join(found.developers)}" if found.developers else "", f"released: {found.released}" if found.released else "", f"matched to {matched['plugin']}: {matched['title']}" + (f" ({matched['url']})" if matched['url'] else "") if matched else ""]
+    return {"id": game_id, "metadata": asdict(found), "matched": matched}, "\n".join(x for x in lines if x)
+
+
+def _cmd_acquire(args: argparse.Namespace) -> tuple[object, str]:
+    providers, _ = load_providers()
+    result = acquire_game(
+        providers, args.store, args.store_id, args.title, Path(args.to), lambda message: print(message, file=sys.stderr)
+    )
+    data = {"directory": str(result.directory), "hints": dict(result.hints)}
+    hints = "".join(f"\n  {key}={value}" for key, value in sorted(result.hints.items()))
+    return data, f"acquired into {result.directory}{hints}"
+
+
+def _cmd_plugin_add(args: argparse.Namespace) -> tuple[object, str]:
+    print("note: a plugin runs with your permissions; install only code you trust", file=sys.stderr)
+    added = add_plugin(args.spec)
+    return added, f"added plugin {added['name']} {added['version']} (providers: {', '.join(added['providers'])})"
+
+
+def _cmd_plugin_ls(args: argparse.Namespace) -> tuple[object, str]:
+    plugins = list_plugins()
+    lines = [
+        f"{p['name']} {p['version']}  providers: {', '.join(p['providers'])}" + ("" if p["enabled"] else "  (disabled)")
+        + f"\n  from: {p['spec'] or 'unknown (update skips it)'}"
+        for p in plugins
+    ]
+    return {"plugins": plugins}, "\n".join(lines) if lines else "no plugins installed by ludex"
+
+
+def _cmd_plugin_rm(args: argparse.Namespace) -> tuple[object, str]:
+    removed = remove_plugin(args.name)
+    note = f"; accounts for {', '.join(removed['providers'])} stay until 'ludex account rm'" if removed["providers"] else ""
+    return removed, f"removed plugin {removed['name']}{note}"
+
+
+def _cmd_plugin_enable(args: argparse.Namespace) -> tuple[object, str]:
+    done = set_plugin_enabled(args.name, args.plugin_command == "enable")
+    return done, f"{'enabled' if done['enabled'] else 'disabled'} plugin {done['name']}"
+
+
+def _cmd_plugin_update(args: argparse.Namespace) -> tuple[object, str, int]:
+    results = update_plugins(args.name)
+    lines = [
+        f"{r['name']}: {r['from']} -> {r['to']}" if r["ok"] else f"{r['name']}: error: {r['error']['message']}"
+        for r in results
+    ]
+    return {"results": results}, "\n".join(lines) if lines else "no plugins installed by ludex", int(any(not r["ok"] for r in results))
+
+
+def _cmd_update(args: argparse.Namespace) -> tuple[object, str]:
+    result = update_core(args.channel, args.dry_run)
+    if args.dry_run:
+        return result, f"would run: {shlex.join(result['command'])}"
+    return result, f"updated ludex {result['from']} -> {result['to'] or 'unknown'} ({result['channel']})"
+
+
+def _cmd_runners(args: argparse.Namespace) -> tuple[object, str]:
+    runners = [{"name": r.name, "path": str(r.path), "origin": r.origin} for r in find_runners()]
+    lines = [f"{r['name']}  ({r['origin']})  {r['path']}" for r in runners]
+    return {"runners": runners}, "\n".join(lines) if lines else "no Proton builds found"
+
+
+_YES_NO = {"yes": True, "on": True, "true": True, "no": False, "off": False, "false": False}
+
+
+def _plugin_setting(sources: dict[str, Provider], key: str) -> tuple[Provider, str]:
+    provider, _, name = key.partition(".")
+    plugin = sources.get(provider)
+    if plugin is None or not name or all(f.name != name for f in plugin.settings):
+        raise LudexError("invalid_setting", f"unknown setting {key}; see 'ludex config'")
+    return plugin, name
+
+
+def _cmd_config(args: argparse.Namespace) -> tuple[object, str]:
+    paths = state_paths()
+    default = paths.root / "prefixes"
+    sources, _ = load_providers()
+    key = args.key
+    core = {"prefix_dir", "auto_details", "auto_match", *SWITCHES}
+    changing = bool(args.value or args.reset or args.secret)
+    if changing and not key:
+        raise LudexError("invalid_setting", "name the setting to change")
+    if sum(map(bool, (args.value, args.reset, args.secret))) > 1:
+        raise LudexError("invalid_setting", "give a value, --secret or --reset, one at a time")
+    if key is not None and key not in core:
+        plugin, name = _plugin_setting(sources, key)
+        field = field_for(plugin, name)
+        if args.value and field.secret:
+            raise LudexError("secret_via_argv", f"{key} is secret; use: ludex config {key} --secret")
+        if args.secret and not field.secret:
+            raise LudexError("invalid_setting", f"{key} is not a secret setting")
+        if changing:
+            value = None if args.reset else _read_value(f"{key} ({field.help}): ", True) if args.secret else args.value
+            set_value(paths, plugin, name, value)
+    else:
+        if args.secret:
+            raise LudexError("invalid_setting", f"{key} is not a secret setting")
+        if args.reset and key in SWITCHES:
+            raise LudexError("invalid_setting", f"{key} has no default to reset to; set yes or no")
+        if args.value and (key in SWITCHES or key in {"auto_details", "auto_match"}) and args.value.lower() not in _YES_NO:
+            raise LudexError("invalid_setting", f"{key} takes yes or no")
+    with writer_lock(paths.import_lock):
+        conn = connect(paths.database)
+        try:
+            if changing and key == "prefix_dir":
+                set_prefix_root(conn, None if args.reset else args.value)
+            elif changing and key == "auto_details":
+                set_auto_details(conn, None if args.reset else _YES_NO[args.value.lower()])
+            elif changing and key == "auto_match":
+                set_auto_match(conn, None if args.reset else _YES_NO[args.value.lower()])
+            elif changing and key in SWITCHES:
+                set_switch(paths, conn, sources, key, _YES_NO[args.value.lower()])
+            folder = get_prefix_root(conn, default)
+            auto = get_auto_details(conn)
+            match = get_auto_match(conn)
+        finally:
+            conn.close()
+    plugin_values = {name: describe(paths, plugin) for name, plugin in sorted(sources.items()) if plugin.settings}
+    data: dict[str, Any] = {
+        "prefix_dir": str(folder),
+        "auto_details": auto,
+        "auto_match": match,
+        **{k: get_switch(paths, k) for k in sorted(SWITCHES)},
+        "plugins": plugin_values,
+    }
+    shown = {"prefix_dir": f"prefix_dir: {folder}" + (" (default)" if folder == default else "")}
+    shown.update({k: f"{k}: {'yes' if data[k] else 'no'}" for k in ("auto_details", "auto_match", *sorted(SWITCHES))})
+    for name, values in plugin_values.items():
+        shown.update({f"{name}.{k}": f"{name}.{k}: {v if v is not None else '(not set)'}" for k, v in values.items()})
+    return data, "\n".join(shown.values() if key is None else [shown[key]])
+
+
+def _settings_view(conn: Any, game_id: int, store: str | None) -> tuple[dict[str, Any], str]:
+    copy = pick_copy(conn, game_id, store)
+    data = {"id": game_id, "store": copy[0], "store_id": copy[1], **get_settings(conn, *copy).as_dict()}
+    lines = [f"{copy[0]}:{copy[1]}"] + [
+        f"  {key}: {data[key] if data[key] not in (None, [], {}) else '-'}" for key in ("runner", "prefix", "executable", "args", "env")
+    ]
+    return data, "\n".join(lines)
+
+
+def _cmd_game_show(args: argparse.Namespace) -> tuple[object, str]:
+    conn = connect(state_paths().database)
+    try:
+        return _settings_view(conn, resolve_game(conn, args.game), args.store)
+    finally:
+        conn.close()
+
+
+def _cmd_game_set(args: argparse.Namespace) -> tuple[object, str]:
+    env: dict[str, str] = {}
+    for item in args.env:
+        name, sep, value = item.partition("=")
+        if not sep:
+            raise LudexError("invalid_setting", "--env needs NAME=VALUE")
+        env[name] = value
+    try:
+        extra = shlex.split(args.args) if args.args is not None else None
+    except ValueError:
+        raise LudexError("invalid_setting", "--args has unbalanced quotes") from None
+    paths = state_paths()
+    with writer_lock(paths.import_lock):
+        conn = connect(paths.database)
+        try:
+            game_id = resolve_game(conn, args.game)
+            copy = pick_copy(conn, game_id, args.store)
+            update_settings(
+                conn, *copy, runner=args.runner, prefix=args.prefix, executable=args.exe, args=extra,
+                env=env, unset_env=args.unset_env, clear=args.clear,
+            )
+            return _settings_view(conn, game_id, args.store)
+        finally:
+            conn.close()
+
+
+def _cmd_launch(args: argparse.Namespace) -> tuple[object, str]:
+    sources, _ = load_providers()
+    paths = state_paths()
+    conn = connect(paths.database)
+    config_for = lambda store, account: get_account(paths, f"{store}:{account}").config
+    try:
+        game_id = resolve_game(conn, args.game)
+        if args.dry_run:
+            plan = prepare_launch(conn, sources, game_id, args.store, config_for, get_prefix_root(conn, paths.root / "prefixes"))
+            data = {
+                "id": game_id, "target": plan.target, "url": plan.url, "argv": list(plan.argv),
+                "cwd": str(plan.cwd) if plan.cwd else None, "env": sorted(plan.env),  # names only: values may be secrets
+            }
+            how = plan.url or shlex.join(plan.argv)
+            env = f"  [env: {', '.join(data['env'])}]" if data["env"] else ""
+            return data, f"would start {plan.target}: {how}{env}"
+        target = launch_game(conn, sources, game_id, args.store, config_for, get_prefix_root(conn, paths.root / "prefixes"))
+    finally:
+        conn.close()
+    return {"id": game_id, "launched": target}, f"launching {target}"
+
+
+def _cmd_tui(args: argparse.Namespace) -> tuple[object, str]:
+    from .tui import LudexApp
+
+    sources, _ = load_providers()
+    paths = state_paths()
+    LudexApp(
+        paths.database, sources, lambda: installed_keys(paths, sources)[0],
+        lambda store, account: get_account(paths, f"{store}:{account}").config,
+        paths.root / "prefixes", paths.import_lock, paths,
+    ).run()
+    return {}, ""
+
+
+def _cmd_review(args: argparse.Namespace) -> tuple[object, str]:
+    paths = state_paths()
+    with writer_lock(paths.import_lock):
+        conn = connect(paths.database)
+        try:
+            if args.dismiss is not None:
+                dismiss_review(conn, args.dismiss)
+                return {"dismissed": args.dismiss}, f"dismissed review item {args.dismiss}"
+            items = list_review(conn)
+        finally:
+            conn.close()
+    lines = []
+    for item in items:
+        lines.append(f"{item['id']}  game {item['game_id']}: {item['title']} [{item['store']}] may be the same as:")
+        lines += [f"    game {c['id']}: {c['title']}" for c in item["candidates"]]
+    return {"items": items}, "\n".join(lines) if lines else "nothing to review"
+
+
+def _cmd_merge(args: argparse.Namespace) -> tuple[object, str]:
+    paths = state_paths()
+    with writer_lock(paths.import_lock):
+        conn = connect(paths.database)
+        try:
+            moved = merge_games(conn, args.keep, args.drop)
+        finally:
+            conn.close()
+    return {"keep": args.keep, "drop": args.drop, "moved": moved}, f"merged game {args.drop} into {args.keep} ({moved} records)"
+
+
+_CSV_FIELDS = ("game_id", "title", "store", "store_id", "account", "removed", "first_seen", "last_seen")
+
+
+def _cmd_export(args: argparse.Namespace) -> tuple[object, str]:
+    conn = connect(state_paths().database)
+    try:
+        games = export_games(conn, include_removed=args.removed)
+    finally:
+        conn.close()
+    if args.format == "json":
+        return {"games": games}, json.dumps(games, ensure_ascii=False, indent=2)
+    out = io.StringIO()
+    writer = csv.writer(out, lineterminator="\n")
+    writer.writerow(_CSV_FIELDS)
+    for game in games:
+        for o in game["ownership"]:
+            writer.writerow([game["id"], o["title"], o["store"], o["store_id"], o["account"], int(o["removed"]), o["first_seen"], o["last_seen"]])
+    return {"games": games}, out.getvalue().rstrip("\n")
+
+
 _HANDLERS = {
-    ("sources", None): _cmd_sources,
+    ("export", None): _cmd_export,
+    ("review", None): _cmd_review,
+    ("merge", None): _cmd_merge,
+    ("providers", None): _cmd_providers,
     ("setup", None): _cmd_setup,
     ("account", "add"): _cmd_account_add,
+    ("account", "set"): _cmd_account_set,
     ("account", "ls"): _cmd_account_ls,
     ("account", "rm"): _cmd_account_rm,
+    ("plugin", "add"): _cmd_plugin_add,
+    ("plugin", "ls"): _cmd_plugin_ls,
+    ("plugin", "rm"): _cmd_plugin_rm,
+    ("plugin", "enable"): _cmd_plugin_enable,
+    ("plugin", "disable"): _cmd_plugin_enable,
+    ("plugin", "update"): _cmd_plugin_update,
+    ("update", None): _cmd_update,
     ("import", None): _cmd_import,
     ("ls", None): _cmd_ls,
     ("show", None): _cmd_show,
+    ("find", None): _cmd_find,
+    ("install", None): _cmd_install,
+    ("metadata", None): _cmd_metadata,
+    ("match", None): _cmd_match,
+    ("acquire", None): _cmd_acquire,
+    ("runners", None): _cmd_runners,
+    ("config", None): _cmd_config,
+    ("game", "show"): _cmd_game_show,
+    ("game", "set"): _cmd_game_set,
+    ("launch", None): _cmd_launch,
+    ("tui", None): _cmd_tui,
 }
 
 
 def _run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
-    handler = _HANDLERS[(args.command, getattr(args, "account_command", None))]
+    handler = _HANDLERS[(args.command, getattr(args, "account_command", None) or getattr(args, "game_command", None) or getattr(args, "plugin_command", None))]
+    return _execute(args.json, lambda: handler(args))
+
+
+def _execute(as_json: bool, call: Any) -> int:
     status = 0
     try:
-        outcome = handler(args)
+        outcome = call()
         data, human = outcome[0], outcome[1]
         if len(outcome) == 3:
             status = outcome[2]
@@ -270,26 +843,74 @@ def _run(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     except PermissionError as exc:
         error = LudexError("state_unavailable", str(exc))
     else:
-        if args.json:
+        if as_json:
             _emit_json(True, data)
         else:
-            print(human)
+            if human:
+                print(human)
         return status
-    if args.json:
+    if as_json:
         _emit_json(False, error=error)
     else:
         print(f"error: {error.message}", file=sys.stderr)
     return 1
 
 
+def _plugin_command(argv: list[str]) -> int | None:
+    """Run ``ludex <provider> <command> ...`` when the first word names a provider with commands."""
+    as_json = bool(argv) and argv[0] == "--json"
+    words = argv[1:] if as_json else argv
+    if not words or words[0].startswith("-") or words[0] in {key[0] for key in _HANDLERS}:
+        return None
+    providers, _ = load_providers()
+    provider = providers.get(words[0])
+    if provider is None or not provider.commands:
+        return None
+
+    def call() -> tuple[object, str]:
+        commands = {c.name: c for c in provider.commands}
+        if len(words) < 2 or words[1] not in commands:
+            raise LudexError("unknown_command", f"{provider.name} commands: {', '.join(sorted(commands))}")
+        command = commands[words[1]]
+        paths = state_paths()
+        with writer_lock(paths.import_lock):
+            conn = connect(paths.database)
+            try:
+                result = command.run(CommandContext(conn, providers, get_values(paths, provider.name)), words[2:])
+            except (LudexError, SystemExit):
+                raise
+            except Exception as exc:
+                raise LudexError("command_failed", f"{provider.name} {command.name} failed ({type(exc).__name__})") from None
+            finally:
+                conn.close()
+        if not isinstance(result, CommandResult):
+            raise LudexError("command_failed", f"{provider.name} {command.name} returned an invalid result")
+        return result.data, result.text
+
+    previous_umask = os.umask(0o077)
+    try:
+        return _execute(as_json, call)
+    except SystemExit as exc:  # the plugin's own argparse: -h exits 0, usage errors 2
+        return exc.code if isinstance(exc.code, int) else 2
+    finally:
+        os.umask(previous_umask)
+
+
 def main(argv: list[str] | None = None) -> int:
+    handled = _plugin_command(list(sys.argv[1:] if argv is None else argv))
+    if handled is not None:
+        return handled
     parser = _parser()
     args = parser.parse_args(argv)
     if args.command is None:
         parser.print_help(sys.stderr)
         return 2
     if args.command == "account" and args.account_command is None:
-        parser.error("account requires an action: add, ls or rm")
+        parser.error("account requires an action: add, set, ls or rm")
+    if args.command == "plugin" and args.plugin_command is None:
+        parser.error("plugin requires an action: add, ls, rm, enable, disable or update")
+    if args.command == "game" and args.game_command is None:
+        parser.error("game requires an action: show or set")
     if args.command == "import" and not args.all and not args.account:
         parser.error("import requires an account name or --all")
     if args.command == "import" and args.all and args.account:

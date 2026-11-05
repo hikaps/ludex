@@ -3,14 +3,33 @@ requires = ["setuptools==84.0.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ludex"
-version = "0.5.0"
+name = "ludex-games"
+version = "0.51.0"
 description = "Headless, scriptable library of the games you own across stores"
 readme = "README.md"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
-dependencies = ["httpx==0.28.1", "vdf==3.4"]
+dependencies = ["httpx==0.28.1", "textual==8.2.8", "vdf==3.4"]
+keywords = ["game-library", "steam", "epic-games", "gog", "linux-gaming", "cli", "tui", "plugins", "sqlite"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Games/Entertainment",
+]
+
+[project.urls]
+Homepage = "https://hikaps.github.io/ludex/"
+Repository = "https://github.com/hikaps/ludex"
+Issues = "https://github.com/hikaps/ludex/issues"
+Changelog = "https://github.com/hikaps/ludex/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 test = ["pytest==9.1.1"]
@@ -18,8 +37,13 @@ test = ["pytest==9.1.1"]
 [project.scripts]
 ludex = "ludex.cli:main"
 
-[project.entry-points."ludex.ownership"]
+[project.entry-points."ludex.providers"]
 steam = "ludex.sources.steam:PLUGIN"
+epic = "ludex.sources.epic:PLUGIN"
+local = "ludex.sources.local:PLUGIN"
+shortcuts = "ludex.sources.shortcuts:PLUGIN"
+heroic = "ludex.sources.heroic:PLUGIN"
+rawg = "ludex.sources.rawg:PLUGIN"
 
 [tool.setuptools.packages.find]
 where = ["src"]

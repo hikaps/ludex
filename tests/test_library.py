@@ -5,7 +5,7 @@ import pytest
 import ludex.library as library
 from ludex.errors import LudexError
 from ludex.library import ImportSummary, get_game, import_account, list_games, run_import
-from ludex.plugins import FetchResult, OwnedGame, SourceError, SourcePlugin
+from ludex.plugins import FetchResult, OwnedGame, SourceError, Provider
 from ludex.storage import connect
 
 
@@ -32,7 +32,7 @@ def snapshot(conn):
 
 
 def plugin(fetch):
-    return SourcePlugin("fake", "fake source", (), lambda config: FetchResult(fetch(config), True, "test"))
+    return Provider("steam", "fake source", (), lambda config: FetchResult(fetch(config), True, "test"))
 
 
 def test_first_import_adds_games(conn):
@@ -107,8 +107,8 @@ def test_removal_is_isolated_per_account(conn):
     assert summary.removed == 1
     removed = {r["account"]: r["removed"] for r in conn.execute("SELECT account, removed FROM ownership")}
     assert removed == {"a": 1, "b": 0}
-    # same key in another account is a separate ownership with its own game
-    assert counts(conn) == (2, 2)
+    # same key in another account is a separate ownership of the same game
+    assert counts(conn) == (1, 2)
 
 
 def test_failing_fetch_leaves_state_untouched(conn):
@@ -179,7 +179,7 @@ def test_run_import_wraps_generic_exception_without_text(conn):
         run_import(conn, "main", plugin(fetch), {})
     assert info.value.code == "source_failed"
     assert "secret-token-123" not in info.value.message
-    assert info.value.message == "source fake failed (ValueError)"
+    assert info.value.message == "source steam failed (ValueError)"
 
 
 def test_run_import_wraps_failure_during_iteration(conn):
@@ -297,9 +297,10 @@ def test_removed_flag_requires_every_ownership_removed(conn):
     import_account(conn, "a", [g("1", "Alpha")])
     import_account(conn, "b", [g("1", "Alpha")])
     import_account(conn, "a", [])
-    # separate games per account, so each has its own flag
-    flags = {x["accounts"][0]: x["removed"] for x in list_games(conn, include_removed=True)}
-    assert flags == {"a": True, "b": False}
+    # one game owned through both accounts; it is removed only when every ownership is
+    assert [x["removed"] for x in list_games(conn, include_removed=True)] == [False]
+    import_account(conn, "b", [])
+    assert [x["removed"] for x in list_games(conn, include_removed=True)] == [True]
 
 
 def test_get_game_returns_ownership_records(conn):
@@ -329,12 +330,118 @@ def test_incomplete_fetch_adds_but_never_removes(conn):
 
 
 def test_run_import_forwards_completeness_and_mode(conn):
-    partial = SourcePlugin("fake", "fake", (), lambda config: FetchResult([g("1", "Alpha")], False, "local"))
+    partial = Provider("steam", "fake", (), lambda config: FetchResult([g("1", "Alpha")], False, "local"))
     summary = run_import(conn, "main", partial, {})
     assert (summary.complete, summary.mode) == (False, "local")
 
 
 def test_run_import_rejects_bare_list(conn):
     with pytest.raises(LudexError) as info:
-        run_import(conn, "main", SourcePlugin("fake", "fake", (), lambda config: [g("1", "Alpha")]), {})
+        run_import(conn, "main", Provider("steam", "fake", (), lambda config: [g("1", "Alpha")]), {})
     assert info.value.code == "source_failed"
+
+
+def _games(conn):
+    return [tuple(r) for r in conn.execute("SELECT o.store, o.account, o.game_id FROM ownership o ORDER BY o.id")]
+
+
+def test_same_title_in_another_store_joins_one_game(conn):
+    import_account(conn, "s", [g("1", "Hades")])
+    import_account(conn, "e", [g("a", "HADES!", store="epic")])
+    assert _games(conn) == [("steam", "s", 1), ("epic", "e", 1)]
+    assert conn.execute("SELECT COUNT(*) FROM review_queue").fetchone()[0] == 0
+
+
+def test_same_store_id_under_another_account_joins_even_if_title_differs(conn):
+    import_account(conn, "local", [g("10", "Counter-Strike")])
+    import_account(conn, "api", [g("10", "Counter Strike: Global")])
+    assert [r[2] for r in _games(conn)] == [1, 1]
+
+
+def test_second_game_with_same_title_in_same_store_is_queued_not_merged(conn):
+    import_account(conn, "s", [g("1", "Doom"), g("2", "DOOM")])
+    assert [r[2] for r in _games(conn)] == [1, 2]
+    items = library.list_review(conn)
+    assert [(i["game_id"], [c["id"] for c in i["candidates"]]) for i in items] == [(2, [1])]
+
+
+def test_ambiguous_title_across_stores_is_queued(conn):
+    import_account(conn, "s", [g("1", "Doom"), g("2", "Doom ")])
+    import_account(conn, "e", [g("a", "Doom", store="epic")])
+    assert [r[2] for r in _games(conn)] == [1, 2, 3]
+    assert [c["id"] for c in library.list_review(conn)[-1]["candidates"]] == [1, 2]
+
+
+def test_reimport_keeps_manual_merge(conn):
+    import_account(conn, "s", [g("1", "Doom"), g("2", "DOOM")])
+    assert library.merge_games(conn, 1, 2) == 1
+    assert library.list_review(conn) == []
+    import_account(conn, "s", [g("1", "Doom"), g("2", "DOOM")])
+    assert [r[2] for r in _games(conn)] == [1, 1]
+    assert [x["id"] for x in list_games(conn)] == [1]
+
+
+def test_merge_validates_and_dismiss(conn):
+    import_account(conn, "s", [g("1", "Doom"), g("2", "DOOM")])
+    for args, code in [((1, 1), "invalid_merge"), ((1, 9), "game_not_found")]:
+        with pytest.raises(LudexError) as info:
+            library.merge_games(conn, *args)
+        assert info.value.code == code
+    library.dismiss_review(conn, 1)
+    assert library.list_review(conn) == []
+    with pytest.raises(LudexError):
+        library.dismiss_review(conn, 1)
+
+
+def test_export_lists_ownership_per_game_and_hides_removed_by_default(conn):
+    import_account(conn, "s", [g("1", "Hades", secret_field="x"), g("2", "Doom")])
+    import_account(conn, "e", [g("a", "Hades", store="epic")])
+    import_account(conn, "s", [g("1", "Hades")])
+    data = library.export_games(conn)
+    assert [(x["id"], x["title"], [o["store"] for o in x["ownership"]]) for x in data] == [(1, "Hades", ["steam", "epic"])]
+    assert "raw_json" not in str(data) and "secret_field" not in str(data)
+    everything = library.export_games(conn, include_removed=True)
+    assert [x["title"] for x in everything] == ["Hades", "Doom"] and everything[1]["ownership"][0]["removed"] is True
+
+
+def test_same_account_name_in_another_source_is_never_removed(conn):
+    steam = Provider("steam", "s", (), lambda config: FetchResult([g("1", "Alpha")], True, "api"))
+    local = Provider("local", "l", (), lambda config: FetchResult([g("d", "Doom", store="local")], True, "directory"))
+    run_import(conn, "main", steam, {})
+    summary = run_import(conn, "main", local, {})
+    assert summary.removed == 0
+    assert conn.execute("SELECT COUNT(*) FROM ownership WHERE removed = 1").fetchone()[0] == 0
+    gone = Provider("local", "l", (), lambda config: FetchResult([], True, "directory"))
+    assert run_import(conn, "main", gone, {}).removed == 1
+    assert conn.execute("SELECT removed FROM ownership WHERE store = 'steam'").fetchone()[0] == 0
+
+
+def test_run_import_rejects_games_of_another_store(conn):
+    plugin_ = Provider("local", "l", (), lambda config: FetchResult([g("1", "Alpha")], True, "x"))
+    with pytest.raises(LudexError) as info:
+        run_import(conn, "main", plugin_, {})
+    assert info.value.code == "source_failed"
+
+
+def test_resolve_game_by_id_exact_title_or_unique_partial(conn):
+    import_account(conn, "m", [g("1", "Doom"), g("2", "Doom Eternal"), g("3", "Hades")])
+    assert library.resolve_game(conn, "7") == 7
+    assert library.resolve_game(conn, "doom") == 1  # exact beats partial
+    assert library.resolve_game(conn, "had") == 3
+    for ref, code in [("zzz", "game_not_found"), ("e", "game_ambiguous")]:
+        with pytest.raises(LudexError) as info:
+            library.resolve_game(conn, ref)
+        assert info.value.code == code
+
+
+def test_fuzzy_filter_tolerates_missing_letters_and_ranks_exact_first(conn):
+    import_account(conn, "main", FetchResult([g("1", "Hollow Knight"), g("2", "Knight Hollow Tales"), g("3", "Celeste"), g("4", "Hades")], True, "api").games, complete=True, store="steam")
+    titles = lambda q, **kw: [x["title"] for x in list_games(conn, query=q, fuzzy=True, **kw)]
+    assert titles("hllw knght") == ["Hollow Knight", "Knight Hollow Tales"]
+    assert titles("hollow knight") == ["Hollow Knight", "Knight Hollow Tales"]  # exact phrase first, then all words in any order
+    assert titles("knight hollow")[0] == "Knight Hollow Tales"  # exact phrase ranks first
+    assert titles("cls") == ["Celeste"]
+    assert titles("hd") == []  # two letters must be a real substring
+    assert titles("Héllo") == []
+    assert [x["title"] for x in list_games(conn, query="hllw knght")] == []  # the default stays a substring
+    assert titles("hllw knght", limit=1, offset=1) == ["Knight Hollow Tales"]

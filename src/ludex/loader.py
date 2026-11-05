@@ -1,31 +1,101 @@
-"""Discovery of ownership plugins through Python entry points."""
+"""Discovery of providers through Python entry points."""
 from __future__ import annotations
 
+import inspect
 import re
+import sys
 from collections import Counter
 from collections.abc import Iterable
+from dataclasses import replace
 from importlib.metadata import EntryPoint, entry_points as _entry_points
 
-from .plugins import API_VERSION, GROUP, SourcePlugin
+from .paths import plugins_dir, state_paths
+from .plugins import API_VERSION, GROUP, Command, ConfigField, Provider
+from .provider_settings import get_values
 
 _NAME = re.compile(r"[a-z][a-z0-9-]{0,31}\Z")
 
 
-def load_sources(
-    entry_points: Iterable[EntryPoint] | None = None,
-) -> tuple[dict[str, SourcePlugin], dict[str, str]]:
-    """Return ``(loaded, problems)`` for the ``ludex.ownership`` entry-point group.
+def _valid_commands(commands) -> bool:
+    try:
+        names = [c.name for c in commands]
+        return len(set(names)) == len(names) and all(
+            isinstance(c, Command) and re.fullmatch(r"[a-z][a-z0-9-]*", c.name) and callable(c.run) for c in commands
+        )
+    except TypeError:
+        return False
 
-    ``loaded`` maps plugin name to its validated ``SourcePlugin``; ``problems`` maps the
+
+def _add_managed_plugins() -> None:
+    """Put each ``<state>/plugins/<name>`` folder at the end of ``sys.path`` (ludex's own libraries win)."""
+    root = plugins_dir()
+    try:
+        folders = sorted(
+            p for p in root.iterdir()
+            if p.is_dir() and not p.is_symlink() and not p.name.startswith(".") and not (p / ".disabled").exists()
+        )
+    except OSError:
+        return
+    for folder in folders:
+        if str(folder) not in sys.path:
+            sys.path.append(str(folder))
+
+
+def _valid_field(f: object) -> bool:
+    if not isinstance(f, ConfigField):
+        return False
+    if f.kind == "choice":
+        ok = isinstance(f.choices, tuple) and bool(f.choices) and all(isinstance(c, str) and c for c in f.choices) and len(set(f.choices)) == len(f.choices)
+    else:
+        ok = f.kind in ("text", "yes_no") and f.choices == ()
+    return ok and (f.kind == "text" or not (f.secret or f.path))
+
+
+def _valid_settings(plugin: Provider) -> bool:
+    try:
+        if not all(_valid_field(f) for f in (*plugin.settings, *plugin.config_fields)):
+            return False
+    except TypeError:
+        return False
+    names = [f.name for f in plugin.settings]
+    return (
+        len(set(names)) == len(names)
+        and all(re.fullmatch(r"[a-z][a-z0-9_]*", n) for n in names)
+        and not set(names) & {f.name for f in plugin.config_fields}
+    )
+
+
+def _bind_settings(provider: Provider) -> Provider:
+    """Give ``search``/``metadata``/``match`` functions that declare ``settings`` the plugin's settings, read per call."""
+    bound = {}
+    for attr in ("search", "metadata", "match"):
+        function = getattr(provider, attr)
+        try:
+            wants = function is not None and "settings" in inspect.signature(function).parameters
+        except (TypeError, ValueError):
+            wants = False
+        if wants:
+            bound[attr] = lambda arg, _f=function, _n=provider.name: _f(arg, settings=get_values(state_paths(), _n))
+    return replace(provider, **bound) if bound else provider
+
+
+def load_providers(
+    entry_points: Iterable[EntryPoint] | None = None,
+) -> tuple[dict[str, Provider], dict[str, str]]:
+    """Return ``(loaded, problems)`` for the ``ludex.providers`` entry-point group.
+
+    ``loaded`` maps plugin name to its validated ``Provider``; ``problems`` maps the
     names of skipped plugins to a short reason that never includes plugin-supplied text.
     Names registered more than once are rejected without importing any of them.
     """
+    if entry_points is None:
+        _add_managed_plugins()
     candidates = sorted(
         _entry_points(group=GROUP) if entry_points is None else entry_points,
         key=lambda item: item.name,
     )
     counts = Counter(entry.name for entry in candidates)
-    loaded: dict[str, SourcePlugin] = {}
+    loaded: dict[str, Provider] = {}
     problems: dict[str, str] = {}
     for entry in candidates:
         name = entry.name
@@ -41,10 +111,16 @@ def load_sources(
             except (Exception, SystemExit) as exc:
                 problems[name] = f"failed to import ({type(exc).__name__})"
                 continue
-            if type(value) is not SourcePlugin:
-                problems[name] = "must be a SourcePlugin"
+            if type(value) is not Provider:
+                problems[name] = "must be a Provider"
             elif type(getattr(value, "api_version", None)) is not int or value.api_version != API_VERSION:
                 problems[name] = f"unsupported api_version (ludex requires {API_VERSION})"
+            elif not value.capabilities:
+                problems[name] = "declares no capability"
+            elif not _valid_commands(value.commands):
+                problems[name] = "has an invalid command (need unique lowercase names and a callable run)"
+            elif not _valid_settings(value):
+                problems[name] = "has invalid settings (need unique lowercase names that are not account fields)"
             else:
-                loaded[name] = value
+                loaded[name] = _bind_settings(value)
     return loaded, problems

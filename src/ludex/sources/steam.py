@@ -14,6 +14,8 @@ it cannot be told apart from a failed fetch; only an explicit ``game_count: 0`` 
 """
 from __future__ import annotations
 
+from urllib.parse import quote
+
 import json
 import re
 from collections.abc import Mapping
@@ -24,7 +26,7 @@ import httpx
 import vdf
 
 from .. import __version__
-from ..plugins import ConfigField, FetchResult, OwnedGame, SourceError, SourcePlugin
+from ..plugins import ConfigField, FetchResult, Metadata, OwnedGame, Provider, SearchHit, SourceError
 from .steam_cache import cached_games
 
 DEFAULT_BASE_URL = "https://api.steampowered.com"
@@ -169,11 +171,30 @@ def _detect_steam_id(steam_dir: Path) -> str | None:
     return pick[0] if len(pick) == 1 else None
 
 
-def _local(steam_dir: Path) -> list[OwnedGame]:
+def _libraries(steam_dir: Path) -> list[Path]:
     libraries = [steam_dir]
     folders = _load_vdf(steam_dir / "steamapps" / "libraryfolders.vdf").get("libraryfolders")
     if isinstance(folders, dict):
         libraries += [Path(v["path"]) for v in folders.values() if isinstance(v, dict) and isinstance(v.get("path"), str)]
+    return libraries
+
+
+def installed(config: Mapping[str, str]) -> set[str]:
+    """App ids whose manifest says fully installed (StateFlags bit 4; a missing flag counts as installed)."""
+    found: set[str] = set()
+    for library in _libraries(_steam_dir(config)):
+        for manifest in (library / "steamapps").glob("appmanifest_*.acf"):
+            state = _load_vdf(manifest).get("AppState")
+            if not isinstance(state, dict) or not str(state.get("appid", "")).isdigit() or int(state["appid"]) <= 0:
+                continue
+            flags = str(state.get("StateFlags", "4"))
+            if flags.isdigit() and int(flags) & 4:
+                found.add(str(int(state["appid"])))
+    return found
+
+
+def _local(steam_dir: Path) -> list[OwnedGame]:
+    libraries = _libraries(steam_dir)
     games: dict[str, OwnedGame] = {
         str(app_id): OwnedGame("steam", str(app_id), name, {"installed": False})
         for app_id, name in cached_games(steam_dir).items()
@@ -194,6 +215,89 @@ def _local(steam_dir: Path) -> list[OwnedGame]:
     return list(games.values())
 
 
+STORE_SEARCH_URL = "https://store.steampowered.com/api/storesearch/"
+
+
+def search(query: str, *, url: str = STORE_SEARCH_URL, client: httpx.Client | None = None) -> list[SearchHit]:
+    """Steam store catalog search (public endpoint, no key). Prices are US storefront prices."""
+    own = client is None
+    client = client or httpx.Client(timeout=10.0, headers={"User-Agent": f"ludex/{__version__}"})
+    try:
+        with client.stream("GET", url, params={"term": query, "l": "english", "cc": "us"}) as response:
+            if response.status_code == 429:
+                raise SourceError("steam_rate_limited", "Steam rate limit reached; try again later")
+            if response.status_code != 200:
+                raise SourceError("steam_unavailable", "Steam is unavailable")
+            body = _read_body(response)
+    except httpx.HTTPError:
+        raise SourceError("steam_unavailable", "Steam is unavailable") from None
+    finally:
+        if own:
+            client.close()
+    try:
+        items = json.loads(body)["items"]
+    except (ValueError, KeyError, TypeError):
+        raise _bad_response() from None
+    if not isinstance(items, list):
+        raise _bad_response()
+    hits: list[SearchHit] = []
+    for item in items:
+        if not isinstance(item, dict) or item.get("type") != "app" or not isinstance(item.get("name"), str):
+            continue
+        app_id = item.get("id")
+        if not isinstance(app_id, int) or isinstance(app_id, bool) or app_id <= 0:
+            continue
+        price = item.get("price")
+        label = None
+        if isinstance(price, dict) and isinstance(price.get("final"), int) and isinstance(price.get("currency"), str):
+            label = f"{price['final'] / 100:.2f} {price['currency']}"
+        hits.append(SearchHit("steam", str(app_id), item["name"], f"https://store.steampowered.com/app/{app_id}", label))
+    return hits
+
+
+APP_DETAILS_URL = "https://store.steampowered.com/api/appdetails"
+
+
+def metadata(store_id: str, *, url: str = APP_DETAILS_URL, client: httpx.Client | None = None) -> Metadata | None:
+    """Steam store details for one app (public endpoint, no key); ``None`` when Steam has no entry."""
+    own = client is None
+    client = client or httpx.Client(timeout=10.0, headers={"User-Agent": f"ludex/{__version__}"})
+    try:
+        with client.stream("GET", url, params={"appids": store_id, "l": "english"}) as response:
+            if response.status_code == 429:
+                raise SourceError("steam_rate_limited", "Steam rate limit reached; try again later")
+            if response.status_code != 200:
+                raise SourceError("steam_unavailable", "Steam is unavailable")
+            body = _read_body(response)
+    except httpx.HTTPError:
+        raise SourceError("steam_unavailable", "Steam is unavailable") from None
+    finally:
+        if own:
+            client.close()
+    try:
+        entry = json.loads(body)[store_id]
+    except (ValueError, KeyError, TypeError):
+        raise _bad_response() from None
+    if not isinstance(entry, dict):
+        raise _bad_response()
+    data = entry.get("data")
+    if not entry.get("success") or not isinstance(data, dict):
+        return None
+
+    def names(value: object, key: str | None = None) -> tuple[str, ...]:
+        items = value if isinstance(value, list) else []
+        return tuple(x if key is None else x.get(key) for x in items if isinstance(x, str if key is None else dict) and isinstance(x if key is None else x.get(key), str))
+
+    description = data.get("short_description")
+    released = data.get("release_date")
+    return Metadata(
+        description if isinstance(description, str) and description else None,
+        names(data.get("genres"), "description"),
+        names(data.get("developers")),
+        released.get("date") if isinstance(released, dict) and isinstance(released.get("date"), str) and released["date"] else None,
+    )
+
+
 def fetch(config: Mapping[str, str]) -> FetchResult:
     if config.get("api_key"):
         steam_id = config.get("steam_id")
@@ -206,7 +310,7 @@ def fetch(config: Mapping[str, str]) -> FetchResult:
     return FetchResult(_local(_steam_dir(config)), False, "local")
 
 
-PLUGIN = SourcePlugin(
+PLUGIN = Provider(
     name="steam",
     help="Steam library: Web API with a key (full, needs public game details), otherwise the local Steam folder (installed and cached licensed games)",
     config_fields=(
@@ -215,4 +319,10 @@ PLUGIN = SourcePlugin(
         ConfigField("steam_dir", "Steam folder; blank to auto-detect", optional=True),
     ),
     fetch=fetch,
+    installed=installed,
+    search=search,
+    metadata=metadata,
+    match=search,
+    install_url=lambda store_id: f"steam://install/{quote(store_id, safe='')}",
+    launch_url=lambda store_id: f"steam://rungameid/{quote(store_id, safe='')}",
 )

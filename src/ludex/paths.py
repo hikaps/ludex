@@ -41,6 +41,11 @@ def _check_private_directory(root: Path) -> None:
         raise PermissionError(f"state root must have mode 0700: {root}")
 
 
+def plugins_dir() -> Path:
+    """Where managed plugins live; read-only helper, never creates anything."""
+    return _requested_root() / "plugins"
+
+
 def state_paths() -> StatePaths:
     root = _requested_root()
     _check_private_directory(root)

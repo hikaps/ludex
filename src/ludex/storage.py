@@ -14,7 +14,7 @@ from pathlib import Path
 
 from .errors import LudexError
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 5
 
 _SCHEMA_V1 = (
     "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
@@ -28,6 +28,26 @@ _SCHEMA_V1 = (
     "removed INTEGER NOT NULL DEFAULT 0 CHECK(removed IN (0,1)), "
     "UNIQUE(store, store_id, account))",
     "CREATE INDEX ownership_game_idx ON ownership(game_id)",
+)
+
+_SCHEMA_V2 = (
+    "CREATE TABLE review_queue (id INTEGER PRIMARY KEY, "
+    "ownership_id INTEGER NOT NULL UNIQUE REFERENCES ownership(id), candidates_json TEXT NOT NULL)",
+)
+
+_SCHEMA_V3 = (
+    "CREATE TABLE game_settings (store TEXT NOT NULL, store_id TEXT NOT NULL, runner TEXT, prefix TEXT, "
+    "executable TEXT, args_json TEXT NOT NULL DEFAULT '[]', env_json TEXT NOT NULL DEFAULT '{}', "
+    "PRIMARY KEY(store, store_id))",
+)
+_SCHEMA_V4 = (
+    "CREATE TABLE game_metadata (store TEXT NOT NULL, store_id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY (store, store_id))",
+)
+_SCHEMA_V5 = (
+    "CREATE TABLE jobs (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, game_id INTEGER NOT NULL, target TEXT NOT NULL, "
+    "title TEXT NOT NULL, pid INTEGER NOT NULL, pid_start TEXT NOT NULL, log TEXT NOT NULL, exit_file TEXT NOT NULL, "
+    "started_at TEXT NOT NULL, ended_at TEXT, exit_code INTEGER, "
+    "state TEXT NOT NULL CHECK(state IN ('running','done','failed','stopped','lost')))",
 )
 
 
@@ -60,7 +80,7 @@ def _initialize(connection: sqlite3.Connection) -> None:
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta'"
         ).fetchone()
         if has_meta is None:
-            for statement in _SCHEMA_V1:
+            for statement in _SCHEMA_V1 + _SCHEMA_V2 + _SCHEMA_V3 + _SCHEMA_V4 + _SCHEMA_V5:
                 connection.execute(statement)
             connection.execute(
                 "INSERT INTO meta(key, value) VALUES ('schema_version', ?)", (str(SCHEMA_VERSION),)
@@ -76,6 +96,11 @@ def _initialize(connection: sqlite3.Connection) -> None:
                     "schema_too_new",
                     f"database schema {stored} is newer than supported version {SCHEMA_VERSION}",
                 )
+            for version, statements in ((2, _SCHEMA_V2), (3, _SCHEMA_V3), (4, _SCHEMA_V4), (5, _SCHEMA_V5)):
+                if stored < version:
+                    for statement in statements:
+                        connection.execute(statement)
+                    connection.execute("UPDATE meta SET value = ? WHERE key = 'schema_version'", (str(version),))
         connection.execute("COMMIT")
     except BaseException:
         connection.execute("ROLLBACK")

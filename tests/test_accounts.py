@@ -68,7 +68,7 @@ def test_add_get_round_trip_and_modes(home: Path) -> None:
     account = get_account(paths, "main")
     assert (account.name, account.source) == ("main", "steam")
     assert dict(account.config) == {"api_key": "SECRET", "steam_id": "1"}
-    assert json.loads(paths.accounts.read_text()) == {"main": {"source": "steam", "config": {"api_key": "SECRET", "steam_id": "1"}}}
+    assert json.loads(paths.accounts.read_text()) == {"steam:main": {"source": "steam", "config": {"api_key": "SECRET", "steam_id": "1"}}}
     assert [p.name for p in home.iterdir() if p.name.endswith(".tmp")] == []
 
 
@@ -76,9 +76,23 @@ def test_duplicate_account_rejected_and_original_kept(home: Path) -> None:
     paths = state_paths()
     add_account(paths, "main", "steam", {"k": "1"})
     with pytest.raises(LudexError) as caught:
-        add_account(paths, "main", "epic", {"k": "2"})
+        add_account(paths, "main", "steam", {"k": "2"})
     assert caught.value.code == "account_exists"
+    assert dict(get_account(paths, "main").config) == {"k": "1"}
+
+
+def test_same_name_in_two_sources_needs_qualifying_and_legacy_files_load(home: Path) -> None:
+    paths = state_paths()
+    paths.accounts.write_text(json.dumps({"main": {"source": "steam", "config": {}}}))
+    paths.accounts.chmod(0o600)
     assert get_account(paths, "main").source == "steam"
+    add_account(paths, "main", "epic", {})
+    with pytest.raises(LudexError) as caught:
+        get_account(paths, "main")
+    assert caught.value.code == "account_ambiguous"
+    assert get_account(paths, "epic:main").source == "epic"
+    remove_account(paths, "steam:main")
+    assert list_accounts(paths) == [("main", "epic")]
 
 
 @pytest.mark.parametrize("name", ["", "Main", "1abc", "a b", "a/b", "../x", "a" * 33, "-a"])

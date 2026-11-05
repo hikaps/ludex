@@ -107,7 +107,7 @@ jobs:
               metadata_member = next(member for member in archive.getmembers() if member.name.endswith("/PKG-INFO"))
               sdist_metadata = email.message_from_bytes(archive.extractfile(metadata_member).read())
           for kind, metadata in (("wheel", wheel_metadata), ("sdist", sdist_metadata)):
-              if metadata.get("Name") != "ludex" or metadata.get("Version") != expected:
+              if metadata.get("Name") != "ludex-games" or metadata.get("Version") != expected:
                   raise SystemExit(f"unexpected {kind} metadata: {metadata.get('Name')!r} {metadata.get('Version')!r}")
           archive = dist / "ludex.tar.gz"
           shutil.move(sdists[0], archive)
@@ -372,7 +372,7 @@ jobs:
             gh api --method PATCH "repos/$REPOSITORY/releases/$RELEASE_ID" \
               -f name="$TITLE" -f body="$NOTES" -F draft=false -F prerelease="$PRERELEASE" -f make_latest="$MAKE_LATEST" >/dev/null
             gh api --paginate "repos/$REPOSITORY/releases/$RELEASE_ID/assets?per_page=100" \
-              | jq -r --arg wheel "$WHEEL_NAME" '.[] | select(.name | startswith("ludex-") and endswith(".whl")) | select(.name != $wheel) | .id' \
+              | jq -r --arg wheel "$WHEEL_NAME" '.[] | select(.name | (startswith("ludex-") or startswith("ludex_games-")) and endswith(".whl")) | select(.name != $wheel) | .id' \
               | while IFS= read -r asset_id; do
                   [[ -n "$asset_id" ]] && gh api --method DELETE "repos/$REPOSITORY/releases/assets/$asset_id" >/dev/null
                 done
