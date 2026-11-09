@@ -144,7 +144,6 @@ jobs:
             echo "Created tag $tag at $SHA." >> "$GITHUB_STEP_SUMMARY"
           fi
           if ! gh release view "$tag" >/dev/null 2>&1; then
-            # not "latest": the rolling Stable release keeps that badge and moves with main
-            gh release create "$tag" dist/* --verify-tag --title "$tag" --generate-notes --latest=false
+            gh release create "$tag" dist/* --verify-tag --title "$tag" --generate-notes --latest
             echo "Created the release for $tag." >> "$GITHUB_STEP_SUMMARY"
           fi

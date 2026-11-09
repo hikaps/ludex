@@ -29,7 +29,7 @@ uv tool install ludex-games
 # Or: pipx install ludex-games
 ```
 
-The package is `ludex-games`; the command is `ludex`. Rolling builds are also published from `main` (**stable**) and `develop` (**beta**); see [releases](https://github.com/hikaps/ludex/releases):
+The package is `ludex-games`; the command is `ludex`. Each release is tagged `vX.Y.Z` on the [releases page](https://github.com/hikaps/ludex/releases). A rolling pre-release (**beta**) is built from `develop`:
 
 ```sh
 uv tool install https://github.com/hikaps/ludex/releases/download/beta/ludex.tar.gz

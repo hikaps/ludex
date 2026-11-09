@@ -4,7 +4,7 @@ Setup, code conventions and testing are in [AGENTS.md](AGENTS.md).
 
 ## Branches
 
-- `main`: stable. Every push publishes the rolling `stable` GitHub Release.
+- `main`: stable. Each release PR merged here publishes a tagged `vX.Y.Z` release (see Releases).
 - `develop`: integration. Every push publishes the rolling `beta` prerelease.
 - One feature or fix per branch, created from `develop` and named after the change (for example `steam-import`). Open the PR with `gh pr create --base develop`; the default branch is `main`, so `--base` is required.
 - Feature PRs are squash-merged into `develop`; the PR title becomes the commit subject and must follow the commit conventions below.
@@ -28,4 +28,4 @@ A PyPI version can never be reused, so keep a required reviewer on the `pypi` en
 
 The PyPI project is `ludex-games`; the command and import package stay `ludex`. One-time setup: a PyPI pending publisher for project `ludex-games`, owner `hikaps`, repository `ludex`, workflow `pypi.yml`, environment `pypi`.
 
-CI: `tests.yml` runs on every push and PR. `releases.yml` builds the sdist and wheel, smoke-installs them with uv, pipx and pip, then moves the rolling `beta` or `stable` tag and release.
+CI: `tests.yml` runs on every push and PR. `releases.yml` runs on `develop` only: it builds the sdist and wheel, smoke-installs them with uv, pipx and pip, then moves the single rolling `beta` pre-release.
