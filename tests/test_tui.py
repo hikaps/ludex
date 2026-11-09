@@ -528,16 +528,49 @@ def test_i_starts_a_tracked_install_the_detail_shows_it_and_x_stops_it(tmp_path)
         app = LudexApp(db, {"epic": tool}, lambda: set(), lambda store, account: {})
         async with app.run_test() as pilot:
             await pilot.pause()
-            assert app.check_action("stop_install", ()) is False  # nothing installing yet
+            assert app.check_action("stop_job", ()) is False  # nothing installing yet
             await pilot.press("i")
             await pilot.pause(1)
             app._poll_jobs()
-            assert app.check_action("stop_install", ()) is True
+            assert app.check_action("stop_job", ()) is True
             assert "installing Progress 42%" in str(app.query_one("#detail", Static).visual.plain)
             await pilot.press("x")
             await app.workers.wait_for_complete()
             await pilot.pause(0.5)
-            assert app.check_action("stop_install", ()) is False
+            assert app.check_action("stop_job", ()) is False
             assert [j.state for j in list_jobs(app._conn)] == ["stopped"]
+
+    asyncio.run(scenario())
+
+
+def test_l_starts_a_command_game_as_a_job_the_detail_shows_it_and_x_stops_it(tmp_path):
+    from ludex.jobs import list_jobs
+    from ludex.plugins import Provider
+
+    exe = tmp_path / "game.sh"
+    exe.write_text("#!/bin/sh\nexec sleep 60\n")
+    exe.chmod(0o755)
+    db = tmp_path / "db.sqlite3"
+    conn = connect(db)
+    import_account(conn, "m", [OwnedGame("disk", "g", "Gem")], store="disk")
+    conn.close()
+    disk = Provider("disk", "d", (), lambda config: None, launch_command=lambda config, store_id: [str(exe)])
+
+    async def scenario():
+        app = LudexApp(db, {"disk": disk}, lambda: {("disk", "g")}, lambda store, account: {})
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("tab")  # the Installed tab
+            assert app.check_action("stop_job", ()) is False  # nothing running yet
+            await pilot.press("l")
+            await pilot.pause(1)
+            app._poll_jobs()
+            assert app.check_action("stop_job", ()) is True
+            assert "running since" in str(app.query_one("#detail", Static).visual.plain)
+            await pilot.press("x")
+            await app.workers.wait_for_complete()
+            await pilot.pause(0.5)
+            assert app.check_action("stop_job", ()) is False
+            assert [(j.kind, j.state) for j in list_jobs(app._conn)] == [("play", "stopped")]
 
     asyncio.run(scenario())
