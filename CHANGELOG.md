@@ -4,15 +4,15 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
-### Changed
-
-- **packaging:** The package is published as `ludex-games` because PyPI rejects `ludex` as too close to an existing project. The `ludex` command and the `ludex` import package are unchanged. Installs made before this change use the old package name, and `ludex update` on them cannot migrate: uninstall once (`uv tool uninstall ludex` or `pipx uninstall ludex`) and install again from the release URL.
-
 ## [0.51.0] - 2026-10-28
 
 ### Added
 
 - **jobs:** Track, report on and stop installs ([#60](https://github.com/hikaps/ludex/pull/60))
+
+### Changed
+
+- **packaging:** The package is published as `ludex-games` because PyPI rejects `ludex` as too close to an existing project. The `ludex` command and the `ludex` import package are unchanged. Installs made before this change use the old package name, and `ludex update` on them cannot migrate: uninstall once (`uv tool uninstall ludex` or `pipx uninstall ludex`) and install again from the release URL.
 
 ## [0.50.0] - 2026-10-28
 

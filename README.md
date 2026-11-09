@@ -54,7 +54,7 @@ ludex export --format csv > library.csv
 
 ## Plugins
 
-A plugin is a `Provider` instance exported from a Python entry point in the group `ludex.providers`. It declares the capabilities it supports (owned games, launch, install, installed, search, metadata, acquire, commands) and the core only calls what is declared. Plugins report whether an ownership result is complete; the core removes missing games only then. Install one with `ludex plugin add <package, URL or path>`; it runs with your permissions. The contract, including the `API_VERSION` rules, is documented in the docstrings of [src/ludex/plugins.py](src/ludex/plugins.py).
+A plugin is a `Provider` instance exported from a Python entry point in the group `ludex.providers`. It declares the capabilities it supports (owned games, launch, install, installed, search, metadata, acquire, commands) and the core only calls what is declared. Plugins report whether an ownership result is complete; the core removes missing games only then. Install one with `ludex plugin add <package, URL or path>`; it runs with your permissions. The contract, including the `API_VERSION` rules, is documented in the docstrings of [src/ludex/plugins.py](https://github.com/hikaps/ludex/blob/main/src/ludex/plugins.py).
 
 ## Privacy and scope
 
@@ -68,7 +68,7 @@ Lutris, Heroic, Playnite and GOG Galaxy are full game launchers with graphical i
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+See [CONTRIBUTING.md](https://github.com/hikaps/ludex/blob/main/CONTRIBUTING.md).
 
 ## License
 
