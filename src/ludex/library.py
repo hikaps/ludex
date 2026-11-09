@@ -199,8 +199,12 @@ def list_games(
     limit: int = 50,
     offset: int = 0,
     fuzzy: bool = False,
+    order: Mapping[int, int] | None = None,
 ) -> list[dict[str, Any]]:
     """``only``: restrict to games owning one of these (store, store_id) pairs.
+
+    ``order`` maps game id to a number: larger comes first, games it lacks come last, ties keep title order (with
+    ``fuzzy``, a better match still comes before any of that).
 
     ``query`` is a substring of the normalized title; with ``fuzzy`` the words may also be typed with letters
     missing (best matches first). ponytail: fuzzy reads every matching title and ranks in Python, fine for a library
@@ -228,14 +232,18 @@ def list_games(
     if query is not None and not fuzzy:
         where.append("g.normalized_title LIKE ? ESCAPE '\\'")
         params.append(f"%{_escape_like(normalize_title(query))}%")
-    if query is not None and fuzzy:
-        wanted = normalize_title(query)
+    if (query is not None and fuzzy) or order is not None:
         titles = conn.execute(
             f"SELECT g.id, g.title, g.normalized_title FROM games g WHERE {' AND '.join(where)} ORDER BY g.normalized_title, g.id",
             params,
         ).fetchall()
-        ranked = [(rank, row) for row in titles if (rank := _fuzzy_rank(row["normalized_title"], wanted)) is not None]
-        rows = [row for _, row in sorted(ranked, key=lambda r: r[0])][offset : offset + limit]
+        if order is not None:
+            titles = sorted(titles, key=lambda row: order.get(row["id"], -1), reverse=True)  # reverse keeps title order among ties
+        if query is not None and fuzzy:
+            wanted = normalize_title(query)
+            ranked = [(rank, row) for row in titles if (rank := _fuzzy_rank(row["normalized_title"], wanted)) is not None]
+            titles = [row for _, row in sorted(ranked, key=lambda r: r[0])]
+        rows = titles[offset : offset + limit]
     else:
         rows = conn.execute(
             f"SELECT g.id, g.title FROM games g WHERE {' AND '.join(where)} "

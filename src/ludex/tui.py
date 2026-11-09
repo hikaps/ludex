@@ -6,6 +6,7 @@ paging or more in-app maintenance when needed.
 """
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
@@ -27,6 +28,7 @@ from .launch import install_game, launch_game, open_url
 from .find import find_games, owned_keys
 from .library import get_game, list_games
 from .paths import StatePaths
+from .playtime import Played, describe_played, epoch
 from .plugins import ConfigField, Provider
 from .provider_settings import get_values, set_value
 from .runners import find_runners
@@ -122,6 +124,7 @@ class LudexApp(App[None]):
         Binding("m", "match", "Match title"),
         Binding("i", "install", "Install"),
         Binding("x", "stop_job", "Stop"),
+        Binding("o", "order", "Order"),
         Binding("s", "settings", "Settings"),
         Binding("r", "reload", "Reload"),
         Binding("q", "quit", "Quit"),
@@ -136,8 +139,12 @@ class LudexApp(App[None]):
         prefix_root: Path | None = None,
         lock: Path | None = None,
         paths: StatePaths | None = None,
+        played: Callable[[sqlite3.Connection], Mapping[int, Played]] = lambda conn: {},
     ) -> None:
         super().__init__()
+        self._play_stats = played
+        self._played: Mapping[int, Played] = {}
+        self._sort = "title"  # title, recent or played; the o key cycles
         self._database = database
         self._sources = sources
         self._installed = installed
@@ -220,10 +227,10 @@ class LudexApp(App[None]):
         # tab, arrows and paging belong to the list only on the main screen; forms keep their own
         if len(self.screen_stack) > 1 and action not in {"quit"}:
             return False
-        tab_actions = {"owned": {"install", "edit", "match", "stop_job"}, "installed": {"launch", "edit", "match", "stop_job"}, "search": {"install"}}
+        tab_actions = {"owned": {"install", "edit", "match", "stop_job", "order"}, "installed": {"launch", "edit", "match", "stop_job", "order"}, "search": {"install"}}
         if action == "stop_job" and (self._active() not in {"owned", "installed"} or self._current_id() not in self._busy):
             return False  # only while the game under the cursor is installing or running
-        if action in {"launch", "edit", "install", "match", "stop_job"}:  # what you can do depends on the tab
+        if action in {"launch", "edit", "install", "match", "stop_job", "order"}:  # what you can do depends on the tab
             return action in tab_actions.get(self._active(), set())
         if self._active() == "settings" and action in {"focus_filter", "settings"}:
             return False
@@ -283,8 +290,11 @@ class LudexApp(App[None]):
         query = self.query_one("#filter", Input).value.strip() or None
         counts = []
         installed_ids: set[int] = set()
+        order = None
+        if self._sort != "title":
+            order = {g: p.minutes if self._sort == "played" else epoch(p.last_played) if p.last_played else -1 for g, p in self._played.items()}
         for name, only in (("installed", self._keys), ("owned", None)):
-            games = list_games(self._conn, query=query, only=only, limit=500, fuzzy=True)
+            games = list_games(self._conn, query=query, only=only, limit=500, fuzzy=True, order=order)
             table = self.query_one(f"#{name}-table", DataTable)
             table.clear()
             if name == "installed":
@@ -293,7 +303,7 @@ class LudexApp(App[None]):
                 mark = Text("●", style="#9ece6a") if game["id"] in installed_ids else Text(" ")
                 table.add_row(mark, game["title"], _stores_text(game["stores"]), key=str(game["id"]))
             counts.append(f"{len(games)}{'+' if len(games) == 500 else ''} {name}")
-        self._status(", ".join(reversed(counts)))
+        self._status(", ".join(reversed(counts)) + ("" if self._sort == "title" else f", by {self._sort}"))
         self._show_hint()
 
     def _show_hint(self) -> None:
@@ -371,6 +381,8 @@ class LudexApp(App[None]):
         ]
         if any((o["store"], str(o["store_id"])) in self._keys for o in game["ownership"]):
             lines.append("[#9ece6a]● installed[/]")
+        if (played := self._played.get(game_id)) is not None:
+            lines.append(f"[dim]played[/] {escape(describe_played(played))}")
         found = next((m for o in game["ownership"] if (m := cached_metadata(self._conn, o["store"], str(o["store_id"])))), None)
         if found is not None:
             lines += [""] + ([escape(found.description)] if found.description else [])
@@ -457,6 +469,11 @@ class LudexApp(App[None]):
 
     def action_reload(self) -> None:
         self._keys = self._installed()
+        self._played = self._play_stats(self._conn)
+        self._reload()
+
+    def action_order(self) -> None:
+        self._sort = {"title": "recent", "recent": "played", "played": "title"}[self._sort]
         self._reload()
 
     def _prefix(self) -> Path | None:
@@ -815,6 +832,10 @@ class LudexApp(App[None]):
                 self.notify(f"{what} ended without a result; log: {job.log}", severity="warning", timeout=15)
         if any(j.state == "done" and j.kind == "install" for j in ended):
             self.action_reload()
+        elif any(j.kind == "play" for j in ended):
+            self._played = self._play_stats(self._conn)  # a session just ended
+            if self._sort != "title":
+                self._reload()
         current = self._current_id() if self._active() in {"owned", "installed"} else None
         if current is not None and (current in self._busy or any(j.game_id == current for j in ended)):
             self._show_game(current)

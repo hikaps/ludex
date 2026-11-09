@@ -18,6 +18,7 @@ Status: early development.
 - **Launch**: `launch` starts a game through its store's client; Windows games run via `umu-run` with Proton builds found by `runners`. Per-game runner, prefix, executable, arguments and environment via `game set`. A game ludex starts itself (a local folder) runs as a background job with its output in a log: `launch --status`, `launch --stop`. Games started through Steam or Heroic belong to that client and are not tracked.
 - **Install**: `install` asks the owning store's client to install a game (Epic goes through Legendary). Started installs run as background jobs: `install --status`, `install --stop`.
 - **Metadata**: `metadata` shows description, genres and developer, asked of the plugin once and then kept; `match` picks a game-database entry (bundled: `rawg`, needs your own API key).
+- **Play time**: `show` and `ls --sort played|recent` report how long you played, from what Steam and Heroic (Epic and sideloads) recorded on this machine, plus the games ludex started itself. The TUI shows it in Detail and `o` changes the order.
 - **TUI**: `ludex tui` browses, searches and launches games in the terminal.
 - **Scripting**: `ludex --json <command>` prints `{"ok": ..., "data": ...}` (errors go to stderr).
 - **Plugins**: `plugin add/ls/rm/enable/disable/update`; `update` updates ludex from its release channel.

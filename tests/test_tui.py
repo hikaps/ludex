@@ -5,7 +5,7 @@ import asyncio
 import pytest
 
 from ludex import launch as launch_mod
-from ludex.library import import_account
+from ludex.library import import_account, list_games
 from ludex.plugins import OwnedGame
 from ludex.sources import epic, steam
 from ludex.game_settings import get_prefix_root
@@ -572,5 +572,36 @@ def test_l_starts_a_command_game_as_a_job_the_detail_shows_it_and_x_stops_it(tmp
             await pilot.pause(0.5)
             assert app.check_action("stop_job", ()) is False
             assert [(j.kind, j.state) for j in list_jobs(app._conn)] == [("play", "stopped")]
+
+    asyncio.run(scenario())
+
+
+def test_o_orders_by_play_time_and_the_detail_shows_it(tmp_path):
+    from ludex.playtime import Played
+
+    db = tmp_path / "db.sqlite3"
+    conn = connect(db)
+    import_account(conn, "m", [OwnedGame("steam", "1", "Alpha"), OwnedGame("steam", "2", "Bravo"), OwnedGame("steam", "3", "Charlie")], store="steam")
+    ids = {g["title"]: g["id"] for g in list_games(conn)}
+    conn.close()
+    stats = {ids["Charlie"]: Played(725, "2026-10-01T10:00:00Z"), ids["Alpha"]: Played(30, "2026-11-01T10:00:00Z")}
+
+    async def scenario():
+        app = LudexApp(db, {"steam": steam.PLUGIN}, played=lambda c: stats)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            owned = app.query_one("#owned-table", DataTable)
+            titles = lambda: [str(owned.get_row_at(i)[1]) for i in range(owned.row_count)]
+            assert titles() == ["Alpha", "Bravo", "Charlie"]
+            await pilot.press("o")  # most recently played first
+            assert titles() == ["Alpha", "Charlie", "Bravo"]
+            await pilot.press("o")  # most played first
+            assert titles() == ["Charlie", "Alpha", "Bravo"]
+            owned.move_cursor(row=0)
+            await pilot.pause()
+            assert "played 12h 05m, last 2026-10-01" in str(app.query_one("#detail", Static).visual.plain)
+            assert "by played" in app.query_one("#left").border_subtitle
+            await pilot.press("o")
+            assert titles() == ["Alpha", "Bravo", "Charlie"]
 
     asyncio.run(scenario())
