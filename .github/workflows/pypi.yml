@@ -91,6 +91,10 @@ jobs:
             PUBLISH=0
             echo "Dry run: nothing will be published, tagged or released." >> "$GITHUB_STEP_SUMMARY"
           fi
+          if [[ "$PUBLISH" == "1" ]] && ! grep -q "^## \[$VERSION\]" CHANGELOG.md; then
+            echo "CHANGELOG.md has no entry for $VERSION; add one before releasing" >&2
+            exit 1
+          fi
           echo "publish=$PUBLISH" >> "$GITHUB_OUTPUT"
 
       - name: Build wheel and source distribution
@@ -118,6 +122,14 @@ jobs:
       id-token: write
       contents: write # to create the tag and the GitHub Release after publishing
     steps:
+      - name: Check out the changelog
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: CHANGELOG.md
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
       - name: Download distributions
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -144,6 +156,25 @@ jobs:
             echo "Created tag $tag at $SHA." >> "$GITHUB_STEP_SUMMARY"
           fi
           if ! gh release view "$tag" >/dev/null 2>&1; then
-            gh release create "$tag" dist/* --verify-tag --title "$tag" --generate-notes --latest
+            # Notes are this version's CHANGELOG section plus a link to the full diff; not a commit list.
+            python3 - "$VERSION" > notes.md <<'PY'
+          import re
+          import sys
+
+          version = sys.argv[1]
+          text = open("CHANGELOG.md").read()
+          match = re.search(r"^## \[" + re.escape(version) + r"\][^\n]*\n(.*?)(?=^## \[|\Z)", text, re.S | re.M)
+          if not match or not match.group(1).strip():
+              raise SystemExit(f"CHANGELOG.md has no entry for {version}; add one before releasing")
+          print(match.group(1).strip())
+          PY
+            prev="$(gh api "repos/$GH_REPO/git/matching-refs/tags/v" --jq '.[].ref | ltrimstr("refs/tags/")' \
+              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | grep -vx "$tag" | sort -V | tail -n 1 || true)"
+            if [[ -n "$prev" ]]; then
+              printf '\n**Full changelog**: https://github.com/%s/compare/%s...%s\n' "$GH_REPO" "$prev" "$tag" >> notes.md
+            else
+              printf '\n**Full changelog**: https://github.com/%s/blob/%s/CHANGELOG.md\n' "$GH_REPO" "$tag" >> notes.md
+            fi
+            gh release create "$tag" dist/* --verify-tag --title "$tag" --notes-file notes.md --latest
             echo "Created the release for $tag." >> "$GITHUB_STEP_SUMMARY"
           fi
