@@ -24,6 +24,7 @@ from .find import find_games, owned_keys
 from .installed import installed_keys
 from .acquire import acquire_game
 from .jobs import Job, last_line, list_jobs, stop_job
+from .playtime import Played, describe_played, epoch, play_stats
 from .launch import install_game, launch_game, prepare_install, prepare_launch
 from .library import resolve_game, delete_account_records, export_games, dismiss_review, get_game, list_games, list_review, merge_games, run_import
 from .loader import load_providers
@@ -87,6 +88,7 @@ def _parser() -> argparse.ArgumentParser:
     listing.add_argument("--account")
     listing.add_argument("--removed", action="store_true", help="include removed games")
     listing.add_argument("--installed", action="store_true", help="only games installed on this machine")
+    listing.add_argument("--sort", choices=("title", "recent", "played"), default="title", help="title (default), most recently played first, or most played first; the last two show play time")
     listing.add_argument("--limit", type=int, default=50)
     listing.add_argument("--offset", type=int, default=0)
 
@@ -402,9 +404,17 @@ def _cmd_ls(args: argparse.Namespace) -> tuple[object, str]:
             print(f"warning: {ref}: {reason}", file=sys.stderr)
     conn = connect(paths.database)
     try:
+        stats: dict[int, Played] = {}
+        if args.sort != "title":
+            providers, _ = load_providers()
+            stats, problems = play_stats(paths, providers, conn)
+            for ref, reason in sorted(problems.items()):
+                print(f"warning: {ref}: {reason}", file=sys.stderr)
+        order = {g: (p.minutes if args.sort == "played" else epoch(p.last_played) if p.last_played else -1) for g, p in stats.items()} if stats else None
         games = list_games(
             conn,
             only=only,
+            order=order if args.sort != "title" else None,
             query=args.query,
             store=args.store,
             account=args.account,
@@ -414,10 +424,15 @@ def _cmd_ls(args: argparse.Namespace) -> tuple[object, str]:
         )
     finally:
         conn.close()
+    if args.sort != "title":
+        for g in games:
+            p = stats.get(g["id"])
+            g["played_minutes"], g["last_played"] = (p.minutes, p.last_played) if p else (0, None)
     id_width = max((len(str(g["id"])) for g in games), default=0)
     title_width = max((len(g["title"]) for g in games), default=0)
     lines = [
         f"{g['id']:>{id_width}}  {g['title']:<{title_width}}  [{', '.join(g['stores'])}]" + (" (removed)" if g["removed"] else "")
+        + (f"  {describe_played(stats.get(g['id']))}" if args.sort != "title" else "")
         for g in games
     ]
     return {"games": games, "limit": args.limit, "offset": args.offset}, "\n".join(lines) if lines else "no games"
@@ -428,9 +443,14 @@ def _cmd_show(args: argparse.Namespace) -> tuple[object, str]:
     conn = connect(paths.database)
     try:
         game = get_game(conn, resolve_game(conn, args.game))
+        stats, problems = play_stats(paths, load_providers()[0], conn)
     finally:
         conn.close()
-    lines = [f"{game['id']}  {game['title']}  (added {game['created_at']})"]
+    for ref, reason in sorted(problems.items()):
+        print(f"warning: {ref}: {reason}", file=sys.stderr)
+    played = stats.get(game["id"])
+    game["played_minutes"], game["last_played"] = (played.minutes, played.last_played) if played else (0, None)
+    lines = [f"{game['id']}  {game['title']}  (added {game['created_at']})", f"  played: {describe_played(played)}"]
     for o in game["ownership"]:
         state = "removed" if o["removed"] else "owned"
         lines.append(
@@ -756,6 +776,7 @@ def _cmd_tui(args: argparse.Namespace) -> tuple[object, str]:
         paths.database, sources, lambda: installed_keys(paths, sources)[0],
         lambda store, account: get_account(paths, f"{store}:{account}").config,
         paths.root / "prefixes", paths.import_lock, paths,
+        played=lambda conn: play_stats(paths, sources, conn)[0],
     ).run()
     return {}, ""
 

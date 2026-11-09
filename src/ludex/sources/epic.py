@@ -17,7 +17,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from ..plugins import ConfigField, FetchResult, OwnedGame, SourceError, Provider
+from ..plugins import ConfigField, FetchResult, OwnedGame, PlayRecord, SourceError, Provider
+from .heroic import heroic_playtime
 
 _DIRS = (
     "~/.config/legendary",
@@ -70,6 +71,14 @@ def installed(config: Mapping[str, str]) -> set[str]:
     return {key for key in data if isinstance(key, str)} if isinstance(data, dict) else set()
 
 
+def playtime(config: Mapping[str, str]) -> dict[str, PlayRecord]:
+    """Heroic's play record for the Legendary folder it manages (``<heroic>/legendaryConfig/legendary``); none for a plain Legendary."""
+    directory = _legendary_dir(config)
+    if directory.name != "legendary" or directory.parent.name != "legendaryConfig":
+        return {}  # play time is Heroic's; a standalone Legendary records none
+    return heroic_playtime(directory.parent.parent)
+
+
 def fetch(config: Mapping[str, str]) -> FetchResult:
     return FetchResult(_games(_legendary_dir(config)), False, "local")
 
@@ -107,6 +116,7 @@ PLUGIN = Provider(
     ),
     fetch=fetch,
     installed=installed,
+    playtime=playtime,
     launch_url=lambda store_id: f"heroic://launch?appName={quote(store_id, safe='')}&runner=legendary",
     install_command=install_command,
 )

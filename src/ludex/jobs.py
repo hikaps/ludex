@@ -142,6 +142,14 @@ def list_jobs(conn: sqlite3.Connection, kind: str | None = None, game_id: int | 
     return [_job(r) for r in rows]
 
 
+def finished_plays(conn: sqlite3.Connection) -> list[tuple[int, str, int, str]]:
+    """``(game_id, target, seconds, ended_at)`` of every ended game session; a lost one has no known end and is left out."""
+    refresh(conn)
+    rows = conn.execute("SELECT game_id, target, started_at, ended_at FROM jobs WHERE kind = 'play' AND state IN ('done', 'failed', 'stopped') AND ended_at IS NOT NULL").fetchall()
+    stamp = lambda text: datetime.fromisoformat(text.replace("Z", "+00:00"))
+    return [(r["game_id"], r["target"], max(0, int((stamp(r["ended_at"]) - stamp(r["started_at"])).total_seconds())), r["ended_at"]) for r in rows]
+
+
 def stop_job(conn: sqlite3.Connection, job_id: int) -> Job:
     """End a running job: SIGTERM to its whole process group, SIGKILL after 10 seconds."""
     refresh(conn)

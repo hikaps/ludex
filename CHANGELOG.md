@@ -4,6 +4,12 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.53.0] - 2026-11-09
+
+### Added
+
+- **playtime:** Play time and last played for each game, from Steam's and Heroic's own records and from the games ludex started itself: `ludex show`, `ludex ls --sort played|recent`, the TUI Detail pane and `o`. New optional plugin capability `playtime`
+
 ## [0.52.0] - 2026-11-09
 
 ### Added

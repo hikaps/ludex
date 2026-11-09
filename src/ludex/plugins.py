@@ -23,6 +23,7 @@ calls what is declared (``Provider.capabilities`` lists them):
 - ``installed``: ``installed``, below.
 - ``search``: ``search``, below.
 - ``metadata``: ``metadata``, below.
+- ``playtime``: ``playtime``, below.
 - ``acquire``: ``acquire``, below.
 - ``commands``: ``commands``, below.
 
@@ -94,9 +95,17 @@ unpack anything itself.
 Installing without a client URL (optional): ``install_command(config, store_id)`` takes the owning
 account's configuration and returns an argument list (no shell; ``argv[0]`` an absolute path) that
 installs the game with the store's own tool, for example Legendary. The core starts it detached with its
-output in a log file under the state directory and does not track it. Raise ``SourceError`` when no
-command can be built. ``install_url`` wins when both are present; both count as the ``install``
+output in a log file under the state directory as an ``install`` job (``ludex.jobs``). Raise
+``SourceError`` when no command can be built. ``install_url`` wins when both are present; both count as the ``install``
 capability. ludex ships no downloader: this only drives the owner's official tool.
+
+Play time (optional): ``playtime(config)`` returns a mapping of store id to ``PlayRecord`` (minutes
+played, and when it was last played as an ISO 8601 UTC string or ``None``) for what the store's own
+client has recorded on this machine, for example from its local files. It is read live like
+``installed``: no network, never stored. Raise ``SourceError`` when the answer cannot be determined. A
+provider that declares it is trusted for its games: the core then does not add the sessions it timed
+itself, so nothing counts twice; a provider without it falls back to the core's own timing of the
+games it started (``launch_command``).
 
 Acquiring (optional): ``acquire(request, report)`` gets a ``AcquireRequest`` (store id, title, and a
 ``destination`` directory the core created) and does the whole job itself: download, unpack, or
@@ -224,6 +233,12 @@ class Command:
 
 
 @dataclass(frozen=True, slots=True)
+class PlayRecord:
+    minutes: int
+    last_played: str | None = None  # ISO 8601 UTC, for example 2026-11-08T19:38:29Z
+
+
+@dataclass(frozen=True, slots=True)
 class FetchResult:
     games: Iterable[OwnedGame]
     complete: bool
@@ -249,8 +264,9 @@ class Provider:
     settings: tuple[ConfigField, ...] = ()
     match: Callable[..., Sequence[SearchHit]] | None = None
     install_command: Callable[[Mapping[str, str], str], Sequence[str]] | None = None
+    playtime: Callable[[Mapping[str, str]], Mapping[str, PlayRecord]] | None = None
 
     @property
     def capabilities(self) -> tuple[str, ...]:
-        found = (("owned", self.fetch), ("installed", self.installed), ("search", self.search), ("metadata", self.metadata), ("match", self.match), ("launch", self.launch_url or self.launch_command or self.game_folder), ("install", self.install_url or self.install_command), ("acquire", self.acquire), ("commands", self.commands or None))
+        found = (("owned", self.fetch), ("installed", self.installed), ("search", self.search), ("metadata", self.metadata), ("match", self.match), ("launch", self.launch_url or self.launch_command or self.game_folder), ("install", self.install_url or self.install_command), ("playtime", self.playtime), ("acquire", self.acquire), ("commands", self.commands or None))
         return tuple(name for name, value in found if value is not None)
