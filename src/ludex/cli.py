@@ -97,9 +97,11 @@ def _parser() -> argparse.ArgumentParser:
     find.add_argument("query")
 
     launch = commands.add_parser("launch", help="start a game through its store's client")
-    launch.add_argument("game", help="game id or title")
+    launch.add_argument("game", nargs="?", help="game id or title")
     launch.add_argument("--store", help="store to launch from when several can")
     launch.add_argument("--dry-run", action="store_true", help="show how the game would be started and do not start it")
+    launch.add_argument("--status", action="store_true", help="list the games ludex started itself (of the game, when one is named) and whether they still run")
+    launch.add_argument("--stop", action="store_true", help="stop the game ludex started")
 
     install = commands.add_parser("install", help="ask the owning store's client to install a game you own")
     install.add_argument("game", nargs="?", help="game id or title")
@@ -461,16 +463,12 @@ def _cmd_install(args: argparse.Namespace) -> tuple[object, str]:
     conn = connect(paths.database)
     try:
         if args.status:
-            return _install_status(conn, resolve_game(conn, args.game) if args.game else None)
+            return _job_status(conn, "install", resolve_game(conn, args.game) if args.game else None)
         if not args.game:
             raise LudexError("missing_game", "name the game to install (or use --status)")
         game_id = resolve_game(conn, args.game)
         if args.stop:
-            running = list_jobs(conn, "install", game_id, running=True)
-            if not running:
-                raise LudexError("job_not_running", "no install of that game is running")
-            job = stop_job(conn, running[0].id)
-            return {"id": game_id, "job": _job_data(job)}, f"stopped the install of {job.title} (job {job.id}); run it again to resume"
+            return _job_stop(conn, "install", game_id)
         if args.dry_run:
             plan = prepare_install(conn, providers, game_id, args.store, config_for)
             return {"id": game_id, "install": plan.target, "url": plan.url, "argv": list(plan.argv)}, f"would install {plan.target}: {plan.url or shlex.join(plan.argv)}"
@@ -487,13 +485,24 @@ def _job_data(job: Job) -> dict[str, object]:
             "started_at": job.started_at, "ended_at": job.ended_at, "log": str(job.log), "progress": last_line(job) if job.state == "running" else ""}
 
 
-def _install_status(conn, game_id: int | None) -> tuple[object, str]:
-    jobs = list_jobs(conn, "install", game_id)
+def _job_status(conn, kind: str, game_id: int | None) -> tuple[object, str]:
+    jobs = list_jobs(conn, kind, game_id)
+    # an install shows its progress; a game's own output is no progress, so it shows when it started
+    running = (lambda j: last_line(j)) if kind == "install" else (lambda j: f"since {j.started_at}")
     lines = [
-        f"#{j.id}  {j.state:<8} {j.title}  ({j.target})  " + (last_line(j) if j.state == "running" else f"exit {j.exit_code}" if j.exit_code not in (None, 0) else j.ended_at or "")
+        f"#{j.id}  {j.state:<8} {j.title}  ({j.target})  " + (running(j) if j.state == "running" else f"exit {j.exit_code}" if j.exit_code not in (None, 0) else j.ended_at or "")
         for j in jobs
     ]
-    return {"jobs": [_job_data(j) for j in jobs]}, "\n".join(lines) if lines else "no installs started by ludex"
+    return {"jobs": [_job_data(j) for j in jobs]}, "\n".join(lines) if lines else f"no {'installs' if kind == 'install' else 'games'} started by ludex"
+
+
+def _job_stop(conn, kind: str, game_id: int) -> tuple[object, str]:
+    running = list_jobs(conn, kind, game_id, running=True)
+    if not running:
+        raise LudexError("job_not_running", f"no {'install of that game' if kind == 'install' else 'game started by ludex'} is running")
+    job = stop_job(conn, running[0].id)
+    what = f"the install of {job.title}" if kind == "install" else job.title
+    return {"id": game_id, "job": _job_data(job)}, f"stopped {what} (job {job.id})" + ("; run it again to resume" if kind == "install" else "")
 
 
 def _cmd_match(args: argparse.Namespace) -> tuple[object, str]:
@@ -714,7 +723,13 @@ def _cmd_launch(args: argparse.Namespace) -> tuple[object, str]:
     conn = connect(paths.database)
     config_for = lambda store, account: get_account(paths, f"{store}:{account}").config
     try:
+        if args.status:
+            return _job_status(conn, "play", resolve_game(conn, args.game) if args.game else None)
+        if not args.game:
+            raise LudexError("missing_game", "name the game to launch (or use --status)")
         game_id = resolve_game(conn, args.game)
+        if args.stop:
+            return _job_stop(conn, "play", game_id)
         if args.dry_run:
             plan = prepare_launch(conn, sources, game_id, args.store, config_for, get_prefix_root(conn, paths.root / "prefixes"))
             data = {
@@ -724,10 +739,12 @@ def _cmd_launch(args: argparse.Namespace) -> tuple[object, str]:
             how = plan.url or shlex.join(plan.argv)
             env = f"  [env: {', '.join(data['env'])}]" if data["env"] else ""
             return data, f"would start {plan.target}: {how}{env}"
-        target = launch_game(conn, sources, game_id, args.store, config_for, get_prefix_root(conn, paths.root / "prefixes"))
+        target, job = launch_game(conn, sources, game_id, args.store, config_for, get_prefix_root(conn, paths.root / "prefixes"), paths.root / "logs")
     finally:
         conn.close()
-    return {"id": game_id, "launched": target}, f"launching {target}"
+    if job is None:
+        return {"id": game_id, "launched": target, "job": None}, f"launching {target}"
+    return {"id": game_id, "launched": target, "job": _job_data(job)}, f"launching {target} (job {job.id}); 'ludex launch --status' shows whether it runs, '--stop' ends it; log: {job.log}"
 
 
 def _cmd_tui(args: argparse.Namespace) -> tuple[object, str]:

@@ -4,6 +4,16 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.52.0] - 2026-11-09
+
+### Added
+
+- **jobs:** Games ludex starts itself run as tracked jobs: `launch --status` and `--stop`, `x` stops one in the TUI, and a failed start is reported with its log (a game's output was discarded before)
+
+### Changed
+
+- **jobs:** A job's end time is when its process ended, not when ludex next looked. `launch_game` returns `(target, job)`
+
 ## [0.51.0] - 2026-10-28
 
 ### Added

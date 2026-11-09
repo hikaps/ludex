@@ -74,7 +74,8 @@ plugin never spawns processes. The URL must percent-encode ``store_id`` and carr
 Launching without a client (optional): ``launch_command(config, store_id)`` takes the owning
 account's configuration and returns an argument list that starts the game directly (no shell;
 ``argv[0]`` an absolute path, which also becomes the working directory's folder). The core starts
-it detached from the terminal and does not track it afterwards. Raise ``SourceError`` when no
+it detached from the terminal as a ``play`` job (``ludex.jobs``): output goes to a log under the state
+directory, and ``ludex launch --status`` and ``--stop`` report on and end it. Raise ``SourceError`` when no
 single command can be determined. A provider may declare ``launch_url`` or ``launch_command``;
 both count as the ``launch`` capability, and ``launch_url`` wins when both are present.
 

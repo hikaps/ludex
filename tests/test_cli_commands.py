@@ -672,3 +672,28 @@ def test_plugin_settings_rejects_secret_on_argv_and_unknown_names(world: World, 
     for argv in (["config", "fake.token", SECRET], ["config", "fake.nope", "x"], ["config", "ghost.region", "x"], ["config", "fake.region", "--secret"], ["config", "prefix_dir", "--secret"]):
         code, out, err = run(capsys, *argv)
         assert code == 1 and SECRET not in out + err, argv
+
+
+def test_launch_starts_a_command_game_as_a_job_that_status_and_stop_report(world: World, capsys: pytest.CaptureFixture[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    exe = tmp_path / "game.sh"
+    exe.write_text("#!/bin/sh\necho playing\nexec sleep 60\n")
+    exe.chmod(0o755)
+    local = Provider(
+        "disk", "Disk", (), lambda config: FetchResult([OwnedGame("disk", "g", "Gem")], False, "disk"),
+        launch_command=lambda config, store_id: [str(exe)],
+    )
+    monkeypatch.setattr("ludex.cli.load_providers", lambda: ({"disk": local}, {}))
+    assert run(capsys, "account", "add", "disk", "main")[0] == 0
+    assert run(capsys, "import", "--all")[0] == 0
+    code, out, err = run(capsys, "--json", "launch", "Gem")
+    assert code == 0, err
+    job = json.loads(out)["data"]["job"]
+    assert (job["state"], job["target"]) == ("running", "disk:g")
+    code, out, _ = run(capsys, "launch", "--status")
+    assert code == 0 and "running" in out and "Gem" in out and "since" in out
+    code, out, _ = run(capsys, "launch", "Gem")  # not twice
+    assert code != 0
+    code, out, err = run(capsys, "launch", "Gem", "--stop")
+    assert code == 0 and "stopped Gem" in out, err
+    assert run(capsys, "launch", "Gem", "--stop")[0] != 0  # nothing left to stop
+    assert "stopped" in run(capsys, "launch", "--status")[1]

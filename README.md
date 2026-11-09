@@ -15,7 +15,7 @@ Status: early development.
 
 - **Sources** (bundled plugins): `steam` (Web API with your own key, or the local Steam folder), `shortcuts` (non-Steam shortcuts in Steam), `epic` (Legendary's on-disk library cache), `heroic` (Heroic sideloaded games), `local` (every subfolder of a directory or glob is a game).
 - **Library**: `import`, `ls` (query, `--store`, `--account`, `--installed`, `--removed`), `show`, `find` (search store catalogs), `export` (JSON or CSV), `review` and `merge` for title matches that need a decision.
-- **Launch**: `launch` starts a game through its store's client; Windows games run via `umu-run` with Proton builds found by `runners`. Per-game runner, prefix, executable, arguments and environment via `game set`.
+- **Launch**: `launch` starts a game through its store's client; Windows games run via `umu-run` with Proton builds found by `runners`. Per-game runner, prefix, executable, arguments and environment via `game set`. A game ludex starts itself (a local folder) runs as a background job with its output in a log: `launch --status`, `launch --stop`. Games started through Steam or Heroic belong to that client and are not tracked.
 - **Install**: `install` asks the owning store's client to install a game (Epic goes through Legendary). Started installs run as background jobs: `install --status`, `install --stop`.
 - **Metadata**: `metadata` shows description, genres and developer, asked of the plugin once and then kept; `match` picks a game-database entry (bundled: `rawg`, needs your own API key).
 - **TUI**: `ludex tui` browses, searches and launches games in the terminal.

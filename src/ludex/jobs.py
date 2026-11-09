@@ -1,10 +1,12 @@
-"""Background jobs: processes ludex starts for the user (an install today) and can report on and stop.
+"""Background jobs: processes ludex starts for the user (an install, a game) and can report on and stop.
 
 A job is one row in ``jobs`` plus a log file under ``<state>/logs``. The command runs detached in its own
 session, wrapped in ``sh`` so its exit status lands in a small file; ludex does not stay alive to wait for it.
 State is derived on every read: a live process whose start time matches the recorded one is ``running``;
 otherwise the exit file says ``done`` (0) or ``failed`` (anything else), and no file means ``lost`` (the
 machine rebooted or the process was killed from outside). ``stopped`` is only set by :func:`stop_job`.
+``ended_at`` is when the process ended (the exit file's modification time), not when ludex noticed.
+Kinds: ``install`` and ``play`` (a game ludex started itself; its log is replaced on each start).
 ponytail: Linux and macOS via ``ps``; one row per run, never pruned; a daemon replaces the polling later.
 """
 from __future__ import annotations
@@ -16,7 +18,9 @@ import sqlite3
 import subprocess
 import time
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .errors import LudexError
@@ -24,6 +28,7 @@ from .storage import utc_now
 
 _children: list[subprocess.Popen] = []  # started by this process: polled so they do not stay zombies
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+_VERB = {"play": "launch"}  # the command that starts a kind of job, for messages and error codes
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,33 +75,43 @@ def refresh(conn: sqlite3.Connection) -> None:
         if _alive(row["pid"], row["pid_start"]):
             continue
         exit_file = Path(row["exit_file"])
+        ended = utc_now()
         try:
             code = int(exit_file.read_text().strip())
+            ended = datetime.fromtimestamp(exit_file.stat().st_mtime, timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
         except (OSError, ValueError):
             code = None
         exit_file.unlink(missing_ok=True)
         state = "lost" if code is None else "done" if code == 0 else "failed"
         with conn:
-            conn.execute("UPDATE jobs SET state = ?, exit_code = ?, ended_at = ? WHERE id = ?", (state, code, utc_now(), row["id"]))
+            conn.execute("UPDATE jobs SET state = ?, exit_code = ?, ended_at = ? WHERE id = ?", (state, code, ended, row["id"]))
 
 
-def start_job(conn: sqlite3.Connection, kind: str, game_id: int, target: str, title: str, argv: list[str], log_dir: Path) -> Job:
-    """Run ``argv`` (no shell) in the background; its output goes to a private log. One running job per kind and target."""
+def start_job(
+    conn: sqlite3.Connection, kind: str, game_id: int, target: str, title: str, argv: list[str], log_dir: Path,
+    cwd: Path | None = None, env: Mapping[str, str] | None = None,
+) -> Job:
+    """Run ``argv`` (no shell) in the background; its output goes to a private log. One running job per kind and target.
+
+    ``env`` replaces the inherited environment when given. A ``play`` job starts a fresh log, other kinds append.
+    """
+    verb = _VERB.get(kind, kind)
     refresh(conn)
     busy = conn.execute("SELECT id FROM jobs WHERE kind = ? AND target = ? AND state = 'running'", (kind, target)).fetchone()
     if busy:
-        raise LudexError("job_running", f"{kind} of {target} is already running (job {busy['id']}); see 'ludex {kind} --status'")
+        raise LudexError("job_running", f"{verb} of {target} is already running (job {busy['id']}); see 'ludex {verb} --status'")
     log_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     safe = re.sub(r"[^A-Za-z0-9._-]", "_", f"{kind}-{target}")
     log, exit_file = log_dir / f"{safe}.log", log_dir / f"{safe}-{uuid.uuid4().hex[:8]}.exit"
     try:
-        with open(os.open(log, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600), "ab", closefd=True) as out:
+        mode = os.O_TRUNC if kind == "play" else os.O_APPEND
+        with open(os.open(log, os.O_WRONLY | os.O_CREAT | mode, 0o600), "ab", closefd=True) as out:
             process = subprocess.Popen(
                 ["/bin/sh", "-c", '"$@"; echo $? > "$0"', str(exit_file), *argv],
-                start_new_session=True, stdin=subprocess.DEVNULL, stdout=out, stderr=out,
+                start_new_session=True, stdin=subprocess.DEVNULL, stdout=out, stderr=out, cwd=cwd, env=None if env is None else dict(env),
             )
     except OSError:
-        raise LudexError(f"{kind}_failed", "the command could not be started") from None
+        raise LudexError(f"{verb}_failed", "the command could not be started") from None
     _children.append(process)
     with conn:
         cursor = conn.execute(
