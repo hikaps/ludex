@@ -154,6 +154,35 @@ class GameSettingsScreen(_Form):
         }
 
 
+class FolderPrompt(ModalScreen["str | None"]):
+    """Ask for a folder (tab completes); Enter accepts, Esc cancels."""
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel")]
+    DEFAULT_CSS = """
+    FolderPrompt { align: center middle; }
+    #folder-prompt { width: 80%; max-width: 100; height: auto; border: thick $primary; background: $surface; padding: 1 2; }
+    #folder-hint { color: $text-muted; margin-top: 1; }
+    """
+
+    def __init__(self, heading: str, default: str) -> None:
+        super().__init__()
+        self._heading = heading
+        self._default = default
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="folder-prompt"):
+            yield Label(self._heading)
+            yield PathInput(self._default, suggester=PathSuggester(), select_on_focus=False, id="folder-input")
+            yield Static("Enter downloads here (remembered as download_dir)   tab completes   esc cancels", id="folder-hint")
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        text = event.value.strip()
+        self.dismiss(text or None)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class MatchScreen(ModalScreen["tuple[str, SearchHit] | str | None"]):
     """Pick which database entry a game's title and details come from (or clear the match)."""
 

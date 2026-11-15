@@ -605,3 +605,47 @@ def test_o_orders_by_play_time_and_the_detail_shows_it(tmp_path):
             assert titles() == ["Alpha", "Bravo", "Charlie"]
 
     asyncio.run(scenario())
+
+
+def test_install_on_a_hit_of_a_downloading_plugin_asks_for_a_folder_and_remembers_it(tmp_path, monkeypatch):
+    from ludex.game_settings import get_download_dir
+    from ludex.plugins import AcquireResult, Provider, SearchHit
+
+    db = tmp_path / "db.sqlite3"
+    connect(db).close()
+    got = []
+
+    def acquire(request, report):
+        report("fetching")
+        got.append((request.store_id, request.title, request.destination))
+        target = request.destination / "Doom"
+        target.mkdir()
+        return AcquireResult(target, {})
+
+    store = Provider("rel", "r", (), search=lambda q: [SearchHit("rel", "7", "Doom", "https://rel.example/7")], acquire=acquire)
+    opened = []
+    monkeypatch.setattr(launch_mod.subprocess, "run", lambda argv, **kw: opened.append(argv))
+    where = tmp_path / "games"
+
+    async def scenario():
+        app = LudexApp(db, {"rel": store})
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("tab", "tab")
+            await pilot.press("slash", "d", "o", "o", "m", "enter")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert app.query_one("#search-table", DataTable).row_count == 1
+            await pilot.press("i")  # no client link: ask where to put it
+            await pilot.pause()
+            box = app.screen.query_one("#folder-input", Input)
+            box.value = str(where)
+            await pilot.press("enter")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert get_download_dir(app._conn, tmp_path) == where
+
+    asyncio.run(scenario())
+    assert opened == []  # the page link is never handed to the desktop
+    assert [(i, t, d.name) for i, t, d in got] == [("7", "Doom", "games")]
+    assert (where / "Doom").is_dir()

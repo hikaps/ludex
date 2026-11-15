@@ -116,7 +116,7 @@ def test_update_core_uses_the_installers_own_command_and_the_installed_channel(c
     monkeypatch.setattr(pm.sys, "prefix", "/home/u/.local/share/uv/tools/ludex")
     result = pm.update_core(None, dry_run=True)
     assert result["channel"] == "beta"
-    assert result["command"] == ["/bin/uv", "tool", "install", "--reinstall", "https://github.com/hikaps/ludex/releases/download/beta/ludex.tar.gz"]
+    assert result["command"] == ["/bin/uv", "tool", "install", "--force", "--reinstall", "https://github.com/hikaps/ludex/releases/download/beta/ludex.tar.gz"]
     monkeypatch.setattr(pm.sys, "prefix", "/home/u/.local/pipx/venvs/ludex")
     assert pm.update_core("stable", dry_run=True)["command"][:3] == ["/bin/pipx", "install", "--force"]
 

@@ -234,7 +234,7 @@ def update_core(channel: str | None, dry_run: bool) -> dict[str, Any]:
     url = _RELEASES.format(channel=channel)
     prefix = Path(sys.prefix).as_posix()
     if "/uv/tools/" in prefix and shutil.which("uv"):
-        command = [shutil.which("uv") or "uv", "tool", "install", "--reinstall", url]
+        command = [shutil.which("uv") or "uv", "tool", "install", "--force", "--reinstall", url]
     elif "/pipx/venvs/" in prefix and shutil.which("pipx"):
         command = [shutil.which("pipx") or "pipx", "install", "--force", url]
     else:
