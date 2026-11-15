@@ -126,7 +126,7 @@ def _parser() -> argparse.ArgumentParser:
     acquire = commands.add_parser("acquire", help="ask a provider to fetch a game into a directory")
     acquire.add_argument("store")
     acquire.add_argument("store_id")
-    acquire.add_argument("--to", required=True, help="destination directory")
+    acquire.add_argument("--to", default=None, help="destination directory (default: the provider's own folder)")
     acquire.add_argument("--title", default="", help="game title, if the provider wants one")
 
     commands.add_parser("runners", help="list detected Proton builds")
@@ -568,7 +568,7 @@ def _cmd_metadata(args: argparse.Namespace) -> tuple[object, str]:
 def _cmd_acquire(args: argparse.Namespace) -> tuple[object, str]:
     providers, _ = load_providers()
     result = acquire_game(
-        providers, args.store, args.store_id, args.title, Path(args.to), lambda message: print(message, file=sys.stderr)
+        providers, args.store, args.store_id, args.title, Path(args.to) if args.to else None, lambda message: print(message, file=sys.stderr)
     )
     data = {"directory": str(result.directory), "hints": dict(result.hints)}
     hints = "".join(f"\n  {key}={value}" for key, value in sorted(result.hints.items()))

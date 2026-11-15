@@ -107,15 +107,16 @@ provider that declares it is trusted for its games: the core then does not add t
 itself, so nothing counts twice; a provider without it falls back to the core's own timing of the
 games it started (``launch_command``).
 
-Acquiring (optional): ``acquire(request, report)`` gets a ``AcquireRequest`` (store id, title, and a
-``destination`` directory the core created) and does the whole job itself: download, unpack, or
+Acquiring (optional): ``acquire(request, report)`` gets a ``AcquireRequest`` (store id and title, plus a
+``destination`` directory the core created, or ``None`` when the user named no folder: the plugin then
+chooses its own default and creates it) and does the whole job itself: download, unpack, or
 drive an official client. It calls ``report(message)`` with short progress lines and returns an
-``AcquireResult``: the game's ``directory``, which MUST lie inside ``destination`` (the core checks
-this and rejects anything else), and string ``hints`` (for example ``{"executable": "game.sh"}``).
+``AcquireResult``: the game's ``directory``, which MUST lie inside ``destination`` when one was given
+(the core checks this and rejects anything else), and string ``hints`` (for example ``{"executable": "game.sh"}``).
 The core ships no implementation and takes no position on where a plugin gets its files; the
 plugin's author is responsible for what it fetches and for the rights to it. Same rules as
 ``search``: bounded responses, verified TLS, fixed secret-free ``SourceError`` messages, nothing
-written outside ``destination``.
+written outside ``destination`` (or the plugin's own default folder when ``destination`` is ``None``).
 
 Commands (optional): ``commands`` is a sequence of ``Command(name, help, run)``. Each becomes
 ``ludex <provider> <name> [args...]`` (names are lowercase letters, digits and ``-``; a provider
@@ -142,7 +143,7 @@ from typing import Any
 
 from .errors import LudexError
 
-API_VERSION = 3
+API_VERSION = 4
 GROUP = "ludex.providers"
 
 
@@ -203,7 +204,7 @@ class Metadata:
 class AcquireRequest:
     store_id: str
     title: str
-    destination: Path
+    destination: Path | None
 
 
 @dataclass(frozen=True, slots=True)

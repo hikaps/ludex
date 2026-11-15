@@ -56,3 +56,17 @@ def test_acquire_error_mapping_and_missing_capability(tmp_path):
         with pytest.raises(LudexError) as info:
             acquire_game(providers, "demo", "1", "x", tmp_path)
         assert info.value.code == "not_acquirable"
+
+
+def test_acquire_without_destination_passes_none_and_accepts_the_providers_folder(tmp_path):
+    seen = {}
+
+    def acquire(request, report):
+        seen["destination"] = request.destination
+        folder = tmp_path / "own" / request.title
+        folder.mkdir(parents=True)
+        return AcquireResult(folder)
+
+    result = acquire_game(_provider(acquire), "demo", "7", "Moon", None)
+    assert seen["destination"] is None
+    assert result.directory == (tmp_path / "own" / "Moon").resolve()

@@ -13,19 +13,21 @@ def acquire_game(
     store: str,
     store_id: str,
     title: str,
-    destination: Path,
+    destination: Path | None,
     report: Callable[[str], None] = lambda message: None,
 ) -> AcquireResult:
-    """Ask ``store``'s provider to put the game under ``destination``; the result is verified."""
+    """Ask ``store``'s provider to put the game under ``destination``; ``None`` lets the provider choose its own folder."""
     provider = providers.get(store)
     if provider is None or provider.acquire is None:
         raise LudexError("not_acquirable", f"provider {store} cannot acquire games")
-    destination = destination.expanduser()
-    try:
-        destination.mkdir(parents=True, exist_ok=True)
-    except OSError:
-        raise LudexError("destination_unwritable", "the destination directory cannot be created") from None
-    root = destination.resolve()
+    root = None
+    if destination is not None:
+        destination = destination.expanduser()
+        try:
+            destination.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            raise LudexError("destination_unwritable", "the destination directory cannot be created") from None
+        root = destination.resolve()
     try:
         result = provider.acquire(AcquireRequest(store_id, title, root), report)
     except LudexError:
@@ -40,6 +42,6 @@ def acquire_game(
     ):
         raise LudexError("acquire_failed", f"provider {store} returned an invalid result")
     directory = result.directory.resolve()
-    if not directory.is_dir() or not directory.is_relative_to(root):
+    if not directory.is_dir() or (root is not None and not directory.is_relative_to(root)):
         raise LudexError("acquire_failed", f"provider {store} returned a directory outside the destination")
     return AcquireResult(directory, dict(result.hints))
