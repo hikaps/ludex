@@ -21,10 +21,10 @@ from textual.widgets.data_table import RowDoesNotExist
 
 from .accounts import get_account, list_accounts, update_account
 from .errors import LudexError
-from .acquire import acquire_game
+from .acquire import download_game
 from .game_settings import default_download_dir, get_download_dir, get_prefix_root, get_settings, set_download_dir, set_prefix_root, update_settings
 from .metadata import cached_match, cached_metadata, choose_match, clear_match, default_query, game_metadata, match_candidates, get_auto_details, get_auto_match, set_auto_details, set_auto_match
-from .jobs import last_line, list_jobs, stop_job
+from .jobs import Job, get_job, last_line, list_jobs, stop_job
 from .launch import install_game, launch_game, open_url
 from .find import find_games, owned_keys
 from .library import get_game, list_games
@@ -155,7 +155,7 @@ class LudexApp(App[None]):
         self._paths = paths
         self._keys: set[tuple[str, str]] = set()
         self._jobs: dict[int, str] = {}  # job id -> last seen state, to announce when one ends
-        self._downloading: set[str] = set()  # store:id of search hits being downloaded this session
+        self._jobs_shown: list[tuple] = []  # what the Jobs table last showed
         self._busy: dict[int, str] = {}  # game id -> kind of its running job (install or play)
         self._hits: dict[str, dict] = {}
         self._auto = True
@@ -172,11 +172,12 @@ class LudexApp(App[None]):
     def compose(self) -> ComposeResult:
         with Horizontal(id="main"):
             with Vertical(id="left"):
-                yield Tabs(Tab("Owned", id="owned"), Tab("Installed", id="installed"), Tab("Search", id="search"), Tab("Settings", id="settings"), id="tabs")
+                yield Tabs(Tab("Owned", id="owned"), Tab("Installed", id="installed"), Tab("Search", id="search"), Tab("Jobs", id="jobs"), Tab("Settings", id="settings"), id="tabs")
                 with ContentSwitcher(id="views", initial="owned-table"):
                     yield DataTable(id="owned-table", cursor_type="row", show_header=False)
                     yield DataTable(id="installed-table", cursor_type="row", show_header=False)
                     yield DataTable(id="search-table", cursor_type="row")
+                    yield DataTable(id="jobs-table", cursor_type="row")
                     with VerticalScroll(id="settings-table"):
                         yield from self._settings_widgets()
                 yield Input(id="filter")
@@ -209,7 +210,11 @@ class LudexApp(App[None]):
             self.query_one("#opt-auto_details", Switch).value = self._auto
             self.query_one("#opt-auto_match", Switch).value = self._match
         for table in self.query(DataTable):
-            if table.id == "search-table":
+            if table.id == "jobs-table":
+                table.add_column("kind", width=9, key="kind")
+                table.add_column("state", width=8, key="state")
+                table.add_column("title", key="title")  # the rest; progress is in the detail card
+            elif table.id == "search-table":
                 for name, width in (("store", 6), ("title", 30), ("price", 10), ("owned", 7)):
                     table.add_column(name, width=width, key=name)
             else:
@@ -220,7 +225,8 @@ class LudexApp(App[None]):
         self.action_reload()
         self._table().focus()
         self._jobs = {j.id: j.state for j in list_jobs(self._conn, limit=50)}
-        self._busy = {j.game_id: j.kind for j in list_jobs(self._conn, running=True)}
+        self._busy = {j.game_id: j.kind for j in list_jobs(self._conn, running=True) if j.game_id}
+        self._fill_jobs(list_jobs(self._conn, limit=50))
         self.set_interval(2.0, self._poll_jobs)
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
@@ -229,17 +235,22 @@ class LudexApp(App[None]):
         # tab, arrows and paging belong to the list only on the main screen; forms keep their own
         if len(self.screen_stack) > 1 and action not in {"quit"}:
             return False
-        tab_actions = {"owned": {"install", "edit", "match", "stop_job", "order"}, "installed": {"launch", "edit", "match", "stop_job", "order"}, "search": {"install"}}
+        tab_actions = {"owned": {"install", "edit", "match", "stop_job", "order"}, "installed": {"launch", "edit", "match", "stop_job", "order"}, "search": {"install"}, "jobs": {"stop_job"}}
+        if action == "stop_job" and self._active() == "jobs":
+            job = self._selected_job()
+            return job is not None and job.state == "running"
         if action == "stop_job" and (self._active() not in {"owned", "installed"} or self._current_id() not in self._busy):
             return False  # only while the game under the cursor is installing or running
         if action in {"launch", "edit", "install", "match", "stop_job", "order"}:  # what you can do depends on the tab
             return action in tab_actions.get(self._active(), set())
         if self._active() == "settings" and action in {"focus_filter", "settings"}:
             return False
+        if self._active() == "jobs" and action == "focus_filter":
+            return False
         if action == "cursor" and parameters and parameters[0] in {"top", "bottom"} and self._active() == "settings":
             return False
         if action == "enter_list":  # only from the list; inputs and switches keep their own Enter
-            return self._active() != "settings" and (self.focused is None or isinstance(self.focused, (DataTable, Tabs)))
+            return self._active() not in {"settings", "jobs"} and (self.focused is None or isinstance(self.focused, (DataTable, Tabs)))
         return True
 
     def _active(self) -> str:
@@ -253,7 +264,7 @@ class LudexApp(App[None]):
         self.query_one("#main").set_class(name == "search", "-search")
         self.call_after_refresh(self._fit_search)
         box = self.query_one("#filter", Input)
-        box.display = name != "settings"
+        box.display = name not in {"settings", "jobs"}
         box.placeholder = "store search: type a name, Enter" if name == "search" else "filter: type, then Enter or Esc"
         (self.query_one("#folder") if name == "settings" else self._table()).focus()
         if name == "settings":
@@ -261,6 +272,13 @@ class LudexApp(App[None]):
             self.query_one("#detail", Static).update("")
         else:
             self._show_hint()
+        if name == "jobs":
+            jobs = list_jobs(self._conn, limit=50)
+            self._fill_jobs(jobs)
+            self._status(f"{sum(j.state == 'running' for j in jobs)} running, {len(jobs)} recent")
+            current = self._selected_job()  # rows kept from before do not fire a highlight again
+            if current is not None:
+                self._show_job(current.id)
 
     def action_next_tab(self) -> None:
         self.query_one(Tabs).action_next_tab()
@@ -315,6 +333,7 @@ class LudexApp(App[None]):
             "owned": "No games here yet. Add a source with 'ludex account add' and run 'ludex import'." ,
             "installed": "Nothing installed was found for these games. Press r to look again.",
             "search": "Press / and type a game name, then Enter to search the stores.",
+            "jobs": "No jobs yet. Installs, downloads and games ludex starts show up here.",
         }
         empty = name in hints and self.query_one(f"#{name}-table", DataTable).row_count == 0
         self.query_one("#detail", Static).update(f"[dim]{hints[name]}[/]" if empty else "")
@@ -369,6 +388,9 @@ class LudexApp(App[None]):
             self.query_one("#detail", Static).update(
                 f"[b #7aa2f7]{escape(hit['title'])}[/]\n[dim]{escape(hit['url'])}[/]" + (f"\n[#e0af68]{escape(hit['price'])}[/]" if hit["price"] else "") if hit else ""
             )
+            return
+        if event.data_table.id == "jobs-table":
+            self._show_job(int(key)) if key else self.query_one("#detail", Static).update("")
             return
         if key is None:
             return
@@ -759,6 +781,53 @@ class LudexApp(App[None]):
             self._show_game(game_id)
         self._retitle(game_id)
 
+    def _selected_job(self) -> Job | None:
+        table = self.query_one("#jobs-table", DataTable)
+        if table.row_count == 0:
+            return None
+        try:
+            return get_job(self._conn, int(table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value))
+        except LudexError:
+            return None
+
+    def _fill_jobs(self, jobs: list[Job]) -> None:
+        """Show the jobs (running first, then newest) and the number running on the tab; rebuilt only when something changed."""
+        jobs = sorted(jobs, key=lambda j: (j.state != "running", -j.id))
+        rows = [(j.id, j.kind, j.title, j.state, last_line(j) if j.state == "running" else "" if j.exit_code in (None, 0) else f"exit {j.exit_code}") for j in jobs]
+        running = sum(j.state == "running" for j in jobs)
+        self.query_one("#jobs", Tab).label = f"Jobs ({running})" if running else "Jobs"
+        if rows == self._jobs_shown:
+            return
+        self._jobs_shown = rows
+        table = self.query_one("#jobs-table", DataTable)
+        keep = self._selected_job()
+        table.clear()
+        colors = {"running": "#e0af68", "done": "#9ece6a", "failed": "#f7768e", "stopped": "#7aa2f7", "lost": "#f7768e"}
+        for job_id, kind, title, state, progress in rows:
+            table.add_row(kind, Text(state, style=colors.get(state, "")), title, key=str(job_id))  # progress changes the signature, so the card refreshes
+        if keep is not None and table.row_count:
+            try:
+                table.move_cursor(row=table.get_row_index(str(keep.id)))
+            except RowDoesNotExist:
+                pass
+        if self._active() == "jobs":
+            self._status(f"{running} running, {len(jobs)} recent")
+            current = self._selected_job()
+            self._show_job(current.id) if current else self._show_hint()
+
+    def _show_job(self, job_id: int) -> None:
+        try:
+            job = get_job(self._conn, job_id)
+        except LudexError:
+            return
+        lines = [f"[b #7aa2f7]{escape(job.title)}[/]", f"[dim]{escape(job.kind)} {escape(job.target)}[/]", f"{escape(job.state)}  [dim]started {escape(job.started_at)}[/]"]
+        if job.ended_at:
+            lines.append(f"[dim]ended {escape(job.ended_at)}" + (f", exit {job.exit_code}" if job.exit_code not in (None, 0) else "") + "[/]")
+        if job.state == "running":
+            lines += [escape(last_line(job)), "[dim](x stops it)[/]"]
+        lines.append(f"[dim]log: {escape(str(job.log))}[/]")
+        self.query_one("#detail", Static).update("\n".join(lines))
+
     def _install_hit(self) -> None:
         table = self.query_one("#search-table", DataTable)
         hit = self._hits.get(table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value or "") if table.row_count else None
@@ -780,33 +849,16 @@ class LudexApp(App[None]):
     def _download_hit(self, hit: dict, folder: str | None) -> None:
         if folder is None:
             return
-        key = f"{hit['store']}:{hit['store_id']}"
-        if key in self._downloading:
-            self.notify(f"{hit['title']} is already downloading", severity="warning")
-            return
         try:
             self._write(lambda: set_download_dir(self._conn, folder))
+            destination = get_download_dir(self._conn, default_download_dir())
+            job = download_game(self._conn, self._sources, hit["store"], hit["store_id"], hit["title"], destination, self._database.parent / "logs")
         except LudexError as exc:
             self.notify(exc.message, severity="error")
             return
-        destination = get_download_dir(self._conn, default_download_dir())
-        self._downloading.add(key)
-        self.notify(f"downloading {hit['title']} to {destination}")
-
-        # ponytail: a download is a worker of this session, not a tracked job (jobs belong to a library game); quitting stops it
-        def work() -> None:
-            try:
-                result = acquire_game(self._sources, hit["store"], hit["store_id"], hit["title"], destination, lambda m: self.call_from_thread(self._status, m))
-                self.call_from_thread(self._download_done, key, f"downloaded {hit['title']} into {result.directory}", None)
-            except LudexError as exc:
-                self.call_from_thread(self._download_done, key, None, f"{hit['title']}: {exc.message}")
-
-        self.run_worker(work, thread=True, group="download")
-
-    def _download_done(self, key: str, message: str | None, error: str | None) -> None:
-        self._downloading.discard(key)
-        self._status("")
-        self.notify(error or message or "", severity="error" if error else "information", timeout=15)
+        self._jobs[job.id] = job.state
+        self.notify(f"downloading {hit['title']} to {destination} (see the Jobs tab; x stops it)")
+        self._fill_jobs(list_jobs(self._conn, limit=50))
 
     def action_install(self) -> None:
         if self._active() == "search":
@@ -833,8 +885,12 @@ class LudexApp(App[None]):
             self.notify(exc.message, severity="error")
 
     def action_stop_job(self) -> None:
-        game_id = self._current_id()
-        running = list_jobs(self._conn, None, game_id, running=True, limit=1) if game_id is not None else []
+        if self._active() == "jobs":
+            job = self._selected_job()
+            running = [job] if job is not None and job.state == "running" else []
+        else:
+            game_id = self._current_id()
+            running = list_jobs(self._conn, None, game_id, running=True, limit=1) if game_id is not None else []
         if not running:
             return
         self.run_worker(lambda: self._stop_job(running[0].id), thread=True, group="stop")
@@ -843,7 +899,7 @@ class LudexApp(App[None]):
         conn = connect(self._database)  # stopping waits for the process, so it runs off the UI thread
         try:
             job = stop_job(conn, job_id)
-            message, severity = (f"stopped the install of {job.title}; press i to resume" if job.kind == "install" else f"stopped {job.title}"), "information"
+            message, severity = {"install": f"stopped the install of {job.title}; press i to resume", "download": f"stopped the download of {job.title}"}.get(job.kind, f"stopped {job.title}"), "information"
         except LudexError as exc:
             message, severity = exc.message, "error"
         finally:
@@ -859,14 +915,17 @@ class LudexApp(App[None]):
         jobs = list_jobs(self._conn, limit=50)
         ended = [j for j in jobs if self._jobs.get(j.id) == "running" and j.state != "running"]
         self._jobs.update({j.id: j.state for j in jobs})
-        self._busy = {j.game_id: j.kind for j in jobs if j.state == "running"}
+        self._busy = {j.game_id: j.kind for j in jobs if j.state == "running" and j.game_id}
         for job in ended:
-            what = f"the install of {job.title}" if job.kind == "install" else job.title
+            noun = {"install": "the install of", "download": "the download of"}.get(job.kind)
+            what = f"{noun} {job.title}" if noun else job.title
             if job.state == "done" and job.kind == "install":
                 self.notify(f"installed {job.title}")
+            elif job.state == "done" and job.kind == "download":
+                self.notify(f"downloaded {job.title}; see {job.log} for where it went", timeout=15)
             elif job.state == "failed":
-                verb = "failed" if job.kind == "install" else "exited with an error"
-                self.notify(f"{what} {verb} (exit {job.exit_code}); log: {job.log}", severity="error" if job.kind == "install" else "warning", timeout=15)
+                verb = "failed" if noun else "exited with an error"
+                self.notify(f"{what} {verb} (exit {job.exit_code}); log: {job.log}", severity="error" if noun else "warning", timeout=15)
             elif job.state == "lost":
                 self.notify(f"{what} ended without a result; log: {job.log}", severity="warning", timeout=15)
         if any(j.state == "done" and j.kind == "install" for j in ended):
@@ -878,6 +937,7 @@ class LudexApp(App[None]):
         current = self._current_id() if self._active() in {"owned", "installed"} else None
         if current is not None and (current in self._busy or any(j.game_id == current for j in ended)):
             self._show_game(current)
+        self._fill_jobs(jobs)
         self.refresh_bindings()
 
     def action_launch(self) -> None:

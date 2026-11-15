@@ -4,6 +4,13 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.55.0] - 2026-11-15
+
+### Added
+
+- **jobs:** `ludex download STORE ID [--to DIR]` runs a plugin's `acquire` in the background as a `download` job (survives closing the TUI); `--status` shows its latest progress line and `--stop STORE ID` cancels it
+- **tui:** a Jobs tab lists installs, downloads and games ludex started (running first, with a running count on the tab); `x` stops the selected one. `i` on a Search hit now starts a download job instead of a session-bound worker
+
 ## [0.54.0] - 2026-11-10
 
 ### Added
