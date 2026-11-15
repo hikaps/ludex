@@ -655,3 +655,34 @@ def test_install_on_a_hit_of_a_downloading_plugin_asks_for_a_folder_starts_a_dow
 
     asyncio.run(scenario())
     assert [(s_, i, t, d.name) for s_, i, t, d in started] == [("rel", "7", "Doom", "games")]
+
+
+def test_edit_screen_offers_the_executables_found_in_the_game_folder(tmp_path):
+    from textual.widgets import Select
+
+    from ludex.plugins import Provider
+
+    db = tmp_path / "db.sqlite3"
+    conn = connect(db)
+    import_account(conn, "disk", [OwnedGame("local", "g", "Hades")], store="local")
+    conn.close()
+    folder = tmp_path / "g"
+    (folder / "bin").mkdir(parents=True)
+    (folder / "Hades.exe").write_bytes(b"x")
+    (folder / "unins000.exe").write_bytes(b"x")
+    (folder / "bin" / "other.exe").write_bytes(b"x")
+    local = Provider("local", "l", (), lambda c: None, game_folder=lambda config, store_id: folder)
+
+    async def scenario():
+        app = LudexApp(db, {"local": local}, config_for=lambda s, a: {}, prefix_root=tmp_path / "default")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("e")
+            await pilot.pause()
+            pick = app.screen.query_one("#exe-pick", Select)
+            assert [str(v) for _, v in pick._options if isinstance(v, str)] == ["Hades.exe", "bin/other.exe"]
+            pick.value = "bin/other.exe"
+            await pilot.pause()
+            assert app.screen.query_one("#executable", Input).value == "bin/other.exe"
+
+    asyncio.run(scenario())

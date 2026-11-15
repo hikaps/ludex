@@ -22,6 +22,7 @@ from .plugin_manager import CHANNELS, add_plugin, list_plugins, remove_plugin, s
 from .runners import find_runners
 from .find import find_games, owned_keys
 from .installed import installed_keys
+from .executables import find_executables
 from .acquire import acquire_game, download_game, job_reporter
 from .jobs import Job, eta_seconds, list_jobs, progress, progress_line, stop_job
 from .playtime import Played, describe_played, epoch, play_stats
@@ -155,6 +156,9 @@ def _parser() -> argparse.ArgumentParser:
     game_show = game_commands.add_parser("show", help="show a game's launch settings")
     game_show.add_argument("game", help="game id or title")
     game_show.add_argument("--store", help="store whose copy to use when several exist")
+    game_exes = game_commands.add_parser("exes", help="list the files in a game's folder that could be its executable, best guess first")
+    game_exes.add_argument("game", help="game id or title")
+    game_exes.add_argument("--store", help="store whose copy to use when several exist")
     game_set = game_commands.add_parser("set", help="change a game's launch settings")
     game_set.add_argument("game", help="game id or title")
     game_set.add_argument("--store", help="store whose copy to use when several exist")
@@ -766,6 +770,27 @@ def _cmd_game_show(args: argparse.Namespace) -> tuple[object, str]:
         conn.close()
 
 
+def _cmd_game_exes(args: argparse.Namespace) -> tuple[object, str]:
+    providers, _ = load_providers()
+    paths = state_paths()
+    conn = connect(paths.database)
+    try:
+        game_id = resolve_game(conn, args.game)
+        store, store_id = pick_copy(conn, game_id, args.store)
+        provider = providers.get(store)
+        if provider is None or provider.game_folder is None:
+            raise LudexError("no_game_folder", f"{store} does not keep games in a folder on this machine")
+        row = conn.execute("SELECT account FROM ownership WHERE store = ? AND store_id = ? AND removed = 0 ORDER BY account", (store, store_id)).fetchone()
+        folder = Path(provider.game_folder(get_account(paths, f"{store}:{row['account']}").config, store_id))
+        title = get_game(conn, game_id)["title"]
+    finally:
+        conn.close()
+    if not folder.is_dir():
+        raise LudexError("no_game_folder", "the game's folder does not exist")
+    found = find_executables(folder, title)
+    return {"folder": str(folder), "executables": [str(p) for p in found]}, "\n".join(str(p) for p in found) or "no executable found in the game folder"
+
+
 def _cmd_game_set(args: argparse.Namespace) -> tuple[object, str]:
     env: dict[str, str] = {}
     for item in args.env:
@@ -914,6 +939,7 @@ _HANDLERS = {
     ("runners", None): _cmd_runners,
     ("config", None): _cmd_config,
     ("game", "show"): _cmd_game_show,
+    ("game", "exes"): _cmd_game_exes,
     ("game", "set"): _cmd_game_set,
     ("launch", None): _cmd_launch,
     ("tui", None): _cmd_tui,

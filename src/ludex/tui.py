@@ -22,6 +22,7 @@ from textual.widgets.data_table import RowDoesNotExist
 
 from .accounts import get_account, list_accounts, update_account
 from .errors import LudexError
+from .executables import find_executables
 from .acquire import download_game
 from .game_settings import default_download_dir, get_download_dir, get_prefix_root, get_settings, set_download_dir, set_prefix_root, update_settings
 from .metadata import cached_match, cached_metadata, choose_match, clear_match, default_query, game_metadata, match_candidates, get_auto_details, get_auto_match, set_auto_details, set_auto_match
@@ -730,6 +731,7 @@ class LudexApp(App[None]):
             GameSettingsScreen(
                 game["title"], get_settings(self._conn, store, store_id), find_runners(),
                 self._prefix_root or Path.home() / "prefixes", folder, save,
+                find_executables(folder, game["title"]) if folder is not None and folder.is_dir() else [],
             )
         )
 
