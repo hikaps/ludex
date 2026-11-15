@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from contextlib import nullcontext
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
@@ -31,6 +32,7 @@ from .launch import install_game, launch_game, open_url
 from .find import find_games, owned_keys
 from .library import get_game, list_games
 from .paths import StatePaths
+from .refresh import Refreshed, get_auto_refresh, refresh_all, set_auto_refresh
 from .playtime import Played, describe_played, epoch
 from .plugins import ConfigField, Provider
 from .provider_settings import get_values, set_value
@@ -157,6 +159,8 @@ class LudexApp(App[None]):
         self._paths = paths
         self._keys: set[tuple[str, str]] = set()
         self._jobs: dict[int, str] = {}  # job id -> last seen state, to announce when one ends
+        self._refreshing = False
+        self._auto_refresh = True
         self._jobs_shown: list[tuple] = []  # what the Jobs table last showed
         self._busy: dict[int, str] = {}  # game id -> kind of its running job (install or play)
         self._hits: dict[str, dict] = {}
@@ -208,7 +212,9 @@ class LudexApp(App[None]):
         self._conn = connect(self._database)
         self._auto = get_auto_details(self._conn)
         self._match = get_auto_match(self._conn)
+        self._auto_refresh = get_auto_refresh(self._conn)
         with self.prevent(Switch.Changed):
+            self.query_one("#opt-auto_refresh", Switch).value = self._auto_refresh
             self.query_one("#opt-auto_details", Switch).value = self._auto
             self.query_one("#opt-auto_match", Switch).value = self._match
         for table in self.query(DataTable):
@@ -224,7 +230,9 @@ class LudexApp(App[None]):
         shown = str(get_prefix_root(self._conn, self._default_prefix()))
         self._saved["folder"] = shown
         self.query_one("#folder", Input).value = shown
-        self.action_reload()
+        self._reload_local()
+        if self._auto_refresh:
+            self._start_refresh(quiet=True)
         self._table().focus()
         self._jobs = {j.id: j.state for j in list_jobs(self._conn, limit=50)}
         self._busy = {j.game_id: j.kind for j in list_jobs(self._conn, running=True) if j.game_id}
@@ -494,9 +502,55 @@ class LudexApp(App[None]):
         self.query_one(Tabs).active = "settings"
 
     def action_reload(self) -> None:
+        """r: re-read local state now and import every account again in the background."""
+        self._reload_local()
+        self._start_refresh(quiet=False)
+
+    def _reload_local(self) -> None:
         self._keys = self._installed()
         self._played = self._play_stats(self._conn)
         self._reload()
+
+    def _start_refresh(self, quiet: bool) -> None:
+        """Import every account in a worker (its own connection, the writer lock); ``quiet`` says nothing unless something changed."""
+        if self._paths is None:
+            return
+        if self._refreshing:
+            if not quiet:
+                self.notify("already refreshing")
+            return
+        self._refreshing = True
+        self._status("refreshing accounts...")
+
+        def work() -> None:
+            conn = connect(self._database)
+            results: list[Refreshed] = []
+            error = None
+            try:
+                with (writer_lock(self._lock) if self._lock is not None else nullcontext()):
+                    results = refresh_all(self._paths, conn, self._sources)
+            except LudexError as exc:
+                error = exc.message
+            finally:
+                conn.close()
+            self.call_from_thread(self._refresh_done, results, error, quiet)
+
+        self.run_worker(work, thread=True, group="refresh")
+
+    def _refresh_done(self, results: list[Refreshed], error: str | None, quiet: bool) -> None:
+        self._refreshing = False
+        self._reload_local()
+        if error:
+            self.notify(f"refresh skipped: {error}", severity="warning")
+            return
+        for item in results:
+            if item.error:
+                self.notify(f"{item.ref}: {item.error}", severity="warning", timeout=10)
+        added, restored, removed = (sum(getattr(r, f) for r in results) for f in ("added", "restored", "removed"))
+        if added or restored or removed:
+            self.notify(f"refreshed: {added} new, {restored} restored, {removed} removed")
+        elif not quiet and not any(r.error for r in results):
+            self.notify(f"refreshed {len(results)} account{'s' if len(results) != 1 else ''}: no changes")
 
     def action_order(self) -> None:
         self._sort = {"title": "recent", "recent": "played", "played": "title"}[self._sort]
@@ -523,6 +577,10 @@ class LudexApp(App[None]):
         self._group_of["folder"] = "save-folder"
         yield from self._save_button("save-folder")
         yield Label("Edited fields are marked in orange. Enter or Save saves them; Esc or Discard drops the edit.", classes="hint")
+        yield Label("Library", classes="section")
+        with Horizontal(classes="row"):
+            yield Switch(True, id="opt-auto_refresh")
+            yield Label(" Import every account when ludex starts (r does it any time; stores are asked, so turn this off when offline)")
         yield Label("Game details", classes="section")
         with Horizontal(classes="row"):
             yield Switch(True, id="opt-auto_details")
@@ -687,9 +745,12 @@ class LudexApp(App[None]):
                     f"{_SOURCE_LABELS[name]}: {count[0]} games imported" if event.value
                     else f"{_SOURCE_LABELS[name]}: removed {count[0]} records; turn it on to bring the games back"
                 )
-                self.action_reload()
+                self._reload_local()
             elif kind == "opt":
-                if name == "auto_match":
+                if name == "auto_refresh":
+                    self._write(lambda: set_auto_refresh(self._conn, event.value))
+                    self._auto_refresh = event.value
+                elif name == "auto_match":
                     self._write(lambda: set_auto_match(self._conn, event.value))
                     self._match = event.value
                     self._tried.clear()
@@ -940,7 +1001,7 @@ class LudexApp(App[None]):
             elif job.state == "lost":
                 self.notify(f"{what} ended without a result; log: {job.log}", severity="warning", timeout=15)
         if any(j.state == "done" and j.kind == "install" for j in ended):
-            self.action_reload()
+            self._reload_local()
         elif any(j.kind == "play" for j in ended):
             self._played = self._play_stats(self._conn)  # a session just ended
             if self._sort != "title":

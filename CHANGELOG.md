@@ -4,6 +4,12 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.58.0] - 2026-11-15
+
+### Changed
+
+- **tui:** the library refreshes itself: every account is imported (in the background) when the TUI starts and whenever you press `r`, which used to re-read only local state. A toast reports new, restored and removed games and names an account that failed; the same safe removal rules apply as for `ludex import`. Turn the startup import off in Settings or with `ludex config auto_refresh no` (for example when offline); `r` still works
+
 ## [0.57.0] - 2026-11-15
 
 ### Added
