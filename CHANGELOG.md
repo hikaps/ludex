@@ -4,6 +4,13 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.57.0] - 2026-11-15
+
+### Added
+
+- **tui:** the game settings form (`e`) has a "Pick one found in the game folder" list above the Executable field: `.exe`, `.sh`, `.AppImage` and `.x86_64` files up to three folders deep, best guess first (nearer the top, name shares a word with the title, bigger), leaving out installers, uninstallers, redistributables and crash handlers
+- **cli:** `ludex game exes GAME` prints the same candidates
+
 ## [0.56.0] - 2026-11-15
 
 ### Added

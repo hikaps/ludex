@@ -768,3 +768,20 @@ def test_download_runs_acquire_in_its_own_process_as_a_job_without_a_game(world:
     code, out, _ = run(capsys, "download", "rel", "9", "--stop")
     assert code == 0 and "stopped the download of Doom" in out
     assert run(capsys, "download", "nope", "1")[0] != 0  # a provider that cannot acquire
+
+
+def test_game_exes_lists_candidates_from_the_game_folder(world: World, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    from ludex.sources import local
+
+    monkeypatch.setattr("ludex.cli.load_providers", lambda: ({"local": local.PLUGIN}, {}))
+    root = tmp_path / "games"
+    (root / "Doom" / "bin").mkdir(parents=True)
+    for name in ("Doom/doom.exe", "Doom/unins000.exe", "Doom/bin/helper.exe", "Doom/start.sh"):
+        (root / name).write_bytes(b"x")
+    (root / "Doom" / "start.sh").chmod(0o755)
+    assert run(capsys, "account", "add", "local", "games", "--set", f"path={root}", "--set", "exclude=_none_")[0] == 0
+    assert run(capsys, "import", "--all")[0] == 0
+    code, out, _ = run(capsys, "game", "exes", "Doom")
+    assert code == 0 and out.splitlines() == ["doom.exe", "start.sh", "bin/helper.exe"]
+    data = json.loads(run(capsys, "--json", "game", "exes", "Doom")[1])["data"]
+    assert data["executables"] == ["doom.exe", "start.sh", "bin/helper.exe"]
