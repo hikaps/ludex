@@ -720,3 +720,20 @@ def test_show_and_ls_sort_report_play_time_from_the_store_record(world: World, c
     assert "played: 12h 05m, last 2026-10-01" in out
     code, out, _ = run(capsys, "--json", "show", "Bravo")
     assert json.loads(out)["data"]["played_minutes"] == 0
+
+
+def test_acquire_without_to_uses_the_download_dir_setting(world: World, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    from ludex.plugins import AcquireResult
+
+    def acquire(request, report):
+        (request.destination / "G").mkdir()
+        return AcquireResult(request.destination / "G", {})
+
+    store = Provider("rel", "Releases", (), lambda config: FetchResult([], True, "rel"), acquire=acquire)
+    monkeypatch.setattr("ludex.cli.load_providers", lambda: ({"rel": store}, {}))
+    where = tmp_path / "dl"
+    assert run(capsys, "config", "download_dir", str(where))[0] == 0
+    code, out, _ = run(capsys, "acquire", "rel", "1")
+    assert code == 0 and (where / "G").is_dir() and str(where / "G") in out
+    assert run(capsys, "config", "download_dir", "relative/dir")[0] != 0
+    assert run(capsys, "config", "download_dir", "--reset")[0] == 0

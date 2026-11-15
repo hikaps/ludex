@@ -17,7 +17,7 @@ from . import __version__
 from .accounts import add_account, get_account, list_accounts, remove_account, update_account
 from .provider_settings import describe, field_for, get_values, set_value
 from .errors import LudexError
-from .game_settings import get_prefix_root, get_settings, pick_copy, set_prefix_root, update_settings
+from .game_settings import default_download_dir, get_download_dir, get_prefix_root, get_settings, pick_copy, set_download_dir, set_prefix_root, update_settings
 from .plugin_manager import CHANNELS, add_plugin, list_plugins, remove_plugin, set_plugin_enabled, update_core, update_plugins
 from .runners import find_runners
 from .find import find_games, owned_keys
@@ -126,14 +126,14 @@ def _parser() -> argparse.ArgumentParser:
     acquire = commands.add_parser("acquire", help="ask a provider to fetch a game into a directory")
     acquire.add_argument("store")
     acquire.add_argument("store_id")
-    acquire.add_argument("--to", required=True, help="destination directory")
+    acquire.add_argument("--to", help="destination directory (default: the download_dir setting)")
     acquire.add_argument("--title", default="", help="game title, if the provider wants one")
 
     commands.add_parser("runners", help="list detected Proton builds")
 
     config = commands.add_parser(
         "config",
-        help="show or change global settings: prefix_dir (folder for default Wine prefixes), "
+        help="show or change global settings: prefix_dir (folder for default Wine prefixes), download_dir (where downloads go), "
         "steam_shortcuts and heroic_sideload (yes/no; no removes those games from the library), "
         "and <plugin>.<setting> for plugins that declare settings",
     )
@@ -565,10 +565,19 @@ def _cmd_metadata(args: argparse.Namespace) -> tuple[object, str]:
     return {"id": game_id, "metadata": asdict(found), "matched": matched}, "\n".join(x for x in lines if x)
 
 
+def _download_dir() -> Path:
+    conn = connect(state_paths().database)
+    try:
+        return get_download_dir(conn, default_download_dir())
+    finally:
+        conn.close()
+
+
 def _cmd_acquire(args: argparse.Namespace) -> tuple[object, str]:
     providers, _ = load_providers()
+    destination = Path(args.to) if args.to else _download_dir()
     result = acquire_game(
-        providers, args.store, args.store_id, args.title, Path(args.to), lambda message: print(message, file=sys.stderr)
+        providers, args.store, args.store_id, args.title, destination, lambda message: print(message, file=sys.stderr)
     )
     data = {"directory": str(result.directory), "hints": dict(result.hints)}
     hints = "".join(f"\n  {key}={value}" for key, value in sorted(result.hints.items()))
@@ -638,9 +647,10 @@ def _plugin_setting(sources: dict[str, Provider], key: str) -> tuple[Provider, s
 def _cmd_config(args: argparse.Namespace) -> tuple[object, str]:
     paths = state_paths()
     default = paths.root / "prefixes"
+    default_downloads = default_download_dir()
     sources, _ = load_providers()
     key = args.key
-    core = {"prefix_dir", "auto_details", "auto_match", *SWITCHES}
+    core = {"prefix_dir", "download_dir", "auto_details", "auto_match", *SWITCHES}
     changing = bool(args.value or args.reset or args.secret)
     if changing and not key:
         raise LudexError("invalid_setting", "name the setting to change")
@@ -668,6 +678,8 @@ def _cmd_config(args: argparse.Namespace) -> tuple[object, str]:
         try:
             if changing and key == "prefix_dir":
                 set_prefix_root(conn, None if args.reset else args.value)
+            elif changing and key == "download_dir":
+                set_download_dir(conn, None if args.reset else args.value)
             elif changing and key == "auto_details":
                 set_auto_details(conn, None if args.reset else _YES_NO[args.value.lower()])
             elif changing and key == "auto_match":
@@ -675,6 +687,7 @@ def _cmd_config(args: argparse.Namespace) -> tuple[object, str]:
             elif changing and key in SWITCHES:
                 set_switch(paths, conn, sources, key, _YES_NO[args.value.lower()])
             folder = get_prefix_root(conn, default)
+            downloads = get_download_dir(conn, default_downloads)
             auto = get_auto_details(conn)
             match = get_auto_match(conn)
         finally:
@@ -682,12 +695,16 @@ def _cmd_config(args: argparse.Namespace) -> tuple[object, str]:
     plugin_values = {name: describe(paths, plugin) for name, plugin in sorted(sources.items()) if plugin.settings}
     data: dict[str, Any] = {
         "prefix_dir": str(folder),
+        "download_dir": str(downloads),
         "auto_details": auto,
         "auto_match": match,
         **{k: get_switch(paths, k) for k in sorted(SWITCHES)},
         "plugins": plugin_values,
     }
-    shown = {"prefix_dir": f"prefix_dir: {folder}" + (" (default)" if folder == default else "")}
+    shown = {
+        "prefix_dir": f"prefix_dir: {folder}" + (" (default)" if folder == default else ""),
+        "download_dir": f"download_dir: {downloads}" + (" (default)" if downloads == default_downloads else ""),
+    }
     shown.update({k: f"{k}: {'yes' if data[k] else 'no'}" for k in ("auto_details", "auto_match", *sorted(SWITCHES))})
     for name, values in plugin_values.items():
         shown.update({f"{name}.{k}": f"{name}.{k}: {v if v is not None else '(not set)'}" for k, v in values.items()})

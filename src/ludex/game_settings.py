@@ -102,6 +102,28 @@ def update_settings(
     return result
 
 
+def default_download_dir() -> Path:
+    return Path.home() / "Games"
+
+
+def get_download_dir(conn: sqlite3.Connection, default: Path) -> Path:
+    """The folder downloads from a store's release catalog go to by default (a setting, else ``default``)."""
+    row = conn.execute("SELECT value FROM meta WHERE key = 'download_dir'").fetchone()
+    return Path(row["value"]) if row else default
+
+
+def set_download_dir(conn: sqlite3.Connection, path: str | None) -> None:
+    """Set the default download folder; ``None`` goes back to the built-in one."""
+    with conn:
+        if path is None:
+            conn.execute("DELETE FROM meta WHERE key = 'download_dir'")
+            return
+        folder = Path(_clean(path, "download folder")).expanduser()
+        if not folder.is_absolute():
+            raise LudexError("invalid_setting", "the download folder must be an absolute path")
+        conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('download_dir', ?)", (str(folder),))
+
+
 def get_prefix_root(conn: sqlite3.Connection, default: Path) -> Path:
     """The folder default Wine prefixes are created in (a setting, else ``default``)."""
     row = conn.execute("SELECT value FROM meta WHERE key = 'prefix_dir'").fetchone()

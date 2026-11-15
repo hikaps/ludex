@@ -21,7 +21,8 @@ from textual.widgets.data_table import RowDoesNotExist
 
 from .accounts import get_account, list_accounts, update_account
 from .errors import LudexError
-from .game_settings import get_prefix_root, get_settings, set_prefix_root, update_settings
+from .acquire import acquire_game
+from .game_settings import default_download_dir, get_download_dir, get_prefix_root, get_settings, set_download_dir, set_prefix_root, update_settings
 from .metadata import cached_match, cached_metadata, choose_match, clear_match, default_query, game_metadata, match_candidates, get_auto_details, get_auto_match, set_auto_details, set_auto_match
 from .jobs import last_line, list_jobs, stop_job
 from .launch import install_game, launch_game, open_url
@@ -35,7 +36,7 @@ from .runners import find_runners
 from .storage import connect, writer_lock
 from .switches import get_switch, set_switch
 from .plugin_manager import list_plugins, set_plugin_enabled
-from .tui_settings import GameSettingsScreen, MatchScreen, PathInput, PathSuggester
+from .tui_settings import FolderPrompt, GameSettingsScreen, MatchScreen, PathInput, PathSuggester
 
 
 _SOURCE_LABELS = {
@@ -154,6 +155,7 @@ class LudexApp(App[None]):
         self._paths = paths
         self._keys: set[tuple[str, str]] = set()
         self._jobs: dict[int, str] = {}  # job id -> last seen state, to announce when one ends
+        self._downloading: set[str] = set()  # store:id of search hits being downloaded this session
         self._busy: dict[int, str] = {}  # game id -> kind of its running job (install or play)
         self._hits: dict[str, dict] = {}
         self._auto = True
@@ -763,11 +765,48 @@ class LudexApp(App[None]):
         if hit is None:
             return
         plugin = self._sources.get(hit["store"])
+        if plugin and plugin.acquire and not plugin.install_url:  # no client to ask: the plugin downloads it, so ask where to
+            self.push_screen(
+                FolderPrompt(f"Download {hit['title']} to", str(get_download_dir(self._conn, default_download_dir()))),
+                lambda folder: self._download_hit(hit, folder),
+            )
+            return
         try:  # the store client's own install link when the plugin has one, else the store page
             open_url(plugin.install_url(hit["store_id"]) if plugin and plugin.install_url else hit["url"], f"the {hit['store']} client")
             self.notify(f"asked the client to install {hit['title']}")
         except LudexError as exc:
             self.notify(exc.message, severity="error")
+
+    def _download_hit(self, hit: dict, folder: str | None) -> None:
+        if folder is None:
+            return
+        key = f"{hit['store']}:{hit['store_id']}"
+        if key in self._downloading:
+            self.notify(f"{hit['title']} is already downloading", severity="warning")
+            return
+        try:
+            self._write(lambda: set_download_dir(self._conn, folder))
+        except LudexError as exc:
+            self.notify(exc.message, severity="error")
+            return
+        destination = get_download_dir(self._conn, default_download_dir())
+        self._downloading.add(key)
+        self.notify(f"downloading {hit['title']} to {destination}")
+
+        # ponytail: a download is a worker of this session, not a tracked job (jobs belong to a library game); quitting stops it
+        def work() -> None:
+            try:
+                result = acquire_game(self._sources, hit["store"], hit["store_id"], hit["title"], destination, lambda m: self.call_from_thread(self._status, m))
+                self.call_from_thread(self._download_done, key, f"downloaded {hit['title']} into {result.directory}", None)
+            except LudexError as exc:
+                self.call_from_thread(self._download_done, key, None, f"{hit['title']}: {exc.message}")
+
+        self.run_worker(work, thread=True, group="download")
+
+    def _download_done(self, key: str, message: str | None, error: str | None) -> None:
+        self._downloading.discard(key)
+        self._status("")
+        self.notify(error or message or "", severity="error" if error else "information", timeout=15)
 
     def action_install(self) -> None:
         if self._active() == "search":

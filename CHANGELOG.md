@@ -4,6 +4,17 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.54.0] - 2026-11-10
+
+### Added
+
+- **tui:** `i` on a Search hit of a plugin that downloads games asks for a folder and downloads there, instead of asking the desktop to open the hit's link (which failed with "the system could not open ... client")
+- **config:** `download_dir` setting (default `~/Games`); `ludex acquire` uses it when `--to` is omitted
+
+### Fixed
+
+- **update:** `ludex update` on a uv tool install failed with "Executable already exists"; it now passes `--force`
+
 ## [0.53.0] - 2026-11-09
 
 ### Added
