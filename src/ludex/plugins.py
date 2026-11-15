@@ -109,7 +109,9 @@ games it started (``launch_command``).
 
 Acquiring (optional): ``acquire(request, report)`` gets a ``AcquireRequest`` (store id, title, and a
 ``destination`` directory the core created) and does the whole job itself: download, unpack, or
-drive an official client. It calls ``report(message)`` with short progress lines and returns an
+drive an official client. It calls ``report(message, done=None, total=None)`` with short progress lines
+(``done`` and ``total`` are optional non-negative numbers in any one unit, bytes or files; with both
+the core shows a percentage and a time estimate, otherwise only the message) and returns an
 ``AcquireResult``: the game's ``directory``, which MUST lie inside ``destination`` (the core checks
 this and rejects anything else), and string ``hints`` (for example ``{"executable": "game.sh"}``).
 The core ships no implementation and takes no position on where a plugin gets its files; the
@@ -138,7 +140,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from .errors import LudexError
 
@@ -199,6 +201,10 @@ class Metadata:
     released: str | None = None  # as the source prints it
 
 
+class Report(Protocol):
+    def __call__(self, message: str, done: float | None = None, total: float | None = None) -> None: ...
+
+
 @dataclass(frozen=True, slots=True)
 class AcquireRequest:
     store_id: str
@@ -256,7 +262,7 @@ class Provider:
     launch_command: Callable[[Mapping[str, str], str], Sequence[str]] | None = None
     game_folder: Callable[[Mapping[str, str], str], Path] | None = None
     install_url: Callable[[str], str] | None = None
-    acquire: Callable[[AcquireRequest, Callable[[str], None]], AcquireResult] | None = None
+    acquire: Callable[[AcquireRequest, Report], AcquireResult] | None = None
     installed: Callable[[Mapping[str, str]], Iterable[str]] | None = None
     search: Callable[[str], Sequence[SearchHit]] | None = None
     metadata: Callable[[str], Metadata | None] | None = None

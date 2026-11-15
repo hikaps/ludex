@@ -1,14 +1,16 @@
 """Run a provider's acquire capability and check what it returns."""
 from __future__ import annotations
 
+import os
 import sqlite3
 import sys
+import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from .errors import LudexError
-from .jobs import Job, start_job
-from .plugins import AcquireRequest, AcquireResult, Provider
+from .jobs import PROGRESS_ENV, Job, ProgressWriter, start_job
+from .plugins import AcquireRequest, AcquireResult, Provider, Report
 
 
 def acquire_game(
@@ -17,7 +19,7 @@ def acquire_game(
     store_id: str,
     title: str,
     destination: Path,
-    report: Callable[[str], None] = lambda message: None,
+    report: Report = lambda message, done=None, total=None: None,
 ) -> AcquireResult:
     """Ask ``store``'s provider to put the game under ``destination``; the result is verified."""
     provider = providers.get(store)
@@ -62,3 +64,22 @@ def download_game(
     if title:
         argv += ["--title", title]
     return start_job(conn, "download", 0, f"{store}:{store_id}", title or store_id, argv, log_dir)
+
+
+def job_reporter(echo: Callable[[str], None]) -> Report:
+    """The ``report`` for ``ludex acquire``: each report goes to ``echo`` (the job's log) and, inside a download job, to its progress file."""
+    path = os.environ.get(PROGRESS_ENV)
+    writer = ProgressWriter(Path(path)) if path else None
+    last = [0.0]
+
+    def report(message: str, done: float | None = None, total: float | None = None) -> None:
+        if writer is not None:
+            writer(message, done, total)
+        if done is not None and total and done < total:
+            if time.time() - last[0] < 0.25:
+                return  # a plugin may report on every chunk; the log gets a few lines a second at most
+            last[0] = time.time()
+        percent = f" {int(min(done, total) / total * 100)}%" if isinstance(done, (int, float)) and isinstance(total, (int, float)) and total > 0 else ""
+        echo(f"{message}{percent}")
+
+    return report
