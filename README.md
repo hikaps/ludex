@@ -20,7 +20,7 @@ Status: early development.
 - **Metadata**: `metadata` shows description, genres and developer, asked of the plugin once and then kept; `match` picks a game-database entry (bundled: `rawg`, needs your own API key).
 - **Downloads and jobs**: `i` on a Search hit of a plugin that downloads games (it has `acquire`) asks for a folder and downloads there in the background (`ludex download STORE ID`, `--status`, `--stop`); the Jobs tab lists installs, downloads and games ludex started, with progress (a bar and time left when the plugin reports numbers), and `x` stops one; the folder is remembered as `download_dir` (`ludex config download_dir`, default `~/Games`). `ludex acquire STORE ID` uses it when `--to` is left out. Stores with their own client (Steam, Heroic) still open that client, which asks for its own library.
 - **Play time**: `show` and `ls --sort played|recent` report how long you played, from what Steam and Heroic (Epic and sideloads) recorded on this machine, plus the games ludex started itself. The TUI shows it in Detail and `o` changes the order.
-- **TUI**: `ludex tui` browses, searches and launches games in the terminal.
+- **TUI**: `ludex tui` browses, searches and launches games in the terminal. It imports every account when it starts and again on `r` (in the background; `ludex config auto_refresh no` turns the startup import off).
 - **Scripting**: `ludex --json <command>` prints `{"ok": ..., "data": ...}` (errors go to stderr).
 - **Plugins**: `plugin add/ls/rm/enable/disable/update`; `update` updates ludex from its release channel.
 

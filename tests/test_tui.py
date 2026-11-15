@@ -250,7 +250,7 @@ def test_settings_tab_saves_the_prefix_folder_and_toggles_sources_and_plugins(tm
             app.query_one("#folder", Input).value = str(tmp_path / "all-prefixes")
             await pilot.press("enter")
             await pilot.pause()
-            await pilot.press("down", "down", "down")  # arrows move between the settings
+            await pilot.press("down", "down", "down", "down")  # arrows move between the settings
             await pilot.pause()
             assert app.focused is app.query_one("#src-steam_shortcuts", Switch)
             app.query_one("#src-steam_shortcuts", Switch).value = False  # off: account and games go, no dialog
@@ -686,3 +686,40 @@ def test_edit_screen_offers_the_executables_found_in_the_game_folder(tmp_path):
             assert app.screen.query_one("#executable", Input).value == "bin/other.exe"
 
     asyncio.run(scenario())
+
+
+def test_r_imports_every_account_and_startup_does_it_unless_turned_off(tmp_path, monkeypatch):
+    from ludex.accounts import add_account
+    from ludex.paths import state_paths
+    from ludex.plugins import FetchResult, Provider
+    from ludex.refresh import set_auto_refresh
+
+    monkeypatch.setenv("LUDEX_HOME", str(tmp_path / "home"))
+    paths = state_paths()
+    stock = [OwnedGame("fake", "1", "Alpha")]
+    fake = Provider("fake", "f", (), lambda config: FetchResult(list(stock), True, "api"))
+    add_account(paths, "main", "fake", {})
+
+    def setting(value):
+        conn = connect(paths.database)
+        set_auto_refresh(conn, value)
+        conn.close()
+
+    async def rows(press=None):
+        app = LudexApp(paths.database, {"fake": fake}, paths=paths)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            if press:
+                await pilot.press(press)
+                await app.workers.wait_for_complete()
+            await pilot.pause()
+            return app.query_one("#owned-table", DataTable).row_count
+
+    setting(False)
+    assert asyncio.run(rows()) == 0  # startup refresh is off
+    assert asyncio.run(rows("r")) == 1  # r imports
+    stock.append(OwnedGame("fake", "2", "Beta"))
+    assert asyncio.run(rows()) == 1
+    setting(None)
+    assert asyncio.run(rows()) == 2  # on by default

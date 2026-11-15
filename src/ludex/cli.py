@@ -29,6 +29,7 @@ from .playtime import Played, describe_played, epoch, play_stats
 from .launch import install_game, launch_game, prepare_install, prepare_launch
 from .library import resolve_game, delete_account_records, export_games, dismiss_review, get_game, list_games, list_review, merge_games, run_import
 from .loader import load_providers
+from .refresh import get_auto_refresh, set_auto_refresh
 from .metadata import cached_match, choose_match, clear_match, default_query, game_metadata, match_candidates, get_auto_details, get_auto_match, set_auto_details, set_auto_match
 from .paths import state_paths
 from .plugins import CommandContext, CommandResult, Provider
@@ -692,7 +693,7 @@ def _cmd_config(args: argparse.Namespace) -> tuple[object, str]:
     default_downloads = default_download_dir()
     sources, _ = load_providers()
     key = args.key
-    core = {"prefix_dir", "download_dir", "auto_details", "auto_match", *SWITCHES}
+    core = {"prefix_dir", "download_dir", "auto_details", "auto_match", "auto_refresh", *SWITCHES}
     changing = bool(args.value or args.reset or args.secret)
     if changing and not key:
         raise LudexError("invalid_setting", "name the setting to change")
@@ -713,7 +714,7 @@ def _cmd_config(args: argparse.Namespace) -> tuple[object, str]:
             raise LudexError("invalid_setting", f"{key} is not a secret setting")
         if args.reset and key in SWITCHES:
             raise LudexError("invalid_setting", f"{key} has no default to reset to; set yes or no")
-        if args.value and (key in SWITCHES or key in {"auto_details", "auto_match"}) and args.value.lower() not in _YES_NO:
+        if args.value and (key in SWITCHES or key in {"auto_details", "auto_match", "auto_refresh"}) and args.value.lower() not in _YES_NO:
             raise LudexError("invalid_setting", f"{key} takes yes or no")
     with writer_lock(paths.import_lock):
         conn = connect(paths.database)
@@ -722,6 +723,8 @@ def _cmd_config(args: argparse.Namespace) -> tuple[object, str]:
                 set_prefix_root(conn, None if args.reset else args.value)
             elif changing and key == "download_dir":
                 set_download_dir(conn, None if args.reset else args.value)
+            elif changing and key == "auto_refresh":
+                set_auto_refresh(conn, None if args.reset else _YES_NO[args.value.lower()])
             elif changing and key == "auto_details":
                 set_auto_details(conn, None if args.reset else _YES_NO[args.value.lower()])
             elif changing and key == "auto_match":
@@ -731,6 +734,7 @@ def _cmd_config(args: argparse.Namespace) -> tuple[object, str]:
             folder = get_prefix_root(conn, default)
             downloads = get_download_dir(conn, default_downloads)
             auto = get_auto_details(conn)
+            refresh = get_auto_refresh(conn)
             match = get_auto_match(conn)
         finally:
             conn.close()
@@ -739,6 +743,7 @@ def _cmd_config(args: argparse.Namespace) -> tuple[object, str]:
         "prefix_dir": str(folder),
         "download_dir": str(downloads),
         "auto_details": auto,
+        "auto_refresh": refresh,
         "auto_match": match,
         **{k: get_switch(paths, k) for k in sorted(SWITCHES)},
         "plugins": plugin_values,
@@ -747,7 +752,7 @@ def _cmd_config(args: argparse.Namespace) -> tuple[object, str]:
         "prefix_dir": f"prefix_dir: {folder}" + (" (default)" if folder == default else ""),
         "download_dir": f"download_dir: {downloads}" + (" (default)" if downloads == default_downloads else ""),
     }
-    shown.update({k: f"{k}: {'yes' if data[k] else 'no'}" for k in ("auto_details", "auto_match", *sorted(SWITCHES))})
+    shown.update({k: f"{k}: {'yes' if data[k] else 'no'}" for k in ("auto_details", "auto_match", "auto_refresh", *sorted(SWITCHES))})
     for name, values in plugin_values.items():
         shown.update({f"{name}.{k}": f"{name}.{k}: {v if v is not None else '(not set)'}" for k, v in values.items()})
     return data, "\n".join(shown.values() if key is None else [shown[key]])
