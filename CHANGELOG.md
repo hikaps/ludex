@@ -4,6 +4,12 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.58.1] - 2026-11-15
+
+### Fixed
+
+- **find:** a search hit without an `https://` link was dropped silently, even from a plugin that downloads through `acquire` and never opens the link. Now only hits ludex would open need https; an `acquire` plugin's hits are kept (the link is not shown or used). Skipped hits are reported ("N results skipped (link is not https)")
+
 ## [0.58.0] - 2026-11-15
 
 ### Changed

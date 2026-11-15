@@ -47,7 +47,9 @@ must not touch the network. Raise ``SourceError`` when the answer cannot be dete
 
 Search (optional): ``search(query)`` returns ``SearchHit`` records for a store's catalog (any
 game, owned or not). This is the only capability besides ``fetch`` that may use the network; the
-same rules apply: bounded responses, verified TLS, ``https`` links only, and errors that are
+same rules apply: bounded responses, verified TLS, ``https`` links only (a hit with another link is
+skipped and reported, unless the provider has ``acquire``: then the hit is kept and its link is not
+used), and errors that are
 ``SourceError`` with fixed, secret-free messages. The core adds the "owned" marker and merges
 results across providers; a failing provider is reported and skipped.
 

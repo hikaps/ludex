@@ -26,8 +26,17 @@ def find_games(
         except Exception as exc:
             problems[name] = getattr(exc, "message", f"failed ({type(exc).__name__})")
             continue
+        skipped = 0
         for hit in found:
-            if isinstance(hit, SearchHit) and hit.url.startswith("https://"):
-                hits.append({"store": hit.store, "store_id": hit.store_id, "title": hit.title, "url": hit.url,
-                             "price": hit.price, "owned": (hit.store, hit.store_id) in owned})
+            if not isinstance(hit, SearchHit):
+                continue
+            secure = hit.url.startswith("https://")
+            if not secure and provider.acquire is None:  # ludex would open the link, so only https
+                skipped += 1
+                continue
+            # a plugin that downloads itself needs no link: keep the hit, drop a link that is not https
+            hits.append({"store": hit.store, "store_id": hit.store_id, "title": hit.title, "url": hit.url if secure else "",
+                         "price": hit.price, "owned": (hit.store, hit.store_id) in owned})
+        if skipped:
+            problems[name] = f"{skipped} result{'s' if skipped != 1 else ''} skipped (link is not https)"
     return hits, problems

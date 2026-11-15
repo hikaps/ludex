@@ -57,4 +57,10 @@ def test_find_marks_owned_skips_failures_and_rejects_plain_http_links():
     providers = {"good": good, "bad": Provider("bad", "b", (), search=boom), "plain": Provider("plain", "p", (), launch_url=str)}
     hits, problems = find_games(providers, "h", {("good", "1")})
     assert [(h["title"], h["owned"]) for h in hits] == [("Hades", True)]
-    assert problems == {"bad": "cannot search"}
+    assert problems == {"bad": "cannot search", "good": "1 result skipped (link is not https)"}
+
+
+def test_find_keeps_hits_of_a_downloading_plugin_without_using_a_plain_link():
+    dl = Provider("dl", "d", (), search=lambda q: [SearchHit("dl", "1", "Doom", "ftp://x/1"), SearchHit("dl", "2", "Quake", "https://x/2")], acquire=lambda r, report: None)
+    hits, problems = find_games({"dl": dl}, "d", set())
+    assert [(h["title"], h["url"]) for h in hits] == [("Doom", ""), ("Quake", "https://x/2")] and problems == {}
