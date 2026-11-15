@@ -273,7 +273,12 @@ class LudexApp(App[None]):
         else:
             self._show_hint()
         if name == "jobs":
-            self._fill_jobs(list_jobs(self._conn, limit=50))
+            jobs = list_jobs(self._conn, limit=50)
+            self._fill_jobs(jobs)
+            self._status(f"{sum(j.state == 'running' for j in jobs)} running, {len(jobs)} recent")
+            current = self._selected_job()  # rows kept from before do not fire a highlight again
+            if current is not None:
+                self._show_job(current.id)
 
     def action_next_tab(self) -> None:
         self.query_one(Tabs).action_next_tab()
