@@ -19,6 +19,7 @@ from urllib.parse import quote
 import json
 import re
 from collections.abc import Mapping
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +27,7 @@ import httpx
 import vdf
 
 from .. import __version__
-from ..plugins import ConfigField, FetchResult, Metadata, OwnedGame, Provider, SearchHit, SourceError
+from ..plugins import ConfigField, FetchResult, Metadata, OwnedGame, PlayRecord, Provider, SearchHit, SourceError
 from .steam_cache import cached_games
 
 DEFAULT_BASE_URL = "https://api.steampowered.com"
@@ -40,6 +41,8 @@ _STEAM_DIRS = (
 )
 _TOOLS = re.compile(r"(Proton|Steam Linux Runtime|Steamworks Common Redistributables)")
 _MAX_VDF_BYTES = 1024 * 1024
+_MAX_LOCALCONFIG_BYTES = 16 * 1024 * 1024  # holds a line per app and setting; far larger than a manifest
+_STEAM_ID_BASE = 76561197960265728  # SteamID64 minus this is the account id that names the userdata folder
 
 
 def _bad_response() -> SourceError:
@@ -142,9 +145,9 @@ def fetch_owned(
         return _parse(_request(own, base_url, params))
 
 
-def _load_vdf(path: Path) -> dict[str, Any]:
+def _load_vdf(path: Path, limit: int = _MAX_VDF_BYTES) -> dict[str, Any]:
     try:
-        if path.stat().st_size > _MAX_VDF_BYTES:
+        if path.stat().st_size > limit:
             return {}
         with path.open(encoding="utf-8", errors="replace") as handle:
             return vdf.load(handle)
@@ -190,6 +193,48 @@ def installed(config: Mapping[str, str]) -> set[str]:
             flags = str(state.get("StateFlags", "4"))
             if flags.isdigit() and int(flags) & 4:
                 found.add(str(int(state["appid"])))
+    return found
+
+
+def _child(node: object, name: str) -> dict[str, Any]:
+    """``node[name]`` ignoring the key's case (Steam has written both ``Steam`` and ``steam``); ``{}`` when absent."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if isinstance(key, str) and key.lower() == name and isinstance(value, dict):
+                return value
+    return {}
+
+
+def playtime(config: Mapping[str, str]) -> dict[str, PlayRecord]:
+    """What Steam recorded per app in the account's ``localconfig.vdf`` (``Playtime`` minutes, ``LastPlayed`` unix time).
+
+    Steam writes the file itself, also for games started outside ludex. The user folder is the account's SteamID64
+    (config or detected), else the only folder under ``userdata``; with several and no id nothing can be chosen.
+    """
+    steam_dir = _steam_dir(config)
+    steam_id = config.get("steam_id") or _detect_steam_id(steam_dir)
+    if steam_id and _STEAM_ID.fullmatch(steam_id):
+        folder = steam_dir / "userdata" / str(int(steam_id) - _STEAM_ID_BASE)
+    else:
+        users = [p for p in (steam_dir / "userdata").glob("*") if p.is_dir() and p.name.isdigit() and p.name != "0"]
+        if len(users) != 1:
+            raise SourceError("steam_user_unknown", "cannot tell which Steam user to read play time for; set steam_id")
+        folder = users[0]
+    path = folder / "config" / "localconfig.vdf"
+    if not path.is_file():
+        raise SourceError("steam_no_localconfig", "Steam has no local play time for this user yet")
+    apps = _child(_child(_child(_child(_load_vdf(path, _MAX_LOCALCONFIG_BYTES), "userlocalconfigstore"), "software"), "valve"), "steam")
+    apps = _child(apps, "apps")
+    found: dict[str, PlayRecord] = {}
+    for app_id, entry in apps.items():
+        if not isinstance(entry, dict) or not str(app_id).isdigit():
+            continue
+        minutes, last = str(entry.get("Playtime", "0")), str(entry.get("LastPlayed", "0"))
+        if not minutes.isdigit() or not last.isdigit():
+            continue
+        when = datetime.fromtimestamp(int(last), timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z") if 0 < int(last) < 4102444800 else None
+        if int(minutes) or when:
+            found[str(int(app_id))] = PlayRecord(int(minutes), when)
     return found
 
 
@@ -320,6 +365,7 @@ PLUGIN = Provider(
     ),
     fetch=fetch,
     installed=installed,
+    playtime=playtime,
     search=search,
     metadata=metadata,
     match=search,

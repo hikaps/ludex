@@ -17,13 +17,14 @@ from . import __version__
 from .accounts import add_account, get_account, list_accounts, remove_account, update_account
 from .provider_settings import describe, field_for, get_values, set_value
 from .errors import LudexError
-from .game_settings import get_prefix_root, get_settings, pick_copy, set_prefix_root, update_settings
+from .game_settings import default_download_dir, get_download_dir, get_prefix_root, get_settings, pick_copy, set_download_dir, set_prefix_root, update_settings
 from .plugin_manager import CHANNELS, add_plugin, list_plugins, remove_plugin, set_plugin_enabled, update_core, update_plugins
 from .runners import find_runners
 from .find import find_games, owned_keys
 from .installed import installed_keys
 from .acquire import acquire_game
 from .jobs import Job, last_line, list_jobs, stop_job
+from .playtime import Played, describe_played, epoch, play_stats
 from .launch import install_game, launch_game, prepare_install, prepare_launch
 from .library import resolve_game, delete_account_records, export_games, dismiss_review, get_game, list_games, list_review, merge_games, run_import
 from .loader import load_providers
@@ -87,6 +88,7 @@ def _parser() -> argparse.ArgumentParser:
     listing.add_argument("--account")
     listing.add_argument("--removed", action="store_true", help="include removed games")
     listing.add_argument("--installed", action="store_true", help="only games installed on this machine")
+    listing.add_argument("--sort", choices=("title", "recent", "played"), default="title", help="title (default), most recently played first, or most played first; the last two show play time")
     listing.add_argument("--limit", type=int, default=50)
     listing.add_argument("--offset", type=int, default=0)
 
@@ -97,9 +99,11 @@ def _parser() -> argparse.ArgumentParser:
     find.add_argument("query")
 
     launch = commands.add_parser("launch", help="start a game through its store's client")
-    launch.add_argument("game", help="game id or title")
+    launch.add_argument("game", nargs="?", help="game id or title")
     launch.add_argument("--store", help="store to launch from when several can")
     launch.add_argument("--dry-run", action="store_true", help="show how the game would be started and do not start it")
+    launch.add_argument("--status", action="store_true", help="list the games ludex started itself (of the game, when one is named) and whether they still run")
+    launch.add_argument("--stop", action="store_true", help="stop the game ludex started")
 
     install = commands.add_parser("install", help="ask the owning store's client to install a game you own")
     install.add_argument("game", nargs="?", help="game id or title")
@@ -122,14 +126,14 @@ def _parser() -> argparse.ArgumentParser:
     acquire = commands.add_parser("acquire", help="ask a provider to fetch a game into a directory")
     acquire.add_argument("store")
     acquire.add_argument("store_id")
-    acquire.add_argument("--to", required=True, help="destination directory")
+    acquire.add_argument("--to", help="destination directory (default: the download_dir setting)")
     acquire.add_argument("--title", default="", help="game title, if the provider wants one")
 
     commands.add_parser("runners", help="list detected Proton builds")
 
     config = commands.add_parser(
         "config",
-        help="show or change global settings: prefix_dir (folder for default Wine prefixes), "
+        help="show or change global settings: prefix_dir (folder for default Wine prefixes), download_dir (where downloads go), "
         "steam_shortcuts and heroic_sideload (yes/no; no removes those games from the library), "
         "and <plugin>.<setting> for plugins that declare settings",
     )
@@ -400,9 +404,17 @@ def _cmd_ls(args: argparse.Namespace) -> tuple[object, str]:
             print(f"warning: {ref}: {reason}", file=sys.stderr)
     conn = connect(paths.database)
     try:
+        stats: dict[int, Played] = {}
+        if args.sort != "title":
+            providers, _ = load_providers()
+            stats, problems = play_stats(paths, providers, conn)
+            for ref, reason in sorted(problems.items()):
+                print(f"warning: {ref}: {reason}", file=sys.stderr)
+        order = {g: (p.minutes if args.sort == "played" else epoch(p.last_played) if p.last_played else -1) for g, p in stats.items()} if stats else None
         games = list_games(
             conn,
             only=only,
+            order=order if args.sort != "title" else None,
             query=args.query,
             store=args.store,
             account=args.account,
@@ -412,10 +424,15 @@ def _cmd_ls(args: argparse.Namespace) -> tuple[object, str]:
         )
     finally:
         conn.close()
+    if args.sort != "title":
+        for g in games:
+            p = stats.get(g["id"])
+            g["played_minutes"], g["last_played"] = (p.minutes, p.last_played) if p else (0, None)
     id_width = max((len(str(g["id"])) for g in games), default=0)
     title_width = max((len(g["title"]) for g in games), default=0)
     lines = [
         f"{g['id']:>{id_width}}  {g['title']:<{title_width}}  [{', '.join(g['stores'])}]" + (" (removed)" if g["removed"] else "")
+        + (f"  {describe_played(stats.get(g['id']))}" if args.sort != "title" else "")
         for g in games
     ]
     return {"games": games, "limit": args.limit, "offset": args.offset}, "\n".join(lines) if lines else "no games"
@@ -426,9 +443,14 @@ def _cmd_show(args: argparse.Namespace) -> tuple[object, str]:
     conn = connect(paths.database)
     try:
         game = get_game(conn, resolve_game(conn, args.game))
+        stats, problems = play_stats(paths, load_providers()[0], conn)
     finally:
         conn.close()
-    lines = [f"{game['id']}  {game['title']}  (added {game['created_at']})"]
+    for ref, reason in sorted(problems.items()):
+        print(f"warning: {ref}: {reason}", file=sys.stderr)
+    played = stats.get(game["id"])
+    game["played_minutes"], game["last_played"] = (played.minutes, played.last_played) if played else (0, None)
+    lines = [f"{game['id']}  {game['title']}  (added {game['created_at']})", f"  played: {describe_played(played)}"]
     for o in game["ownership"]:
         state = "removed" if o["removed"] else "owned"
         lines.append(
@@ -461,16 +483,12 @@ def _cmd_install(args: argparse.Namespace) -> tuple[object, str]:
     conn = connect(paths.database)
     try:
         if args.status:
-            return _install_status(conn, resolve_game(conn, args.game) if args.game else None)
+            return _job_status(conn, "install", resolve_game(conn, args.game) if args.game else None)
         if not args.game:
             raise LudexError("missing_game", "name the game to install (or use --status)")
         game_id = resolve_game(conn, args.game)
         if args.stop:
-            running = list_jobs(conn, "install", game_id, running=True)
-            if not running:
-                raise LudexError("job_not_running", "no install of that game is running")
-            job = stop_job(conn, running[0].id)
-            return {"id": game_id, "job": _job_data(job)}, f"stopped the install of {job.title} (job {job.id}); run it again to resume"
+            return _job_stop(conn, "install", game_id)
         if args.dry_run:
             plan = prepare_install(conn, providers, game_id, args.store, config_for)
             return {"id": game_id, "install": plan.target, "url": plan.url, "argv": list(plan.argv)}, f"would install {plan.target}: {plan.url or shlex.join(plan.argv)}"
@@ -487,13 +505,24 @@ def _job_data(job: Job) -> dict[str, object]:
             "started_at": job.started_at, "ended_at": job.ended_at, "log": str(job.log), "progress": last_line(job) if job.state == "running" else ""}
 
 
-def _install_status(conn, game_id: int | None) -> tuple[object, str]:
-    jobs = list_jobs(conn, "install", game_id)
+def _job_status(conn, kind: str, game_id: int | None) -> tuple[object, str]:
+    jobs = list_jobs(conn, kind, game_id)
+    # an install shows its progress; a game's own output is no progress, so it shows when it started
+    running = (lambda j: last_line(j)) if kind == "install" else (lambda j: f"since {j.started_at}")
     lines = [
-        f"#{j.id}  {j.state:<8} {j.title}  ({j.target})  " + (last_line(j) if j.state == "running" else f"exit {j.exit_code}" if j.exit_code not in (None, 0) else j.ended_at or "")
+        f"#{j.id}  {j.state:<8} {j.title}  ({j.target})  " + (running(j) if j.state == "running" else f"exit {j.exit_code}" if j.exit_code not in (None, 0) else j.ended_at or "")
         for j in jobs
     ]
-    return {"jobs": [_job_data(j) for j in jobs]}, "\n".join(lines) if lines else "no installs started by ludex"
+    return {"jobs": [_job_data(j) for j in jobs]}, "\n".join(lines) if lines else f"no {'installs' if kind == 'install' else 'games'} started by ludex"
+
+
+def _job_stop(conn, kind: str, game_id: int) -> tuple[object, str]:
+    running = list_jobs(conn, kind, game_id, running=True)
+    if not running:
+        raise LudexError("job_not_running", f"no {'install of that game' if kind == 'install' else 'game started by ludex'} is running")
+    job = stop_job(conn, running[0].id)
+    what = f"the install of {job.title}" if kind == "install" else job.title
+    return {"id": game_id, "job": _job_data(job)}, f"stopped {what} (job {job.id})" + ("; run it again to resume" if kind == "install" else "")
 
 
 def _cmd_match(args: argparse.Namespace) -> tuple[object, str]:
@@ -536,10 +565,19 @@ def _cmd_metadata(args: argparse.Namespace) -> tuple[object, str]:
     return {"id": game_id, "metadata": asdict(found), "matched": matched}, "\n".join(x for x in lines if x)
 
 
+def _download_dir() -> Path:
+    conn = connect(state_paths().database)
+    try:
+        return get_download_dir(conn, default_download_dir())
+    finally:
+        conn.close()
+
+
 def _cmd_acquire(args: argparse.Namespace) -> tuple[object, str]:
     providers, _ = load_providers()
+    destination = Path(args.to) if args.to else _download_dir()
     result = acquire_game(
-        providers, args.store, args.store_id, args.title, Path(args.to), lambda message: print(message, file=sys.stderr)
+        providers, args.store, args.store_id, args.title, destination, lambda message: print(message, file=sys.stderr)
     )
     data = {"directory": str(result.directory), "hints": dict(result.hints)}
     hints = "".join(f"\n  {key}={value}" for key, value in sorted(result.hints.items()))
@@ -609,9 +647,10 @@ def _plugin_setting(sources: dict[str, Provider], key: str) -> tuple[Provider, s
 def _cmd_config(args: argparse.Namespace) -> tuple[object, str]:
     paths = state_paths()
     default = paths.root / "prefixes"
+    default_downloads = default_download_dir()
     sources, _ = load_providers()
     key = args.key
-    core = {"prefix_dir", "auto_details", "auto_match", *SWITCHES}
+    core = {"prefix_dir", "download_dir", "auto_details", "auto_match", *SWITCHES}
     changing = bool(args.value or args.reset or args.secret)
     if changing and not key:
         raise LudexError("invalid_setting", "name the setting to change")
@@ -639,6 +678,8 @@ def _cmd_config(args: argparse.Namespace) -> tuple[object, str]:
         try:
             if changing and key == "prefix_dir":
                 set_prefix_root(conn, None if args.reset else args.value)
+            elif changing and key == "download_dir":
+                set_download_dir(conn, None if args.reset else args.value)
             elif changing and key == "auto_details":
                 set_auto_details(conn, None if args.reset else _YES_NO[args.value.lower()])
             elif changing and key == "auto_match":
@@ -646,6 +687,7 @@ def _cmd_config(args: argparse.Namespace) -> tuple[object, str]:
             elif changing and key in SWITCHES:
                 set_switch(paths, conn, sources, key, _YES_NO[args.value.lower()])
             folder = get_prefix_root(conn, default)
+            downloads = get_download_dir(conn, default_downloads)
             auto = get_auto_details(conn)
             match = get_auto_match(conn)
         finally:
@@ -653,12 +695,16 @@ def _cmd_config(args: argparse.Namespace) -> tuple[object, str]:
     plugin_values = {name: describe(paths, plugin) for name, plugin in sorted(sources.items()) if plugin.settings}
     data: dict[str, Any] = {
         "prefix_dir": str(folder),
+        "download_dir": str(downloads),
         "auto_details": auto,
         "auto_match": match,
         **{k: get_switch(paths, k) for k in sorted(SWITCHES)},
         "plugins": plugin_values,
     }
-    shown = {"prefix_dir": f"prefix_dir: {folder}" + (" (default)" if folder == default else "")}
+    shown = {
+        "prefix_dir": f"prefix_dir: {folder}" + (" (default)" if folder == default else ""),
+        "download_dir": f"download_dir: {downloads}" + (" (default)" if downloads == default_downloads else ""),
+    }
     shown.update({k: f"{k}: {'yes' if data[k] else 'no'}" for k in ("auto_details", "auto_match", *sorted(SWITCHES))})
     for name, values in plugin_values.items():
         shown.update({f"{name}.{k}": f"{name}.{k}: {v if v is not None else '(not set)'}" for k, v in values.items()})
@@ -714,7 +760,13 @@ def _cmd_launch(args: argparse.Namespace) -> tuple[object, str]:
     conn = connect(paths.database)
     config_for = lambda store, account: get_account(paths, f"{store}:{account}").config
     try:
+        if args.status:
+            return _job_status(conn, "play", resolve_game(conn, args.game) if args.game else None)
+        if not args.game:
+            raise LudexError("missing_game", "name the game to launch (or use --status)")
         game_id = resolve_game(conn, args.game)
+        if args.stop:
+            return _job_stop(conn, "play", game_id)
         if args.dry_run:
             plan = prepare_launch(conn, sources, game_id, args.store, config_for, get_prefix_root(conn, paths.root / "prefixes"))
             data = {
@@ -724,10 +776,12 @@ def _cmd_launch(args: argparse.Namespace) -> tuple[object, str]:
             how = plan.url or shlex.join(plan.argv)
             env = f"  [env: {', '.join(data['env'])}]" if data["env"] else ""
             return data, f"would start {plan.target}: {how}{env}"
-        target = launch_game(conn, sources, game_id, args.store, config_for, get_prefix_root(conn, paths.root / "prefixes"))
+        target, job = launch_game(conn, sources, game_id, args.store, config_for, get_prefix_root(conn, paths.root / "prefixes"), paths.root / "logs")
     finally:
         conn.close()
-    return {"id": game_id, "launched": target}, f"launching {target}"
+    if job is None:
+        return {"id": game_id, "launched": target, "job": None}, f"launching {target}"
+    return {"id": game_id, "launched": target, "job": _job_data(job)}, f"launching {target} (job {job.id}); 'ludex launch --status' shows whether it runs, '--stop' ends it; log: {job.log}"
 
 
 def _cmd_tui(args: argparse.Namespace) -> tuple[object, str]:
@@ -739,6 +793,7 @@ def _cmd_tui(args: argparse.Namespace) -> tuple[object, str]:
         paths.database, sources, lambda: installed_keys(paths, sources)[0],
         lambda store, account: get_account(paths, f"{store}:{account}").config,
         paths.root / "prefixes", paths.import_lock, paths,
+        played=lambda conn: play_stats(paths, sources, conn)[0],
     ).run()
     return {}, ""
 

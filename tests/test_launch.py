@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -32,7 +33,7 @@ def test_urls_encode_the_store_id():
 
 def test_launch_opens_the_plugin_url_with_xdg_open(conn, opened):
     import_account(conn, "main", [OwnedGame("steam", "220", "HL2")], store="steam")
-    assert launch_mod.launch_game(conn, {"steam": steam.PLUGIN}, 1) == "steam:220"
+    assert launch_mod.launch_game(conn, {"steam": steam.PLUGIN}, 1) == ("steam:220", None)
     assert opened == [["xdg-open", "steam://rungameid/220"]]
 
 
@@ -44,7 +45,7 @@ def test_several_launchable_stores_need_a_choice_and_local_is_not_launchable(con
     with pytest.raises(LudexError) as info:
         launch_mod.launch_game(conn, sources, 1)
     assert info.value.code == "launch_ambiguous"
-    assert launch_mod.launch_game(conn, sources, 1, "epic") == "epic:h"
+    assert launch_mod.launch_game(conn, sources, 1, "epic") == ("epic:h", None)
     with pytest.raises(LudexError) as info:
         launch_mod.launch_game(conn, sources, 1, "local")
     assert info.value.code == "not_launchable"
@@ -89,10 +90,23 @@ def test_install_command_runs_in_the_background_as_a_tracked_job(conn, tmp_path)
         launch_mod.prepare_install(conn, {"epic": failing}, 1, None, lambda store, account: {})
 
 
-def test_command_launch_runs_detached_in_the_game_folder_with_the_account_config(conn, monkeypatch, tmp_path):
-    calls = []
-    monkeypatch.setattr(launch_mod.subprocess, "Popen", lambda argv, **kw: calls.append((argv, kw)))
+def _wait_for(conn, job_id):
+    from ludex.jobs import list_jobs
+
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        job = next(j for j in list_jobs(conn) if j.id == job_id)
+        if job.state != "running":
+            return job
+        time.sleep(0.1)
+    raise AssertionError("the game did not end")
+
+
+def test_command_launch_is_a_play_job_in_the_game_folder_with_the_account_config(conn, tmp_path):
     exe = tmp_path / "g" / "start.sh"
+    exe.parent.mkdir()
+    exe.write_text("#!/bin/sh\npwd\necho \"$GREETING\"\nsleep 1\n")
+    exe.chmod(0o755)
     seen = []
 
     def command(config, store_id):
@@ -101,12 +115,29 @@ def test_command_launch_runs_detached_in_the_game_folder_with_the_account_config
 
     import_account(conn, "disk", [OwnedGame("local", "g", "G")], store="local")
     sources = {"local": Provider("local", "l", (), lambda c: None, launch_command=command)}
-    assert launch_mod.launch_game(conn, sources, 1, None, lambda store, account: {"path": f"{store}/{account}"}) == "local:g"
-    argv, kw = calls[0]
-    assert (argv, kw["cwd"], kw["start_new_session"], seen) == ([str(exe)], exe.parent, True, [({"path": "local/disk"}, "g")])
-    with pytest.raises(LudexError) as info:  # config is required to build the command
-        launch_mod.launch_game(conn, sources, 1)
-    assert info.value.code == "launch_failed"
+    logs = tmp_path / "logs"
+    target, job = launch_mod.launch_game(conn, sources, 1, None, lambda store, account: {"path": f"{store}/{account}"}, None, logs)
+    assert (target, job.kind, job.state, seen) == ("local:g", "play", "running", [({"path": "local/disk"}, "g")])
+    with pytest.raises(LudexError) as info:  # a running game is not started twice
+        launch_mod.launch_game(conn, sources, 1, None, lambda *a: {}, None, logs)
+    assert info.value.code == "job_running" and "ludex launch --status" in info.value.message
+    ended = _wait_for(conn, job.id)
+    assert (ended.state, ended.exit_code) == ("done", 0)
+    assert str(exe.parent) in ended.log.read_text()  # started in the game folder
+    again = launch_mod.launch_game(conn, sources, 1, None, lambda *a: {}, None, logs)[1]
+    _wait_for(conn, again.id)
+    assert again.log == ended.log and ended.log.read_text().count(str(exe.parent)) == 1  # each start replaces the log
+
+
+def test_command_launch_refuses_a_file_that_cannot_run_and_needs_somewhere_to_log(conn, tmp_path):
+    exe = tmp_path / "start.sh"
+    exe.write_text("#!/bin/sh\n")  # not executable
+    import_account(conn, "disk", [OwnedGame("local", "g", "G")], store="local")
+    sources = {"local": Provider("local", "l", (), lambda c: None, launch_command=lambda c, s: [str(exe)])}
+    for logs, message in ((tmp_path / "logs", "executable"), (None, "game log")):
+        with pytest.raises(LudexError, match=message) as info:
+            launch_mod.launch_game(conn, sources, 1, None, lambda *a: {}, None, logs)
+        assert info.value.code == "launch_failed"
 
 
 @pytest.mark.parametrize("argv", [[], ["relative.sh"]])

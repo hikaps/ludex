@@ -672,3 +672,68 @@ def test_plugin_settings_rejects_secret_on_argv_and_unknown_names(world: World, 
     for argv in (["config", "fake.token", SECRET], ["config", "fake.nope", "x"], ["config", "ghost.region", "x"], ["config", "fake.region", "--secret"], ["config", "prefix_dir", "--secret"]):
         code, out, err = run(capsys, *argv)
         assert code == 1 and SECRET not in out + err, argv
+
+
+def test_launch_starts_a_command_game_as_a_job_that_status_and_stop_report(world: World, capsys: pytest.CaptureFixture[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    exe = tmp_path / "game.sh"
+    exe.write_text("#!/bin/sh\necho playing\nexec sleep 60\n")
+    exe.chmod(0o755)
+    local = Provider(
+        "disk", "Disk", (), lambda config: FetchResult([OwnedGame("disk", "g", "Gem")], False, "disk"),
+        launch_command=lambda config, store_id: [str(exe)],
+    )
+    monkeypatch.setattr("ludex.cli.load_providers", lambda: ({"disk": local}, {}))
+    assert run(capsys, "account", "add", "disk", "main")[0] == 0
+    assert run(capsys, "import", "--all")[0] == 0
+    code, out, err = run(capsys, "--json", "launch", "Gem")
+    assert code == 0, err
+    job = json.loads(out)["data"]["job"]
+    assert (job["state"], job["target"]) == ("running", "disk:g")
+    code, out, _ = run(capsys, "launch", "--status")
+    assert code == 0 and "running" in out and "Gem" in out and "since" in out
+    code, out, _ = run(capsys, "launch", "Gem")  # not twice
+    assert code != 0
+    code, out, err = run(capsys, "launch", "Gem", "--stop")
+    assert code == 0 and "stopped Gem" in out, err
+    assert run(capsys, "launch", "Gem", "--stop")[0] != 0  # nothing left to stop
+    assert "stopped" in run(capsys, "launch", "--status")[1]
+
+
+def test_show_and_ls_sort_report_play_time_from_the_store_record(world: World, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+    from ludex.plugins import PlayRecord
+
+    store = Provider(
+        "rec", "Recording", (), lambda config: FetchResult([OwnedGame("rec", "1", "Alpha"), OwnedGame("rec", "2", "Bravo"), OwnedGame("rec", "3", "Charlie")], True, "rec"),
+        playtime=lambda config: {"1": PlayRecord(30, "2026-11-01T10:00:00Z"), "3": PlayRecord(725, "2026-10-01T10:00:00Z")},
+    )
+    monkeypatch.setattr("ludex.cli.load_providers", lambda: ({"rec": store}, {}))
+    assert run(capsys, "account", "add", "rec", "main")[0] == 0
+    assert run(capsys, "import", "--all")[0] == 0
+    assert [line.split()[1] for line in run(capsys, "ls")[1].splitlines()] == ["Alpha", "Bravo", "Charlie"]
+    code, out, _ = run(capsys, "ls", "--sort", "played")
+    assert [line.split()[1] for line in out.splitlines()] == ["Charlie", "Alpha", "Bravo"] and "12h 05m, last 2026-10-01" in out
+    code, out, _ = run(capsys, "--json", "ls", "--sort", "recent")
+    games = json.loads(out)["data"]["games"]
+    assert [(g["title"], g["played_minutes"], g["last_played"]) for g in games] == [
+        ("Alpha", 30, "2026-11-01T10:00:00Z"), ("Charlie", 725, "2026-10-01T10:00:00Z"), ("Bravo", 0, None)]
+    code, out, _ = run(capsys, "show", "Charlie")
+    assert "played: 12h 05m, last 2026-10-01" in out
+    code, out, _ = run(capsys, "--json", "show", "Bravo")
+    assert json.loads(out)["data"]["played_minutes"] == 0
+
+
+def test_acquire_without_to_uses_the_download_dir_setting(world: World, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    from ludex.plugins import AcquireResult
+
+    def acquire(request, report):
+        (request.destination / "G").mkdir()
+        return AcquireResult(request.destination / "G", {})
+
+    store = Provider("rel", "Releases", (), lambda config: FetchResult([], True, "rel"), acquire=acquire)
+    monkeypatch.setattr("ludex.cli.load_providers", lambda: ({"rel": store}, {}))
+    where = tmp_path / "dl"
+    assert run(capsys, "config", "download_dir", str(where))[0] == 0
+    code, out, _ = run(capsys, "acquire", "rel", "1")
+    assert code == 0 and (where / "G").is_dir() and str(where / "G") in out
+    assert run(capsys, "config", "download_dir", "relative/dir")[0] != 0
+    assert run(capsys, "config", "download_dir", "--reset")[0] == 0

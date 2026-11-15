@@ -5,7 +5,7 @@ import asyncio
 import pytest
 
 from ludex import launch as launch_mod
-from ludex.library import import_account
+from ludex.library import import_account, list_games
 from ludex.plugins import OwnedGame
 from ludex.sources import epic, steam
 from ludex.game_settings import get_prefix_root
@@ -528,16 +528,124 @@ def test_i_starts_a_tracked_install_the_detail_shows_it_and_x_stops_it(tmp_path)
         app = LudexApp(db, {"epic": tool}, lambda: set(), lambda store, account: {})
         async with app.run_test() as pilot:
             await pilot.pause()
-            assert app.check_action("stop_install", ()) is False  # nothing installing yet
+            assert app.check_action("stop_job", ()) is False  # nothing installing yet
             await pilot.press("i")
             await pilot.pause(1)
             app._poll_jobs()
-            assert app.check_action("stop_install", ()) is True
+            assert app.check_action("stop_job", ()) is True
             assert "installing Progress 42%" in str(app.query_one("#detail", Static).visual.plain)
             await pilot.press("x")
             await app.workers.wait_for_complete()
             await pilot.pause(0.5)
-            assert app.check_action("stop_install", ()) is False
+            assert app.check_action("stop_job", ()) is False
             assert [j.state for j in list_jobs(app._conn)] == ["stopped"]
 
     asyncio.run(scenario())
+
+
+def test_l_starts_a_command_game_as_a_job_the_detail_shows_it_and_x_stops_it(tmp_path):
+    from ludex.jobs import list_jobs
+    from ludex.plugins import Provider
+
+    exe = tmp_path / "game.sh"
+    exe.write_text("#!/bin/sh\nexec sleep 60\n")
+    exe.chmod(0o755)
+    db = tmp_path / "db.sqlite3"
+    conn = connect(db)
+    import_account(conn, "m", [OwnedGame("disk", "g", "Gem")], store="disk")
+    conn.close()
+    disk = Provider("disk", "d", (), lambda config: None, launch_command=lambda config, store_id: [str(exe)])
+
+    async def scenario():
+        app = LudexApp(db, {"disk": disk}, lambda: {("disk", "g")}, lambda store, account: {})
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("tab")  # the Installed tab
+            assert app.check_action("stop_job", ()) is False  # nothing running yet
+            await pilot.press("l")
+            await pilot.pause(1)
+            app._poll_jobs()
+            assert app.check_action("stop_job", ()) is True
+            assert "running since" in str(app.query_one("#detail", Static).visual.plain)
+            await pilot.press("x")
+            await app.workers.wait_for_complete()
+            await pilot.pause(0.5)
+            assert app.check_action("stop_job", ()) is False
+            assert [(j.kind, j.state) for j in list_jobs(app._conn)] == [("play", "stopped")]
+
+    asyncio.run(scenario())
+
+
+def test_o_orders_by_play_time_and_the_detail_shows_it(tmp_path):
+    from ludex.playtime import Played
+
+    db = tmp_path / "db.sqlite3"
+    conn = connect(db)
+    import_account(conn, "m", [OwnedGame("steam", "1", "Alpha"), OwnedGame("steam", "2", "Bravo"), OwnedGame("steam", "3", "Charlie")], store="steam")
+    ids = {g["title"]: g["id"] for g in list_games(conn)}
+    conn.close()
+    stats = {ids["Charlie"]: Played(725, "2026-10-01T10:00:00Z"), ids["Alpha"]: Played(30, "2026-11-01T10:00:00Z")}
+
+    async def scenario():
+        app = LudexApp(db, {"steam": steam.PLUGIN}, played=lambda c: stats)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            owned = app.query_one("#owned-table", DataTable)
+            titles = lambda: [str(owned.get_row_at(i)[1]) for i in range(owned.row_count)]
+            assert titles() == ["Alpha", "Bravo", "Charlie"]
+            await pilot.press("o")  # most recently played first
+            assert titles() == ["Alpha", "Charlie", "Bravo"]
+            await pilot.press("o")  # most played first
+            assert titles() == ["Charlie", "Alpha", "Bravo"]
+            owned.move_cursor(row=0)
+            await pilot.pause()
+            assert "played 12h 05m, last 2026-10-01" in str(app.query_one("#detail", Static).visual.plain)
+            assert "by played" in app.query_one("#left").border_subtitle
+            await pilot.press("o")
+            assert titles() == ["Alpha", "Bravo", "Charlie"]
+
+    asyncio.run(scenario())
+
+
+def test_install_on_a_hit_of_a_downloading_plugin_asks_for_a_folder_and_remembers_it(tmp_path, monkeypatch):
+    from ludex.game_settings import get_download_dir
+    from ludex.plugins import AcquireResult, Provider, SearchHit
+
+    db = tmp_path / "db.sqlite3"
+    connect(db).close()
+    got = []
+
+    def acquire(request, report):
+        report("fetching")
+        got.append((request.store_id, request.title, request.destination))
+        target = request.destination / "Doom"
+        target.mkdir()
+        return AcquireResult(target, {})
+
+    store = Provider("rel", "r", (), search=lambda q: [SearchHit("rel", "7", "Doom", "https://rel.example/7")], acquire=acquire)
+    opened = []
+    monkeypatch.setattr(launch_mod.subprocess, "run", lambda argv, **kw: opened.append(argv))
+    where = tmp_path / "games"
+
+    async def scenario():
+        app = LudexApp(db, {"rel": store})
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("tab", "tab")
+            await pilot.press("slash", "d", "o", "o", "m", "enter")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert app.query_one("#search-table", DataTable).row_count == 1
+            await pilot.press("i")  # no client link: ask where to put it
+            await pilot.pause()
+            box = app.screen.query_one("#folder-input", Input)
+            box.value = str(where)
+            await pilot.press("enter")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert get_download_dir(app._conn, tmp_path) == where
+
+    asyncio.run(scenario())
+    assert opened == []  # the page link is never handed to the desktop
+    assert [(i, t, d.name) for i, t, d in got] == [("7", "Doom", "games")]
+    assert (where / "Doom").is_dir()

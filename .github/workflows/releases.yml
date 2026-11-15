@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - develop
-      - main
 
 permissions:
   contents: read
@@ -54,12 +53,9 @@ jobs:
 
           branch = os.environ["BRANCH"]
           run_number = os.environ["RUN_NUMBER"]
-          if branch == "develop":
-              channel, version = "beta", f"{base}.dev{run_number}"
-          elif branch == "main":
-              channel, version = "stable", f"{base}.post{run_number}"
-          else:
+          if branch != "develop":
               raise SystemExit(f"unsupported release branch: {branch!r}")
+          channel, version = "beta", f"{base}.dev{run_number}"
 
           project, project_count = re.subn(
               r'(?m)^version = "' + re.escape(base) + r'"$',
@@ -340,19 +336,13 @@ jobs:
           fi
           git push origin "--force-with-lease=refs/tags/$CHANNEL:$OLD_SHA" "$SOURCE_SHA:refs/tags/$CHANNEL"
 
-          if [[ "$CHANNEL" == "beta" ]]; then
-            TITLE="Rolling beta"
-            PRERELEASE=true
-            MAKE_LATEST=false
-          else
-            TITLE="Stable"
-            PRERELEASE=false
-            MAKE_LATEST=true
-          fi
+          # Only the pre-release rolls; stable versions are tagged vX.Y.Z by pypi.yml and keep the Latest badge.
+          TITLE="Rolling beta"
+          PRERELEASE=true
+          MAKE_LATEST=false
           BETA_URL="https://github.com/$REPOSITORY/releases/download/beta/ludex.tar.gz"
-          STABLE_URL="https://github.com/$REPOSITORY/releases/download/stable/ludex.tar.gz"
-          NOTES="$(printf 'Rolling %s package for `%s` at `%s`.\n\nPackage version: `%s`\nWorkflow: %s\n\nBeta with uv: `uv tool install %s`\nBeta with pipx: `pipx install %s`\nStable with uv: `uv tool install %s`\nStable with pipx: `pipx install %s`' \
-            "$CHANNEL" "$SOURCE_BRANCH" "$SOURCE_SHA" "$PACKAGE_VERSION" "$RUN_URL" "$BETA_URL" "$BETA_URL" "$STABLE_URL" "$STABLE_URL")"
+          NOTES="$(printf 'Rolling pre-release of `%s` at `%s`. For the latest stable version use `uv tool install ludex-games`.\n\nPackage version: `%s`\nWorkflow: %s\n\nWith uv: `uv tool install %s`\nWith pipx: `pipx install %s`' \
+            "$SOURCE_BRANCH" "$SOURCE_SHA" "$PACKAGE_VERSION" "$RUN_URL" "$BETA_URL" "$BETA_URL")"
 
           if [[ "$RELEASE_COUNT" == "0" ]]; then
             RELEASE_FLAGS=()
@@ -384,8 +374,6 @@ jobs:
             echo "- Source: \`$SOURCE_SHA\`"
             echo "- Package: \`$PACKAGE_VERSION\`"
             echo "- Workflow: $RUN_URL"
-            echo "- Beta with uv: \`uv tool install $BETA_URL\`"
-            echo "- Beta with pipx: \`pipx install $BETA_URL\`"
-            echo "- Stable with uv: \`uv tool install $STABLE_URL\`"
-            echo "- Stable with pipx: \`pipx install $STABLE_URL\`"
+            echo "- With uv: \`uv tool install $BETA_URL\`"
+            echo "- With pipx: \`pipx install $BETA_URL\`"
           } >> "$GITHUB_STEP_SUMMARY"

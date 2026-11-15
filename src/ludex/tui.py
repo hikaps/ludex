@@ -6,6 +6,7 @@ paging or more in-app maintenance when needed.
 """
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
@@ -20,20 +21,22 @@ from textual.widgets.data_table import RowDoesNotExist
 
 from .accounts import get_account, list_accounts, update_account
 from .errors import LudexError
-from .game_settings import get_prefix_root, get_settings, set_prefix_root, update_settings
+from .acquire import acquire_game
+from .game_settings import default_download_dir, get_download_dir, get_prefix_root, get_settings, set_download_dir, set_prefix_root, update_settings
 from .metadata import cached_match, cached_metadata, choose_match, clear_match, default_query, game_metadata, match_candidates, get_auto_details, get_auto_match, set_auto_details, set_auto_match
 from .jobs import last_line, list_jobs, stop_job
 from .launch import install_game, launch_game, open_url
 from .find import find_games, owned_keys
 from .library import get_game, list_games
 from .paths import StatePaths
+from .playtime import Played, describe_played, epoch
 from .plugins import ConfigField, Provider
 from .provider_settings import get_values, set_value
 from .runners import find_runners
 from .storage import connect, writer_lock
 from .switches import get_switch, set_switch
 from .plugin_manager import list_plugins, set_plugin_enabled
-from .tui_settings import GameSettingsScreen, MatchScreen, PathInput, PathSuggester
+from .tui_settings import FolderPrompt, GameSettingsScreen, MatchScreen, PathInput, PathSuggester
 
 
 _SOURCE_LABELS = {
@@ -121,7 +124,8 @@ class LudexApp(App[None]):
         Binding("e", "edit", "Game settings"),
         Binding("m", "match", "Match title"),
         Binding("i", "install", "Install"),
-        Binding("x", "stop_install", "Stop install"),
+        Binding("x", "stop_job", "Stop"),
+        Binding("o", "order", "Order"),
         Binding("s", "settings", "Settings"),
         Binding("r", "reload", "Reload"),
         Binding("q", "quit", "Quit"),
@@ -136,8 +140,12 @@ class LudexApp(App[None]):
         prefix_root: Path | None = None,
         lock: Path | None = None,
         paths: StatePaths | None = None,
+        played: Callable[[sqlite3.Connection], Mapping[int, Played]] = lambda conn: {},
     ) -> None:
         super().__init__()
+        self._play_stats = played
+        self._played: Mapping[int, Played] = {}
+        self._sort = "title"  # title, recent or played; the o key cycles
         self._database = database
         self._sources = sources
         self._installed = installed
@@ -147,7 +155,8 @@ class LudexApp(App[None]):
         self._paths = paths
         self._keys: set[tuple[str, str]] = set()
         self._jobs: dict[int, str] = {}  # job id -> last seen state, to announce when one ends
-        self._installing: set[int] = set()  # game ids with a running install
+        self._downloading: set[str] = set()  # store:id of search hits being downloaded this session
+        self._busy: dict[int, str] = {}  # game id -> kind of its running job (install or play)
         self._hits: dict[str, dict] = {}
         self._auto = True
         self._match = False
@@ -210,8 +219,8 @@ class LudexApp(App[None]):
         self.query_one("#folder", Input).value = shown
         self.action_reload()
         self._table().focus()
-        self._jobs = {j.id: j.state for j in list_jobs(self._conn, "install", limit=50)}
-        self._installing = {j.game_id for j in list_jobs(self._conn, "install", running=True)}
+        self._jobs = {j.id: j.state for j in list_jobs(self._conn, limit=50)}
+        self._busy = {j.game_id: j.kind for j in list_jobs(self._conn, running=True)}
         self.set_interval(2.0, self._poll_jobs)
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
@@ -220,10 +229,10 @@ class LudexApp(App[None]):
         # tab, arrows and paging belong to the list only on the main screen; forms keep their own
         if len(self.screen_stack) > 1 and action not in {"quit"}:
             return False
-        tab_actions = {"owned": {"install", "edit", "match", "stop_install"}, "installed": {"launch", "edit", "match", "stop_install"}, "search": {"install"}}
-        if action == "stop_install" and (self._active() not in {"owned", "installed"} or self._current_id() not in self._installing):
-            return False  # only while the game under the cursor is installing
-        if action in {"launch", "edit", "install", "match", "stop_install"}:  # what you can do depends on the tab
+        tab_actions = {"owned": {"install", "edit", "match", "stop_job", "order"}, "installed": {"launch", "edit", "match", "stop_job", "order"}, "search": {"install"}}
+        if action == "stop_job" and (self._active() not in {"owned", "installed"} or self._current_id() not in self._busy):
+            return False  # only while the game under the cursor is installing or running
+        if action in {"launch", "edit", "install", "match", "stop_job", "order"}:  # what you can do depends on the tab
             return action in tab_actions.get(self._active(), set())
         if self._active() == "settings" and action in {"focus_filter", "settings"}:
             return False
@@ -283,8 +292,11 @@ class LudexApp(App[None]):
         query = self.query_one("#filter", Input).value.strip() or None
         counts = []
         installed_ids: set[int] = set()
+        order = None
+        if self._sort != "title":
+            order = {g: p.minutes if self._sort == "played" else epoch(p.last_played) if p.last_played else -1 for g, p in self._played.items()}
         for name, only in (("installed", self._keys), ("owned", None)):
-            games = list_games(self._conn, query=query, only=only, limit=500, fuzzy=True)
+            games = list_games(self._conn, query=query, only=only, limit=500, fuzzy=True, order=order)
             table = self.query_one(f"#{name}-table", DataTable)
             table.clear()
             if name == "installed":
@@ -293,7 +305,7 @@ class LudexApp(App[None]):
                 mark = Text("●", style="#9ece6a") if game["id"] in installed_ids else Text(" ")
                 table.add_row(mark, game["title"], _stores_text(game["stores"]), key=str(game["id"]))
             counts.append(f"{len(games)}{'+' if len(games) == 500 else ''} {name}")
-        self._status(", ".join(reversed(counts)))
+        self._status(", ".join(reversed(counts)) + ("" if self._sort == "title" else f", by {self._sort}"))
         self._show_hint()
 
     def _show_hint(self) -> None:
@@ -371,6 +383,8 @@ class LudexApp(App[None]):
         ]
         if any((o["store"], str(o["store_id"])) in self._keys for o in game["ownership"]):
             lines.append("[#9ece6a]● installed[/]")
+        if (played := self._played.get(game_id)) is not None:
+            lines.append(f"[dim]played[/] {escape(describe_played(played))}")
         found = next((m for o in game["ownership"] if (m := cached_metadata(self._conn, o["store"], str(o["store_id"])))), None)
         if found is not None:
             lines += [""] + ([escape(found.description)] if found.description else [])
@@ -379,9 +393,11 @@ class LudexApp(App[None]):
             if matched:
                 label = escape(f"matched to {matched['plugin']}: {matched['title']}")
                 lines.append(f'[dim][link="{matched["url"]}"]{label}[/link][/]' if matched["url"] and not set(matched["url"]) & set("\"[] \\") else f"[dim]{label}[/]")
-        running = list_jobs(self._conn, "install", game_id, running=True, limit=1)
-        if running:
+        running = list_jobs(self._conn, None, game_id, running=True, limit=1)
+        if running and running[0].kind == "install":
             lines.append(f"[b #e0af68]installing[/] {escape(last_line(running[0]))}  [dim](x stops it)[/]")
+        elif running:
+            lines.append(f"[b #9ece6a]running[/] since {escape(running[0].started_at)}  [dim](x stops it)[/]")
         if note:
             lines += ["", note]
         self.query_one("#detail", Static).update("\n".join(lines))
@@ -455,6 +471,11 @@ class LudexApp(App[None]):
 
     def action_reload(self) -> None:
         self._keys = self._installed()
+        self._played = self._play_stats(self._conn)
+        self._reload()
+
+    def action_order(self) -> None:
+        self._sort = {"title": "recent", "recent": "played", "played": "title"}[self._sort]
         self._reload()
 
     def _prefix(self) -> Path | None:
@@ -744,11 +765,48 @@ class LudexApp(App[None]):
         if hit is None:
             return
         plugin = self._sources.get(hit["store"])
+        if plugin and plugin.acquire and not plugin.install_url:  # no client to ask: the plugin downloads it, so ask where to
+            self.push_screen(
+                FolderPrompt(f"Download {hit['title']} to", str(get_download_dir(self._conn, default_download_dir()))),
+                lambda folder: self._download_hit(hit, folder),
+            )
+            return
         try:  # the store client's own install link when the plugin has one, else the store page
             open_url(plugin.install_url(hit["store_id"]) if plugin and plugin.install_url else hit["url"], f"the {hit['store']} client")
             self.notify(f"asked the client to install {hit['title']}")
         except LudexError as exc:
             self.notify(exc.message, severity="error")
+
+    def _download_hit(self, hit: dict, folder: str | None) -> None:
+        if folder is None:
+            return
+        key = f"{hit['store']}:{hit['store_id']}"
+        if key in self._downloading:
+            self.notify(f"{hit['title']} is already downloading", severity="warning")
+            return
+        try:
+            self._write(lambda: set_download_dir(self._conn, folder))
+        except LudexError as exc:
+            self.notify(exc.message, severity="error")
+            return
+        destination = get_download_dir(self._conn, default_download_dir())
+        self._downloading.add(key)
+        self.notify(f"downloading {hit['title']} to {destination}")
+
+        # ponytail: a download is a worker of this session, not a tracked job (jobs belong to a library game); quitting stops it
+        def work() -> None:
+            try:
+                result = acquire_game(self._sources, hit["store"], hit["store_id"], hit["title"], destination, lambda m: self.call_from_thread(self._status, m))
+                self.call_from_thread(self._download_done, key, f"downloaded {hit['title']} into {result.directory}", None)
+            except LudexError as exc:
+                self.call_from_thread(self._download_done, key, None, f"{hit['title']}: {exc.message}")
+
+        self.run_worker(work, thread=True, group="download")
+
+    def _download_done(self, key: str, message: str | None, error: str | None) -> None:
+        self._downloading.discard(key)
+        self._status("")
+        self.notify(error or message or "", severity="error" if error else "information", timeout=15)
 
     def action_install(self) -> None:
         if self._active() == "search":
@@ -769,23 +827,23 @@ class LudexApp(App[None]):
             self.notify(f"asked the client to install {target}" if job is None else f"installing {target} in the background (x stops it)")
             if job is not None:
                 self._jobs[job.id] = job.state
-                self._installing.add(game_id)
+                self._busy[game_id] = "install"
                 self._show_game(game_id)
         except LudexError as exc:
             self.notify(exc.message, severity="error")
 
-    def action_stop_install(self) -> None:
+    def action_stop_job(self) -> None:
         game_id = self._current_id()
-        running = list_jobs(self._conn, "install", game_id, running=True, limit=1) if game_id is not None else []
+        running = list_jobs(self._conn, None, game_id, running=True, limit=1) if game_id is not None else []
         if not running:
             return
-        self.run_worker(lambda: self._stop_install(running[0].id, game_id), thread=True, group="stop")
+        self.run_worker(lambda: self._stop_job(running[0].id), thread=True, group="stop")
 
-    def _stop_install(self, job_id: int, game_id: int) -> None:
+    def _stop_job(self, job_id: int) -> None:
         conn = connect(self._database)  # stopping waits for the process, so it runs off the UI thread
         try:
             job = stop_job(conn, job_id)
-            message, severity = f"stopped the install of {job.title}; press i to resume", "information"
+            message, severity = (f"stopped the install of {job.title}; press i to resume" if job.kind == "install" else f"stopped {job.title}"), "information"
         except LudexError as exc:
             message, severity = exc.message, "error"
         finally:
@@ -793,26 +851,32 @@ class LudexApp(App[None]):
         self.call_from_thread(self._poll_jobs, message, severity)
 
     def _poll_jobs(self, message: str | None = None, severity: str = "information") -> None:
-        """Every 2 s: announce installs that ended, refresh the installed marks, and keep the current game's progress live."""
+        """Every 2 s: announce installs and games that ended, refresh the installed marks, and keep the current game's state live."""
         if not self.query(Tabs):
             return
         if message:
             self.notify(message, severity=severity)
-        jobs = list_jobs(self._conn, "install", limit=50)
+        jobs = list_jobs(self._conn, limit=50)
         ended = [j for j in jobs if self._jobs.get(j.id) == "running" and j.state != "running"]
         self._jobs.update({j.id: j.state for j in jobs})
-        self._installing = {j.game_id for j in jobs if j.state == "running"}
+        self._busy = {j.game_id: j.kind for j in jobs if j.state == "running"}
         for job in ended:
-            if job.state == "done":
+            what = f"the install of {job.title}" if job.kind == "install" else job.title
+            if job.state == "done" and job.kind == "install":
                 self.notify(f"installed {job.title}")
             elif job.state == "failed":
-                self.notify(f"the install of {job.title} failed (exit {job.exit_code}); log: {job.log}", severity="error", timeout=15)
+                verb = "failed" if job.kind == "install" else "exited with an error"
+                self.notify(f"{what} {verb} (exit {job.exit_code}); log: {job.log}", severity="error" if job.kind == "install" else "warning", timeout=15)
             elif job.state == "lost":
-                self.notify(f"the install of {job.title} ended without a result; log: {job.log}", severity="warning", timeout=15)
-        if any(j.state == "done" for j in ended):
+                self.notify(f"{what} ended without a result; log: {job.log}", severity="warning", timeout=15)
+        if any(j.state == "done" and j.kind == "install" for j in ended):
             self.action_reload()
+        elif any(j.kind == "play" for j in ended):
+            self._played = self._play_stats(self._conn)  # a session just ended
+            if self._sort != "title":
+                self._reload()
         current = self._current_id() if self._active() in {"owned", "installed"} else None
-        if current is not None and (current in self._installing or any(j.game_id == current for j in ended)):
+        if current is not None and (current in self._busy or any(j.game_id == current for j in ended)):
             self._show_game(current)
         self.refresh_bindings()
 
@@ -823,14 +887,19 @@ class LudexApp(App[None]):
         if game_id is None:
             return
         try:
+            logs = self._database.parent / "logs"
             try:
-                target = launch_game(self._conn, self._sources, game_id, None, self._config_for, self._prefix())
+                target, job = launch_game(self._conn, self._sources, game_id, None, self._config_for, self._prefix(), logs)
             except LudexError as exc:
                 if exc.code != "launch_ambiguous":
                     raise
                 # several stores can start it: use the first, alphabetically
                 store = exc.message.split("launched from ")[1].split(";")[0].split(", ")[0]
-                target = launch_game(self._conn, self._sources, game_id, store, self._config_for, self._prefix())
-            self.notify(f"launching {target}")
+                target, job = launch_game(self._conn, self._sources, game_id, store, self._config_for, self._prefix(), logs)
+            self.notify(f"launching {target}" if job is None else f"launching {target} (x stops it)")
+            if job is not None:
+                self._jobs[job.id] = job.state
+                self._busy[game_id] = "play"
+                self._show_game(game_id)
         except LudexError as exc:
             self.notify(exc.message, severity="error")

@@ -4,15 +4,42 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.54.0] - 2026-11-10
+
+### Added
+
+- **tui:** `i` on a Search hit of a plugin that downloads games asks for a folder and downloads there, instead of asking the desktop to open the hit's link (which failed with "the system could not open ... client")
+- **config:** `download_dir` setting (default `~/Games`); `ludex acquire` uses it when `--to` is omitted
+
+### Fixed
+
+- **update:** `ludex update` on a uv tool install failed with "Executable already exists"; it now passes `--force`
+
+## [0.53.0] - 2026-11-09
+
+### Added
+
+- **playtime:** Play time and last played for each game, from Steam's and Heroic's own records and from the games ludex started itself: `ludex show`, `ludex ls --sort played|recent`, the TUI Detail pane and `o`. New optional plugin capability `playtime`
+
+## [0.52.0] - 2026-11-09
+
+### Added
+
+- **jobs:** Games ludex starts itself run as tracked jobs: `launch --status` and `--stop`, `x` stops one in the TUI, and a failed start is reported with its log (a game's output was discarded before)
+
 ### Changed
 
-- **packaging:** The package is published as `ludex-games` because PyPI rejects `ludex` as too close to an existing project. The `ludex` command and the `ludex` import package are unchanged. Installs made before this change use the old package name, and `ludex update` on them cannot migrate: uninstall once (`uv tool uninstall ludex` or `pipx uninstall ludex`) and install again from the release URL.
+- **jobs:** A job's end time is when its process ended, not when ludex next looked. `launch_game` returns `(target, job)`
 
 ## [0.51.0] - 2026-10-28
 
 ### Added
 
 - **jobs:** Track, report on and stop installs ([#60](https://github.com/hikaps/ludex/pull/60))
+
+### Changed
+
+- **packaging:** The package is published as `ludex-games` because PyPI rejects `ludex` as too close to an existing project. The `ludex` command and the `ludex` import package are unchanged. Installs made before this change use the old package name, and `ludex update` on them cannot migrate: uninstall once (`uv tool uninstall ludex` or `pipx uninstall ludex`) and install again from the release URL.
 
 ## [0.50.0] - 2026-10-28
 

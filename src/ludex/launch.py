@@ -128,22 +128,26 @@ def launch_game(
     store: str | None = None,
     config_for: Callable[[str, str], Mapping[str, str]] | None = None,
     prefix_root: Path | None = None,
-) -> str:
-    """Start a game; returns ``store:store_id``. ponytail: no installed check, the client reports a game that is not installed; add when launch must pick installed copies."""
+    log_dir: Path | None = None,
+) -> tuple[str, Job | None]:
+    """Start a game; returns ``(store:store_id, job)``.
+
+    A store client is asked to start it (``job`` is ``None``: the client owns the process), or the plugin's
+    launch command runs as a ``play`` job (see ``ludex.jobs``) whose output goes to a log under ``log_dir``.
+    ponytail: no installed check, the client reports a game that is not installed; add when launch must pick installed copies.
+    """
     plan = prepare_launch(conn, sources, game_id, store, config_for, prefix_root)
     if plan.url is not None:
         open_url(plan.url, f"the {plan.target.partition(':')[0]} client for this game")
-        return plan.target
+        return plan.target, None
+    if log_dir is None:
+        raise LudexError("launch_failed", "no state folder to write the game log in")
+    if not os.access(plan.argv[0], os.X_OK):
+        raise LudexError("launch_failed", "the game could not be started (is it executable?)")
     if "WINEPREFIX" in plan.env:
         Path(plan.env["WINEPREFIX"]).mkdir(mode=0o700, parents=True, exist_ok=True)
-    try:
-        subprocess.Popen(
-            list(plan.argv), cwd=plan.cwd, env={**os.environ, **plan.env}, start_new_session=True,
-            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-    except OSError:
-        raise LudexError("launch_failed", "the game could not be started (is it executable?)") from None
-    return plan.target
+    job = start_job(conn, "play", game_id, plan.target, get_game(conn, game_id)["title"], list(plan.argv), log_dir, plan.cwd, {**os.environ, **plan.env})
+    return plan.target, job
 
 
 def prepare_install(

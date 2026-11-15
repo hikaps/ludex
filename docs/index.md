@@ -6,20 +6,21 @@ Requires Python 3.11 or newer.
 
 ## Install
 
-Install the rolling stable release from the GitHub release tarball with [uv](https://docs.astral.sh/uv/) or [pipx](https://pipx.pypa.io/):
+Install from PyPI with [uv](https://docs.astral.sh/uv/) or [pipx](https://pipx.pypa.io/). The package is `ludex-games`; the command is `ludex`:
 
 ```sh
-uv tool install https://github.com/hikaps/ludex/releases/download/stable/ludex.tar.gz
+uv tool install ludex-games
 # or
-pipx install https://github.com/hikaps/ludex/releases/download/stable/ludex.tar.gz
+pipx install ludex-games
 ```
 
-Check it works, and update later with:
+Check it works:
 
 ```sh
 ludex --version
-ludex update
 ```
+
+Update a PyPI install with `uv tool upgrade ludex-games` or `pipx upgrade ludex-games`. `ludex update` reinstalls from the rolling `stable` or `beta` build instead (`--channel stable|beta`).
 
 ## First steps
 

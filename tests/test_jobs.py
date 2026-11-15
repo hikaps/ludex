@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import signal
 import time
+from pathlib import Path
 
 import pytest
 
@@ -65,3 +66,24 @@ def test_last_line_shows_the_newest_progress_without_colour_codes(conn, tmp_path
     job = start_job(conn, "install", 1, "epic:Quail", "Quail", ["/bin/sh", "-c", "printf 'start\\n\\033[1mProgress: 10%%\\033[0m\\rProgress: 55%%\\r'"], tmp_path / "logs")
     settle(conn, job.id)
     assert last_line(job) == "Progress: 55%"
+
+
+def test_a_job_ends_when_its_process_did_not_when_ludex_noticed(conn, tmp_path):
+    from datetime import datetime
+
+    job = start_job(conn, "play", 1, "local:g", "G", ["/bin/true"], tmp_path / "logs")
+    time.sleep(1.6)  # nobody looked while it ended
+    ended = settle(conn, job.id)
+    stamp = lambda text: datetime.fromisoformat(text.replace("Z", "+00:00"))
+    assert (stamp(ended.ended_at) - stamp(ended.started_at)).total_seconds() <= 1
+    assert (datetime.now(stamp(ended.ended_at).tzinfo) - stamp(ended.ended_at)).total_seconds() >= 1
+
+
+def test_cwd_and_env_reach_the_process_and_a_play_log_starts_fresh(conn, tmp_path):
+    argv = ["/bin/sh", "-c", 'echo "$PWD $ONLY"']
+    first = start_job(conn, "play", 1, "local:g", "G", argv, tmp_path / "logs", tmp_path, {"ONLY": "one"})
+    settle(conn, first.id)
+    second = start_job(conn, "play", 1, "local:g", "G", argv, tmp_path / "logs", tmp_path, {"ONLY": "two"})
+    settle(conn, second.id)
+    where, only = first.log.read_text().split()  # one line: the second run replaced the first
+    assert only == "two" and Path(where).samefile(tmp_path)
