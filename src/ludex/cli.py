@@ -22,7 +22,7 @@ from .plugin_manager import CHANNELS, add_plugin, list_plugins, remove_plugin, s
 from .runners import find_runners
 from .find import find_games, owned_keys
 from .installed import installed_keys
-from .acquire import acquire_game
+from .acquire import acquire_game, download_game
 from .jobs import Job, last_line, list_jobs, stop_job
 from .playtime import Played, describe_played, epoch, play_stats
 from .launch import install_game, launch_game, prepare_install, prepare_launch
@@ -128,6 +128,14 @@ def _parser() -> argparse.ArgumentParser:
     acquire.add_argument("store_id")
     acquire.add_argument("--to", help="destination directory (default: the download_dir setting)")
     acquire.add_argument("--title", default="", help="game title, if the provider wants one")
+
+    download = commands.add_parser("download", help="like acquire, in the background: a job you can check and stop")
+    download.add_argument("store", nargs="?")
+    download.add_argument("store_id", nargs="?")
+    download.add_argument("--to", help="destination directory (default: the download_dir setting)")
+    download.add_argument("--title", default="", help="game title, if the provider wants one")
+    download.add_argument("--status", action="store_true", help="show downloads started by ludex")
+    download.add_argument("--stop", action="store_true", help="stop the running download of STORE STORE_ID")
 
     commands.add_parser("runners", help="list detected Proton builds")
 
@@ -508,12 +516,12 @@ def _job_data(job: Job) -> dict[str, object]:
 def _job_status(conn, kind: str, game_id: int | None) -> tuple[object, str]:
     jobs = list_jobs(conn, kind, game_id)
     # an install shows its progress; a game's own output is no progress, so it shows when it started
-    running = (lambda j: last_line(j)) if kind == "install" else (lambda j: f"since {j.started_at}")
+    running = (lambda j: last_line(j)) if kind in {"install", "download"} else (lambda j: f"since {j.started_at}")
     lines = [
         f"#{j.id}  {j.state:<8} {j.title}  ({j.target})  " + (running(j) if j.state == "running" else f"exit {j.exit_code}" if j.exit_code not in (None, 0) else j.ended_at or "")
         for j in jobs
     ]
-    return {"jobs": [_job_data(j) for j in jobs]}, "\n".join(lines) if lines else f"no {'installs' if kind == 'install' else 'games'} started by ludex"
+    return {"jobs": [_job_data(j) for j in jobs]}, "\n".join(lines) if lines else f"no {({'install': 'installs', 'download': 'downloads'}).get(kind, 'games')} started by ludex"
 
 
 def _job_stop(conn, kind: str, game_id: int) -> tuple[object, str]:
@@ -582,6 +590,29 @@ def _cmd_acquire(args: argparse.Namespace) -> tuple[object, str]:
     data = {"directory": str(result.directory), "hints": dict(result.hints)}
     hints = "".join(f"\n  {key}={value}" for key, value in sorted(result.hints.items()))
     return data, f"acquired into {result.directory}{hints}"
+
+
+def _cmd_download(args: argparse.Namespace) -> tuple[object, str]:
+    paths = state_paths()
+    conn = connect(paths.database)
+    try:
+        if args.status:
+            return _job_status(conn, "download", None)
+        if not args.store or not args.store_id:
+            raise LudexError("missing_game", "name the store and its id (or use --status)")
+        target = f"{args.store}:{args.store_id}"
+        if args.stop:
+            running = [j for j in list_jobs(conn, "download", running=True, limit=100) if j.target == target]
+            if not running:
+                raise LudexError("job_not_running", f"no download of {target} is running")
+            job = stop_job(conn, running[0].id)
+            return {"job": _job_data(job)}, f"stopped the download of {job.title} (job {job.id})"
+        providers, _ = load_providers()
+        destination = Path(args.to) if args.to else get_download_dir(conn, default_download_dir())
+        job = download_game(conn, providers, args.store, args.store_id, args.title, destination, paths.root / "logs")
+    finally:
+        conn.close()
+    return {"job": _job_data(job)}, f"downloading {target} in the background (job {job.id}); 'ludex download --status' shows progress, '--stop {target}' cancels; log: {job.log}"
 
 
 def _cmd_plugin_add(args: argparse.Namespace) -> tuple[object, str]:
@@ -872,6 +903,7 @@ _HANDLERS = {
     ("metadata", None): _cmd_metadata,
     ("match", None): _cmd_match,
     ("acquire", None): _cmd_acquire,
+    ("download", None): _cmd_download,
     ("runners", None): _cmd_runners,
     ("config", None): _cmd_config,
     ("game", "show"): _cmd_game_show,

@@ -6,7 +6,8 @@ State is derived on every read: a live process whose start time matches the reco
 otherwise the exit file says ``done`` (0) or ``failed`` (anything else), and no file means ``lost`` (the
 machine rebooted or the process was killed from outside). ``stopped`` is only set by :func:`stop_job`.
 ``ended_at`` is when the process ended (the exit file's modification time), not when ludex noticed.
-Kinds: ``install`` and ``play`` (a game ludex started itself; its log is replaced on each start).
+Kinds: ``install``, ``download`` (a plugin fetching a game that is not in the library, so its ``game_id`` is 0) and
+``play`` (a game ludex started itself; its log is replaced on each start).
 ponytail: Linux and macOS via ``ps``; one row per run, never pruned; a daemon replaces the polling later.
 """
 from __future__ import annotations

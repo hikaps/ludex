@@ -737,3 +737,34 @@ def test_acquire_without_to_uses_the_download_dir_setting(world: World, capsys: 
     assert code == 0 and (where / "G").is_dir() and str(where / "G") in out
     assert run(capsys, "config", "download_dir", "relative/dir")[0] != 0
     assert run(capsys, "config", "download_dir", "--reset")[0] == 0
+
+
+def test_download_runs_acquire_in_its_own_process_as_a_job_without_a_game(world: World, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    import sys
+
+    from ludex.plugins import AcquireResult
+
+    store = Provider("rel", "Releases", (), lambda config: FetchResult([], True, "rel"), acquire=lambda r, report: AcquireResult(r.destination, {}))
+    monkeypatch.setattr("ludex.cli.load_providers", lambda: ({"rel": store}, {}))
+    seen = []
+
+    def fake_start(conn, kind, game_id, target, title, argv, log_dir, **kw):
+        seen.append((kind, game_id, target, title, argv))
+        return real_start(conn, "download", game_id, target, title, ["/bin/sh", "-c", "echo 40 percent; sleep 30"], log_dir)
+
+    from ludex import acquire as acquire_mod
+
+    real_start = acquire_mod.start_job
+    monkeypatch.setattr(acquire_mod, "start_job", fake_start)
+    code, out, _ = run(capsys, "--json", "download", "rel", "9", "--to", str(tmp_path / "dl"), "--title", "Doom")
+    assert code == 0
+    kind, game_id, target, title, argv = seen[0]
+    assert (kind, game_id, target, title) == ("download", 0, "rel:9", "Doom")
+    assert argv[0] == sys.executable and argv[1:] == ["-m", "ludex", "acquire", "rel", "9", "--to", str(tmp_path / "dl"), "--title", "Doom"]
+    assert run(capsys, "download", "rel", "9")[0] != 0  # one running download per game
+    code, out, _ = run(capsys, "download", "--status")
+    assert code == 0 and "running" in out and "40 percent" in out
+    assert run(capsys, "download", "rel", "1", "--stop")[0] != 0
+    code, out, _ = run(capsys, "download", "rel", "9", "--stop")
+    assert code == 0 and "stopped the download of Doom" in out
+    assert run(capsys, "download", "nope", "1")[0] != 0  # a provider that cannot acquire
