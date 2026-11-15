@@ -4,6 +4,12 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.56.0] - 2026-11-15
+
+### Added
+
+- **plugins:** `acquire`'s `report(message, done=None, total=None)` takes optional numbers (any one unit). With both, a download shows a percentage and a time estimate in the Jobs tab (bar in the detail card), in `ludex download --status` and in `--json` (`progress_detail`); without them only the message shows, as before. Old plugins need no change (`API_VERSION` stays 3)
+
 ## [0.55.0] - 2026-11-15
 
 ### Added

@@ -6,6 +6,7 @@ paging or more in-app maintenance when needed.
 """
 from __future__ import annotations
 
+import re
 import sqlite3
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -24,7 +25,7 @@ from .errors import LudexError
 from .acquire import download_game
 from .game_settings import default_download_dir, get_download_dir, get_prefix_root, get_settings, set_download_dir, set_prefix_root, update_settings
 from .metadata import cached_match, cached_metadata, choose_match, clear_match, default_query, game_metadata, match_candidates, get_auto_details, get_auto_match, set_auto_details, set_auto_match
-from .jobs import Job, get_job, last_line, list_jobs, stop_job
+from .jobs import Job, eta_seconds, format_eta, get_job, list_jobs, progress, progress_line, stop_job
 from .launch import install_game, launch_game, open_url
 from .find import find_games, owned_keys
 from .library import get_game, list_games
@@ -417,7 +418,7 @@ class LudexApp(App[None]):
                 lines.append(f'[dim][link="{matched["url"]}"]{label}[/link][/]' if matched["url"] and not set(matched["url"]) & set("\"[] \\") else f"[dim]{label}[/]")
         running = list_jobs(self._conn, None, game_id, running=True, limit=1)
         if running and running[0].kind == "install":
-            lines.append(f"[b #e0af68]installing[/] {escape(last_line(running[0]))}  [dim](x stops it)[/]")
+            lines.append(f"[b #e0af68]installing[/] {escape(progress_line(running[0]))}  [dim](x stops it)[/]")
         elif running:
             lines.append(f"[b #9ece6a]running[/] since {escape(running[0].started_at)}  [dim](x stops it)[/]")
         if note:
@@ -793,7 +794,7 @@ class LudexApp(App[None]):
     def _fill_jobs(self, jobs: list[Job]) -> None:
         """Show the jobs (running first, then newest) and the number running on the tab; rebuilt only when something changed."""
         jobs = sorted(jobs, key=lambda j: (j.state != "running", -j.id))
-        rows = [(j.id, j.kind, j.title, j.state, last_line(j) if j.state == "running" else "" if j.exit_code in (None, 0) else f"exit {j.exit_code}") for j in jobs]
+        rows = [(j.id, j.kind, j.title, j.state, progress_line(j) if j.state == "running" else "" if j.exit_code in (None, 0) else f"exit {j.exit_code}") for j in jobs]
         running = sum(j.state == "running" for j in jobs)
         self.query_one("#jobs", Tab).label = f"Jobs ({running})" if running else "Jobs"
         if rows == self._jobs_shown:
@@ -804,7 +805,8 @@ class LudexApp(App[None]):
         table.clear()
         colors = {"running": "#e0af68", "done": "#9ece6a", "failed": "#f7768e", "stopped": "#7aa2f7", "lost": "#f7768e"}
         for job_id, kind, title, state, progress in rows:
-            table.add_row(kind, Text(state, style=colors.get(state, "")), title, key=str(job_id))  # progress changes the signature, so the card refreshes
+            percent = re.search(r"\d+%", progress) if state == "running" else None
+            table.add_row(kind, Text(state, style=colors.get(state, "")), f"{title}  {percent.group()}" if percent else title, key=str(job_id))  # progress changes the signature, so the card refreshes
         if keep is not None and table.row_count:
             try:
                 table.move_cursor(row=table.get_row_index(str(keep.id)))
@@ -824,7 +826,14 @@ class LudexApp(App[None]):
         if job.ended_at:
             lines.append(f"[dim]ended {escape(job.ended_at)}" + (f", exit {job.exit_code}" if job.exit_code not in (None, 0) else "") + "[/]")
         if job.state == "running":
-            lines += [escape(last_line(job)), "[dim](x stops it)[/]"]
+            report = progress(job)
+            if report is not None and report.fraction is not None:
+                filled = int(report.fraction * 24)
+                eta = eta_seconds(job, report)
+                lines += [escape(report.message), f"[#9ece6a]{'█' * filled}[/][dim]{'░' * (24 - filled)}[/] {int(report.fraction * 100)}%" + (f"  {format_eta(eta)} left" if eta is not None else "")]
+            else:
+                lines.append(escape(progress_line(job)))
+            lines.append("[dim](x stops it)[/]")
         lines.append(f"[dim]log: {escape(str(job.log))}[/]")
         self.query_one("#detail", Static).update("\n".join(lines))
 

@@ -22,8 +22,8 @@ from .plugin_manager import CHANNELS, add_plugin, list_plugins, remove_plugin, s
 from .runners import find_runners
 from .find import find_games, owned_keys
 from .installed import installed_keys
-from .acquire import acquire_game, download_game
-from .jobs import Job, last_line, list_jobs, stop_job
+from .acquire import acquire_game, download_game, job_reporter
+from .jobs import Job, eta_seconds, list_jobs, progress, progress_line, stop_job
 from .playtime import Played, describe_played, epoch, play_stats
 from .launch import install_game, launch_game, prepare_install, prepare_launch
 from .library import resolve_game, delete_account_records, export_games, dismiss_review, get_game, list_games, list_review, merge_games, run_import
@@ -510,13 +510,20 @@ def _cmd_install(args: argparse.Namespace) -> tuple[object, str]:
 
 def _job_data(job: Job) -> dict[str, object]:
     return {"id": job.id, "game_id": job.game_id, "target": job.target, "title": job.title, "state": job.state, "exit_code": job.exit_code,
-            "started_at": job.started_at, "ended_at": job.ended_at, "log": str(job.log), "progress": last_line(job) if job.state == "running" else ""}
+            "started_at": job.started_at, "ended_at": job.ended_at, "log": str(job.log), "progress": progress_line(job) if job.state == "running" else "", "progress_detail": _progress_detail(job)}
+
+
+def _progress_detail(job: Job) -> dict[str, object] | None:
+    report = progress(job)
+    if report is None or report.fraction is None:
+        return None
+    return {"done": report.done, "total": report.total, "fraction": report.fraction, "eta_seconds": eta_seconds(job, report)}
 
 
 def _job_status(conn, kind: str, game_id: int | None) -> tuple[object, str]:
     jobs = list_jobs(conn, kind, game_id)
     # an install shows its progress; a game's own output is no progress, so it shows when it started
-    running = (lambda j: last_line(j)) if kind in {"install", "download"} else (lambda j: f"since {j.started_at}")
+    running = progress_line if kind in {"install", "download"} else (lambda j: f"since {j.started_at}")
     lines = [
         f"#{j.id}  {j.state:<8} {j.title}  ({j.target})  " + (running(j) if j.state == "running" else f"exit {j.exit_code}" if j.exit_code not in (None, 0) else j.ended_at or "")
         for j in jobs
@@ -585,7 +592,7 @@ def _cmd_acquire(args: argparse.Namespace) -> tuple[object, str]:
     providers, _ = load_providers()
     destination = Path(args.to) if args.to else _download_dir()
     result = acquire_game(
-        providers, args.store, args.store_id, args.title, destination, lambda message: print(message, file=sys.stderr)
+        providers, args.store, args.store_id, args.title, destination, job_reporter(lambda message: print(message, file=sys.stderr))
     )
     data = {"directory": str(result.directory), "hints": dict(result.hints)}
     hints = "".join(f"\n  {key}={value}" for key, value in sorted(result.hints.items()))
