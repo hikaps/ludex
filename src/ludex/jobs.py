@@ -7,8 +7,9 @@ otherwise the exit file says ``done`` (0) or ``failed`` (anything else), and no 
 machine rebooted or the process was killed from outside). ``stopped`` is only set by :func:`stop_job`.
 ``ended_at`` is when the process ended (the exit file's modification time), not when ludex noticed.
 Kinds: ``install``, ``download`` (a plugin fetching a game that is not in the library, so its ``game_id`` is 0) and
-``play`` (a game ludex started itself; its log is replaced on each start).
-ponytail: Linux and macOS via ``ps``; one row per run, never pruned; a daemon replaces the polling later.
+``play`` (a game ludex started itself; its log is replaced on each start) and ``service`` (a plugin's long-running
+background process, see ``ludex.services``; ``game_id`` 0, target ``<provider>:<name>``).
+ponytail: Linux and macOS via ``ps``; one row per run, never pruned; no daemon: state is derived on each read.
 """
 from __future__ import annotations
 

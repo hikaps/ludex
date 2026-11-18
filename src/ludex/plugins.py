@@ -130,6 +130,12 @@ the raw argument strings after the command name; it parses them itself (``argpar
 printed as JSON under ``--json`` and ``text`` otherwise. Act on the library through the functions
 in ``ludex.library`` (``list_games``, ``get_game``, ``resolve_game``, ``run_import``, ...), not raw
 SQL. The core holds the writer lock for the whole run, so commands are serialized with imports.
+
+Services: a command may start a long-running background process with
+``ludex.services.start_service(ctx.conn, provider, name, argv, cwd=..., settle=...)``, and later
+``stop_service`` / ``service_status``. ludex runs it as a ``service`` job: detached, in its own session,
+with output in a private log under the state directory, and visible in the TUI Jobs tab. Stopping ends
+its whole process group. One service of a given name runs at a time.
 Raise ``LudexError`` with a fixed, secret-free message for expected failures; any other exception
 is reported as ``command_failed`` without its text. Commands cannot add TUI tabs.
 
