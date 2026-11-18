@@ -4,6 +4,12 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.59.1] - 2026-11-17
+
+### Fixed
+
+- **services:** an older running service is found even after 1000 newer service runs (the lookup used to filter after a limit); `stop_service` returns `False` when the service ends just before it is stopped, instead of raising; provider names no longer allow `_`, so two services can never share a log file; a service that exits at startup is reported as soon as it ends rather than after the full wait. The one-at-a-time check is documented as needing the writer lock (plugin commands hold it)
+
 ## [0.59.0] - 2026-11-17
 
 ### Added
