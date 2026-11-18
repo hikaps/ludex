@@ -4,6 +4,12 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.59.0] - 2026-11-17
+
+### Added
+
+- **plugins:** `ludex.services` (`start_service`, `stop_service`, `service_status`): a plugin command can run a long-running background process as a game-less `service` job, with a private log, liveness by pid and start time, and a process-group stop. It shows in the TUI Jobs tab. No daemon and no schema change; `API_VERSION` is unchanged
+
 ## [0.58.1] - 2026-11-15
 
 ### Fixed
