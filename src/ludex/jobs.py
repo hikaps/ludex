@@ -233,11 +233,13 @@ def get_job(conn: sqlite3.Connection, job_id: int) -> Job:
     return _job(row)
 
 
-def list_jobs(conn: sqlite3.Connection, kind: str | None = None, game_id: int | None = None, running: bool = False, limit: int = 20) -> list[Job]:
+def list_jobs(
+    conn: sqlite3.Connection, kind: str | None = None, game_id: int | None = None, running: bool = False, limit: int = 20, target: str | None = None,
+) -> list[Job]:
     """Newest first, after settling finished ones."""
     refresh(conn)
     where, params = ["1 = 1"], []
-    for clause, value in (("kind = ?", kind), ("game_id = ?", game_id)):
+    for clause, value in (("kind = ?", kind), ("game_id = ?", game_id), ("target = ?", target)):
         if value is not None:
             where.append(clause)
             params.append(value)
