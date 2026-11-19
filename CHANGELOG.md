@@ -25,6 +25,7 @@ Also includes 0.55.0 to 0.59.1 below, which were never published to PyPI.
 
 ### Fixed
 
+- **jobs:** a job being stopped could be recorded as `lost` instead of `stopped` when another reader (the TUI's job poll) noticed the process had ended at the same moment
 - **find:** a search hit without an `https://` link was dropped even from a plugin that downloads through `acquire`; now only hits ludex would open need https, and skipped hits are reported
 - **services:** an older running service is found even after 1000 newer runs; `stop_service` returns `False` when the service ends just before it is stopped; provider names no longer allow `_`; a service that exits at startup is reported as soon as it ends
 

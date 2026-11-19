@@ -87,3 +87,29 @@ def test_cwd_and_env_reach_the_process_and_a_play_log_starts_fresh(conn, tmp_pat
     settle(conn, second.id)
     where, only = first.log.read_text().split()  # one line: the second run replaced the first
     assert only == "two" and Path(where).samefile(tmp_path)
+
+
+def test_a_reader_that_saw_the_process_die_does_not_overwrite_a_stop(conn, tmp_path, monkeypatch):
+    from ludex import jobs
+
+    job = start_job(conn, "install", 1, "epic:Quail", "Quail", ["/bin/sh", "-c", "sleep 60"], tmp_path / "logs")
+    stopper = connect(tmp_path / "db.sqlite3")
+    real_alive = jobs._alive
+
+    def alive(pid, start):
+        # the reader sees the process gone; before it writes, stop_job finishes on another connection
+        if not real_alive(pid, start):
+            return False
+        os.killpg(pid, signal.SIGKILL)
+        deadline = time.monotonic() + 5
+        while real_alive(pid, start) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        with stopper:
+            stopper.execute("UPDATE jobs SET state = 'stopped' WHERE id = ?", (job.id,))
+        return False
+
+    monkeypatch.setattr(jobs, "_alive", alive)
+    jobs.refresh(conn)
+    monkeypatch.setattr(jobs, "_alive", real_alive)
+    stopper.close()
+    assert [j.state for j in list_jobs(conn)] == ["stopped"]
