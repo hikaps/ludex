@@ -6,12 +6,27 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ## [0.60.0] - 2026-11-19
 
+Also includes 0.55.0 to 0.59.1 below, which were never published to PyPI.
+
+### Added
+
+- **jobs:** `ludex download STORE ID [--to DIR]` runs a plugin's `acquire` in the background as a `download` job (survives closing the TUI); `--status` shows its latest progress line and `--stop STORE ID` cancels it. The TUI has a Jobs tab listing installs, downloads and games ludex started (`x` stops one); `i` on a Search hit starts a download job
+- **plugins:** `acquire`'s `report(message, done=None, total=None)` takes optional numbers; with both, a download shows a percentage and time estimate in the Jobs tab, `ludex download --status` and `--json` (`progress_detail`). Old plugins need no change (`API_VERSION` stays 3)
+- **plugins:** `ludex.services` (`start_service`, `stop_service`, `service_status`): a plugin command can run a long-running background process as a game-less `service` job with a private log and a process-group stop
+- **tui:** the game settings form (`e`) lists executables found in the game folder, best guess first; `ludex game exes GAME` prints the same candidates
+
 ### Changed
 
 - **packaging:** one repository now publishes four lockstep distributions: `ludex-core` (import `ludex`: library, plugin API, bundled providers), `ludex-cli`, `ludex-tui` and `ludex-games`, which bundles all three, installs the same `ludex` command and keeps the rolling beta URL. Plugins keep importing `ludex`; `API_VERSION` and the database are unchanged. Nothing changes for `uv tool install ludex-games` users. `python -m ludex` is now `python -m ludex_cli`; `ludex.cli`, `ludex.tui` and `ludex.tui_settings` are now `ludex_cli.cli`, `ludex_tui.app` and `ludex_tui.settings`. `ludex-cli` alone reports `tui_missing` for `ludex tui`; `ludex-tui` alone provides a `ludex-tui` command
 - **downloads:** a background download runs a private core worker instead of `ludex acquire`, so it works without the CLI installed
 - **plugins:** a plugin may require `ludex-core`; the copy it installs into its own folder is ignored in favor of the running one, so built-in providers do not register twice
 - **update:** `ludex update` on a standalone `ludex-cli` says it needs `ludex-games`
+- **tui:** the library refreshes itself: every account is imported in the background when the TUI starts and whenever you press `r`. A toast reports new, restored and removed games and names an account that failed. Turn the startup import off in Settings or with `ludex config auto_refresh no`
+
+### Fixed
+
+- **find:** a search hit without an `https://` link was dropped even from a plugin that downloads through `acquire`; now only hits ludex would open need https, and skipped hits are reported
+- **services:** an older running service is found even after 1000 newer runs; `stop_service` returns `False` when the service ends just before it is stopped; provider names no longer allow `_`; a service that exits at startup is reported as soon as it ends
 
 ## [0.59.1] - 2026-11-17
 
