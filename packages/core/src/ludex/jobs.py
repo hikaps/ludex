@@ -185,7 +185,7 @@ def refresh(conn: sqlite3.Connection) -> None:
         exit_file.unlink(missing_ok=True)
         state = "lost" if code is None else "done" if code == 0 else "failed"
         with conn:
-            conn.execute("UPDATE jobs SET state = ?, exit_code = ?, ended_at = ? WHERE id = ?", (state, code, ended, row["id"]))
+            conn.execute("UPDATE jobs SET state = ?, exit_code = ?, ended_at = ? WHERE id = ? AND state = 'running'", (state, code, ended, row["id"]))  # not over a stop that landed meanwhile
 
 
 def start_job(
