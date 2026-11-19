@@ -27,6 +27,11 @@ def managed(tmp_path, monkeypatch):
             return
         version = spec.partition("==")[2] or "1.0"
         provider = "fakeprov"
+        if "withcore" in spec:  # a plugin that requires ludex-core brings a second copy of the built-in providers
+            core = target / "ludex_core-0.60.0.dist-info"
+            core.mkdir()
+            (core / "METADATA").write_text("Name: ludex-core\nVersion: 0.60.0\n")
+            (core / "entry_points.txt").write_text("[ludex.providers]\nsteam = ludex.sources.steam:PLUGIN\nlocal = ludex.sources.local:PLUGIN\n")
         if "clash" in spec:
             provider = "steam"
         info = target / f"ludex_fakeplug-{version}.dist-info"
@@ -53,6 +58,12 @@ def test_add_update_remove_roundtrip_and_loader_picks_the_plugin_up(managed):
     assert "--upgrade" in managed[-1] and managed[-1][-1] == "ludex-fakeplug==1.0"
     assert pm.remove_plugin("fakeprov")["name"] == "ludex-fakeplug"  # by provider name too
     assert pm.list_plugins() == [] and not [p for p in pm.plugins_dir().iterdir()]
+
+
+def test_a_plugin_requiring_ludex_core_does_not_register_the_built_in_providers_twice(managed):
+    assert pm.add_plugin("ludex-fakeplug-withcore==1.0")["providers"] == ["fakeprov"]
+    loaded, problems = load_providers()
+    assert not problems and {"fakeprov", "steam", "local"} <= set(loaded)
 
 
 def test_a_disabled_plugin_is_not_loaded_and_stays_disabled_after_an_update(managed):
@@ -152,7 +163,7 @@ def test_a_pasted_repository_link_gets_the_git_prefix_and_nothing_else_is_rewrit
 
 
 def test_plugin_ls_shows_the_link_and_branch_updates_will_use(managed, capsys):
-    from ludex.cli import main
+    from ludex_cli.cli import main
 
     pm.add_plugin("ludex-fakeplug==1.0")
     assert main(["plugin", "ls"]) == 0

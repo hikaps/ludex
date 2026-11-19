@@ -13,28 +13,28 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from . import __version__
-from .accounts import add_account, get_account, list_accounts, remove_account, update_account
-from .provider_settings import describe, field_for, get_values, set_value
-from .errors import LudexError
-from .game_settings import default_download_dir, get_download_dir, get_prefix_root, get_settings, pick_copy, set_download_dir, set_prefix_root, update_settings
-from .plugin_manager import CHANNELS, add_plugin, list_plugins, remove_plugin, set_plugin_enabled, update_core, update_plugins
-from .runners import find_runners
-from .find import find_games, owned_keys
-from .installed import installed_keys
-from .executables import find_executables
-from .acquire import acquire_game, download_game, job_reporter
-from .jobs import Job, eta_seconds, list_jobs, progress, progress_line, stop_job
-from .playtime import Played, describe_played, epoch, play_stats
-from .launch import install_game, launch_game, prepare_install, prepare_launch
-from .library import resolve_game, delete_account_records, export_games, dismiss_review, get_game, list_games, list_review, merge_games, run_import
-from .loader import load_providers
-from .refresh import get_auto_refresh, set_auto_refresh
-from .metadata import cached_match, choose_match, clear_match, default_query, game_metadata, match_candidates, get_auto_details, get_auto_match, set_auto_details, set_auto_match
-from .paths import state_paths
-from .plugins import CommandContext, CommandResult, Provider
-from .storage import connect, writer_lock
-from .switches import SWITCHES, get_switch, set_switch
+from ludex import __version__
+from ludex.accounts import add_account, get_account, list_accounts, remove_account, update_account
+from ludex.provider_settings import describe, field_for, get_values, set_value
+from ludex.errors import LudexError
+from ludex.game_settings import default_download_dir, get_download_dir, get_prefix_root, get_settings, pick_copy, set_download_dir, set_prefix_root, update_settings
+from ludex.plugin_manager import CHANNELS, add_plugin, list_plugins, remove_plugin, set_plugin_enabled, update_core, update_plugins
+from ludex.runners import find_runners
+from ludex.find import find_games, owned_keys
+from ludex.installed import installed_keys
+from ludex.executables import find_executables
+from ludex.acquire import acquire_game, download_game, format_acquired, job_reporter
+from ludex.jobs import Job, eta_seconds, list_jobs, progress, progress_line, stop_job
+from ludex.playtime import Played, describe_played, epoch, play_stats
+from ludex.launch import install_game, launch_game, prepare_install, prepare_launch
+from ludex.library import resolve_game, delete_account_records, export_games, dismiss_review, get_game, list_games, list_review, merge_games, run_import
+from ludex.loader import load_providers
+from ludex.refresh import get_auto_refresh, set_auto_refresh
+from ludex.metadata import cached_match, choose_match, clear_match, default_query, game_metadata, match_candidates, get_auto_details, get_auto_match, set_auto_details, set_auto_match
+from ludex.paths import state_paths
+from ludex.plugins import CommandContext, CommandResult, Provider
+from ludex.storage import connect, writer_lock
+from ludex.switches import SWITCHES, get_switch, set_switch
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -600,8 +600,7 @@ def _cmd_acquire(args: argparse.Namespace) -> tuple[object, str]:
         providers, args.store, args.store_id, args.title, destination, job_reporter(lambda message: print(message, file=sys.stderr))
     )
     data = {"directory": str(result.directory), "hints": dict(result.hints)}
-    hints = "".join(f"\n  {key}={value}" for key, value in sorted(result.hints.items()))
-    return data, f"acquired into {result.directory}{hints}"
+    return data, format_acquired(result)
 
 
 def _cmd_download(args: argparse.Namespace) -> tuple[object, str]:
@@ -853,16 +852,13 @@ def _cmd_launch(args: argparse.Namespace) -> tuple[object, str]:
 
 
 def _cmd_tui(args: argparse.Namespace) -> tuple[object, str]:
-    from .tui import LudexApp
-
-    sources, _ = load_providers()
-    paths = state_paths()
-    LudexApp(
-        paths.database, sources, lambda: installed_keys(paths, sources)[0],
-        lambda store, account: get_account(paths, f"{store}:{account}").config,
-        paths.root / "prefixes", paths.import_lock, paths,
-        played=lambda conn: play_stats(paths, sources, conn)[0],
-    ).run()
+    try:
+        from ludex_tui.app import main as run_tui
+    except ModuleNotFoundError as exc:
+        if exc.name != "ludex_tui":
+            raise
+        raise LudexError("tui_missing", "install ludex-tui alongside ludex-cli, or install ludex-games") from None
+    run_tui()
     return {}, ""
 
 

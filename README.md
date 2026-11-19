@@ -31,7 +31,7 @@ uv tool install ludex-games
 # Or: pipx install ludex-games
 ```
 
-The package is `ludex-games`; the command is `ludex`. Each release is tagged `vX.Y.Z` on the [releases page](https://github.com/hikaps/ludex/releases). A rolling pre-release (**beta**) is built from `develop`:
+The package is `ludex-games`; the command is `ludex`. It bundles `ludex-core` (library and plugin API), `ludex-cli` and `ludex-tui`, which can also be installed on their own (`ludex-cli` alone has no terminal UI; `ludex tui` says so). Each release is tagged `vX.Y.Z` on the [releases page](https://github.com/hikaps/ludex/releases). A rolling pre-release (**beta**) is built from `develop`:
 
 ```sh
 uv tool install https://github.com/hikaps/ludex/releases/download/beta/ludex.tar.gz
@@ -56,7 +56,7 @@ ludex export --format csv > library.csv
 
 ## Plugins
 
-A plugin is a `Provider` instance exported from a Python entry point in the group `ludex.providers`. It declares the capabilities it supports (owned games, launch, install, installed, search, metadata, acquire, commands) and the core only calls what is declared. Plugins report whether an ownership result is complete; the core removes missing games only then. Install one with `ludex plugin add <package, URL or path>`; it runs with your permissions. The contract, including the `API_VERSION` rules, is documented in the docstrings of [src/ludex/plugins.py](https://github.com/hikaps/ludex/blob/main/src/ludex/plugins.py).
+A plugin is a `Provider` instance exported from a Python entry point in the group `ludex.providers`. It declares the capabilities it supports (owned games, launch, install, installed, search, metadata, acquire, commands) and the core only calls what is declared. Plugins report whether an ownership result is complete; the core removes missing games only then. Install one with `ludex plugin add <package, URL or path>`; it runs with your permissions. The contract, including the `API_VERSION` rules, is documented in the docstrings of [packages/core/src/ludex/plugins.py](https://github.com/hikaps/ludex/blob/main/packages/core/src/ludex/plugins.py).
 
 ## Privacy and scope
 

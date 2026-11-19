@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools==84.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ludex-core"
+version = "0.60.0"
+description = "Library core of ludex: games, stores, plugins and jobs, with no frontend"
+readme = { text = "The headless core of [ludex](https://github.com/hikaps/ludex): library, providers and plugin API. Install `ludex-games` for the `ludex` command.", content-type = "text/markdown" }
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+dependencies = ["httpx==0.28.1", "vdf==3.4"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Games/Entertainment",
+]
+
+[project.urls]
+Homepage = "https://hikaps.github.io/ludex/"
+Repository = "https://github.com/hikaps/ludex"
+Issues = "https://github.com/hikaps/ludex/issues"
+Changelog = "https://github.com/hikaps/ludex/blob/main/CHANGELOG.md"
+
+[project.entry-points."ludex.providers"]
+steam = "ludex.sources.steam:PLUGIN"
+epic = "ludex.sources.epic:PLUGIN"
+local = "ludex.sources.local:PLUGIN"
+shortcuts = "ludex.sources.shortcuts:PLUGIN"
+heroic = "ludex.sources.heroic:PLUGIN"
+rawg = "ludex.sources.rawg:PLUGIN"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["ludex*"]
+
