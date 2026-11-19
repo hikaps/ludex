@@ -4,11 +4,12 @@ To add a store, a metadata service or new commands to ludex, write a plugin: a P
 
 ## Summary of the contract
 
-- A `Provider` declares capabilities by filling fields; at least one is required and the core calls only what is declared: `owned` (`fetch`), `launch`, `install`, `installed`, `search`, `metadata`, `acquire`, `commands`.
+- A `Provider` declares capabilities by filling fields; at least one is required and the core calls only what is declared: `owned` (`fetch`), `launch`, `install`, `installed`, `search`, `metadata`, `acquire`, `commands`, `views`.
 - Do not declare ludex as a dependency. A provider whose `api_version` differs from the core's is skipped with a reported reason.
 - `fetch(config)` returns a `FetchResult`. `complete` must be True only when the result is every game the account owns; only then are missing games marked removed. If the result may be partial, return `complete=False`, or raise `SourceError` when you cannot tell. Games carry the plugin's own name as `store`.
 - Plugin-wide `settings` and per-account `config_fields` are `ConfigField`s (kinds `text`, `yes_no`, `choice`; `secret` and `path` for text).
 - Network access belongs only in plugins: bounded responses, verified TLS, `https` links, and fixed, secret-free `SourceError` messages.
+- `views` add navigation entries (a TUI tab, `ludex plugin view`): a `View(id, title, fetch)` whose `fetch(settings)` returns a `ViewTable` or `ViewDetail` of plain strings. A table row may offer `ViewAction(label, command, args)` that runs one of your `commands` after the user confirms; fetching never runs one. Needs `ludex-core>=0.61.0`, and `API_VERSION` stays 3.
 - Imports are one transaction; removal and restore behavior is specified in `ludex.library`.
 
 ## Install and manage

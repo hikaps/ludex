@@ -15,7 +15,7 @@ from typing import Any
 
 from ludex import __version__
 from ludex.accounts import add_account, get_account, list_accounts, remove_account, update_account
-from ludex.provider_settings import describe, field_for, get_values, set_value
+from ludex.provider_settings import describe, field_for, set_value
 from ludex.errors import LudexError
 from ludex.game_settings import default_download_dir, get_download_dir, get_prefix_root, get_settings, pick_copy, set_download_dir, set_prefix_root, update_settings
 from ludex.plugin_manager import CHANNELS, add_plugin, list_plugins, remove_plugin, set_plugin_enabled, update_core, update_plugins
@@ -29,10 +29,12 @@ from ludex.playtime import Played, describe_played, epoch, play_stats
 from ludex.launch import install_game, launch_game, prepare_install, prepare_launch
 from ludex.library import resolve_game, delete_account_records, export_games, dismiss_review, get_game, list_games, list_review, merge_games, run_import
 from ludex.loader import load_providers
+from ludex.plugin_commands import run_command
+from ludex.plugin_views import fetch_view, get_view, list_views
 from ludex.refresh import get_auto_refresh, set_auto_refresh
 from ludex.metadata import cached_match, choose_match, clear_match, default_query, game_metadata, match_candidates, get_auto_details, get_auto_match, set_auto_details, set_auto_match
 from ludex.paths import state_paths
-from ludex.plugins import CommandContext, CommandResult, Provider
+from ludex.plugins import Provider, ViewTable
 from ludex.storage import connect, writer_lock
 from ludex.switches import SWITCHES, get_switch, set_switch
 
@@ -71,6 +73,9 @@ def _parser() -> argparse.ArgumentParser:
         plugin_commands.add_parser(action, help=text).add_argument("name")
     plugin_up = plugin_commands.add_parser("update", help="reinstall plugins from the spec they were added with")
     plugin_up.add_argument("name", nargs="?", help="one plugin (default: all)")
+    plugin_view = plugin_commands.add_parser("view", help="list the views plugins contribute, or print one (read-only)")
+    plugin_view.add_argument("provider", nargs="?", help="a provider (default: all)")
+    plugin_view.add_argument("view", nargs="?", help="print this view's table or details")
 
     update = commands.add_parser("update", help="update ludex itself from its release channel")
     update.add_argument("--channel", choices=CHANNELS, help="default: the channel this install came from")
@@ -626,6 +631,32 @@ def _cmd_download(args: argparse.Namespace) -> tuple[object, str]:
     return {"job": _job_data(job)}, f"downloading {target} in the background (job {job.id}); 'ludex download --status' shows progress, '--stop {target}' cancels; log: {job.log}"
 
 
+def _cmd_plugin_view(args: argparse.Namespace) -> tuple[object, str]:
+    sources, _ = load_providers()
+    if args.provider is not None and args.provider not in sources:
+        raise LudexError("unknown_provider", "unknown provider")
+    if args.view is None:
+        found = [(key, view) for key, view in list_views(sources) if args.provider in (None, key)]
+        data = {"views": [{"provider": key, "id": view.id, "title": view.title} for key, view in found]}
+        return data, "\n".join(f"{key}.{view.id}  {view.title}" for key, view in found) or "No plugin views."
+    view = get_view(sources, args.provider, args.view)
+    snapshot = fetch_view(state_paths(), sources[args.provider], view)
+    data = {"provider": args.provider, "id": view.id, "title": view.title}
+    if isinstance(snapshot, ViewTable):
+        data |= {
+            "kind": "table",
+            "columns": list(snapshot.columns),
+            "rows": [{"id": r.id, "cells": list(r.cells), "actions": [{"label": a.label, "command": a.command} for a in r.actions]} for r in snapshot.rows],
+        }
+        lines = ["\t".join(snapshot.columns), *("\t".join(r.cells) for r in snapshot.rows)]
+        if not snapshot.rows:
+            lines.append("No results.")
+    else:
+        data |= {"kind": "detail", "fields": [list(f) for f in snapshot.fields]}
+        lines = [f"{label}: {value}" for label, value in snapshot.fields] or ["No results."]
+    return data, "\n".join(lines)
+
+
 def _cmd_plugin_add(args: argparse.Namespace) -> tuple[object, str]:
     print("note: a plugin runs with your permissions; install only code you trust", file=sys.stderr)
     added = add_plugin(args.spec)
@@ -923,6 +954,7 @@ _HANDLERS = {
     ("account", "rm"): _cmd_account_rm,
     ("plugin", "add"): _cmd_plugin_add,
     ("plugin", "ls"): _cmd_plugin_ls,
+    ("plugin", "view"): _cmd_plugin_view,
     ("plugin", "rm"): _cmd_plugin_rm,
     ("plugin", "enable"): _cmd_plugin_enable,
     ("plugin", "disable"): _cmd_plugin_enable,
@@ -993,19 +1025,7 @@ def _plugin_command(argv: list[str]) -> int | None:
         if len(words) < 2 or words[1] not in commands:
             raise LudexError("unknown_command", f"{provider.name} commands: {', '.join(sorted(commands))}")
         command = commands[words[1]]
-        paths = state_paths()
-        with writer_lock(paths.import_lock):
-            conn = connect(paths.database)
-            try:
-                result = command.run(CommandContext(conn, providers, get_values(paths, provider.name)), words[2:])
-            except (LudexError, SystemExit):
-                raise
-            except Exception as exc:
-                raise LudexError("command_failed", f"{provider.name} {command.name} failed ({type(exc).__name__})") from None
-            finally:
-                conn.close()
-        if not isinstance(result, CommandResult):
-            raise LudexError("command_failed", f"{provider.name} {command.name} returned an invalid result")
+        result = run_command(state_paths(), providers, provider, command, words[2:])
         return result.data, result.text
 
     previous_umask = os.umask(0o077)
@@ -1029,7 +1049,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "account" and args.account_command is None:
         parser.error("account requires an action: add, set, ls or rm")
     if args.command == "plugin" and args.plugin_command is None:
-        parser.error("plugin requires an action: add, ls, rm, enable, disable or update")
+        parser.error("plugin requires an action: add, ls, view, rm, enable, disable or update")
     if args.command == "game" and args.game_command is None:
         parser.error("game requires an action: show or set")
     if args.command == "import" and not args.all and not args.account:

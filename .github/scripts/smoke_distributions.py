@@ -86,20 +86,21 @@ def installed_versions(python: Path, env) -> dict[str, str]:
     return dict(line.split() for line in run([python, "-I", "-c", code], env=env).stdout.splitlines())
 
 
-def tui_in_terminal(binary: Path, args: list[str], env) -> None:
-    """Start the TUI on a pseudo-terminal, wait for its tabs, press q, expect a clean exit."""
+def tui_in_terminal(binary: Path, args: list[str], env, extra_tabs: tuple[str, ...] = ()) -> None:
+    """Start the TUI on a pseudo-terminal, wait for its tabs (and ``extra_tabs``), press q, expect a clean exit."""
     pid, fd = pty.fork()
     if pid == 0:
         os.execve(str(binary), [str(binary), *args], env)
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
+    tabs = ("Owned", "Installed", "Search", "Jobs", "Settings", *extra_tabs)
     seen, deadline = b"", time.time() + 40
-    while time.time() < deadline and b"Settings" not in seen:
+    while time.time() < deadline and not all(tab.encode() in seen for tab in tabs):
         if select.select([fd], [], [], 0.5)[0]:
             try:
                 seen += os.read(fd, 65536)
             except OSError:
                 break
-    check(all(tab.encode() in seen for tab in ("Owned", "Installed", "Search", "Jobs", "Settings")), f"{binary.name} {' '.join(args)}: tabs not drawn: {seen[-300:]!r}")
+    check(all(tab.encode() in seen for tab in tabs), f"{binary.name} {' '.join(args)}: tabs not drawn: {seen[-300:]!r}")
     os.write(fd, b"q")
     status = None
     for _ in range(100):
@@ -123,7 +124,7 @@ def tui_in_terminal(binary: Path, args: list[str], env) -> None:
 FIXTURE = '''\
 from pathlib import Path
 
-from ludex.plugins import AcquireResult, FetchResult, Provider
+from ludex.plugins import AcquireResult, FetchResult, Provider, View, ViewRow, ViewTable
 
 
 def acquire(request, report):
@@ -134,7 +135,11 @@ def acquire(request, report):
     return AcquireResult(game, {"executable": "run.sh"})
 
 
-PLUGIN = Provider("fixture", "offline fixture", (), lambda context: FetchResult([], True, None), acquire=acquire)
+def people(settings):
+    return ViewTable(("Name", "State"), (ViewRow("alice", ("Alice", "online")),))
+
+
+PLUGIN = Provider("fixture", "offline fixture", (), lambda context: FetchResult([], True, None), acquire=acquire, views=(View("people", "People", people),))
 '''
 
 
@@ -257,6 +262,11 @@ def check_stable(dist: Path) -> None:
         names, problems = providers_of(binary, state)
         check(names == BUILTINS | {"fixture"} and not problems, f"providers with plugin: {names} {problems}")
         download_through_cli(binary, state, scratch.root / "bundle-dl")
+        shown = json.loads(run([binary, "--json", "plugin", "view", "fixture", "people"], env=state).stdout)["data"]
+        check(shown["kind"] == "table" and shown["rows"] == [{"id": "alice", "cells": ["Alice", "online"], "actions": []}], f"plugin view: {shown}")
+        missing = run([binary, "--json", "plugin", "view", "fixture", "nope"], env=state, check=False)
+        check(missing.returncode == 1 and json.loads(missing.stderr)["error"]["code"] == "unknown_view", f"unknown view: {missing.stderr}")
+        tui_in_terminal(binary, ["tui"], state, ("People",))
         say("stable smoke passed")
     finally:
         scratch.close()

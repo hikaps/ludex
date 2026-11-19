@@ -22,7 +22,7 @@ Status: early development.
 - **Play time**: `show` and `ls --sort played|recent` report how long you played, from what Steam and Heroic (Epic and sideloads) recorded on this machine, plus the games ludex started itself. The TUI shows it in Detail and `o` changes the order.
 - **TUI**: `ludex tui` browses, searches and launches games in the terminal. It imports every account when it starts and again on `r` (in the background; `ludex config auto_refresh no` turns the startup import off).
 - **Scripting**: `ludex --json <command>` prints `{"ok": ..., "data": ...}` (errors go to stderr).
-- **Plugins**: `plugin add/ls/rm/enable/disable/update`; `update` updates ludex from its release channel.
+- **Plugins**: `plugin add/ls/view/rm/enable/disable/update` (`plugin view` lists the tables and panels plugins contribute, which the TUI shows as extra tabs); `update` updates ludex from its release channel.
 
 ## Install
 
@@ -56,7 +56,7 @@ ludex export --format csv > library.csv
 
 ## Plugins
 
-A plugin is a `Provider` instance exported from a Python entry point in the group `ludex.providers`. It declares the capabilities it supports (owned games, launch, install, installed, search, metadata, acquire, commands) and the core only calls what is declared. Plugins report whether an ownership result is complete; the core removes missing games only then. Install one with `ludex plugin add <package, URL or path>`; it runs with your permissions. The contract, including the `API_VERSION` rules, is documented in the docstrings of [packages/core/src/ludex/plugins.py](https://github.com/hikaps/ludex/blob/main/packages/core/src/ludex/plugins.py).
+A plugin is a `Provider` instance exported from a Python entry point in the group `ludex.providers`. It declares the capabilities it supports (owned games, launch, install, installed, search, metadata, acquire, commands, views) and the core only calls what is declared. Plugins report whether an ownership result is complete; the core removes missing games only then. Install one with `ludex plugin add <package, URL or path>`; it runs with your permissions. The contract, including the `API_VERSION` rules, is documented in the docstrings of [packages/core/src/ludex/plugins.py](https://github.com/hikaps/ludex/blob/main/packages/core/src/ludex/plugins.py).
 
 ## Privacy and scope
 
