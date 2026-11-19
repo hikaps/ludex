@@ -15,6 +15,32 @@ from .provider_settings import get_values
 
 _NAME = re.compile(r"[a-z][a-z0-9-]{0,31}\Z")
 
+# Ludex's own distributions. A managed plugin may declare ludex-core as a dependency, which installs
+# a second copy of the built-in providers into the plugin folder; those copies must not register twice.
+RESERVED_PROJECTS = frozenset({"ludex", "ludex-games", "ludex-core", "ludex-cli", "ludex-tui"})
+
+
+def is_reserved_project(name: str) -> bool:
+    return re.sub(r"[-_.]+", "-", name).lower() in RESERVED_PROJECTS
+
+
+def _inside_plugins(dist, root) -> bool:
+    try:
+        return dist.locate_file("").resolve().is_relative_to(root)
+    except (OSError, ValueError):
+        return False
+
+
+def installed_provider_entries() -> list[EntryPoint]:
+    """Every ``ludex.providers`` entry point on ``sys.path``, minus ludex's own distributions inside the managed plugin folders."""
+    root = plugins_dir().resolve()
+    entries = []
+    for entry in _entry_points(group=GROUP):
+        dist = getattr(entry, "dist", None)
+        if dist is None or not (is_reserved_project(dist.name) and _inside_plugins(dist, root)):
+            entries.append(entry)
+    return entries
+
 
 def _valid_commands(commands) -> bool:
     try:
@@ -91,7 +117,7 @@ def load_providers(
     if entry_points is None:
         _add_managed_plugins()
     candidates = sorted(
-        _entry_points(group=GROUP) if entry_points is None else entry_points,
+        installed_provider_entries() if entry_points is None else entry_points,
         key=lambda item: item.name,
     )
     counts = Counter(entry.name for entry in candidates)

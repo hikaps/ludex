@@ -6,6 +6,7 @@ paging or more in-app maintenance when needed.
 """
 from __future__ import annotations
 
+import os
 import re
 import sqlite3
 from contextlib import nullcontext
@@ -21,26 +22,28 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, ContentSwitcher, DataTable, Footer, Input, Label, OptionList, Select, Static, Switch, Tab, Tabs
 from textual.widgets.data_table import RowDoesNotExist
 
-from .accounts import get_account, list_accounts, update_account
-from .errors import LudexError
-from .executables import find_executables
-from .acquire import download_game
-from .game_settings import default_download_dir, get_download_dir, get_prefix_root, get_settings, set_download_dir, set_prefix_root, update_settings
-from .metadata import cached_match, cached_metadata, choose_match, clear_match, default_query, game_metadata, match_candidates, get_auto_details, get_auto_match, set_auto_details, set_auto_match
-from .jobs import Job, eta_seconds, format_eta, get_job, list_jobs, progress, progress_line, stop_job
-from .launch import install_game, launch_game, open_url
-from .find import find_games, owned_keys
-from .library import get_game, list_games
-from .paths import StatePaths
-from .refresh import Refreshed, get_auto_refresh, refresh_all, set_auto_refresh
-from .playtime import Played, describe_played, epoch
-from .plugins import ConfigField, Provider
-from .provider_settings import get_values, set_value
-from .runners import find_runners
-from .storage import connect, writer_lock
-from .switches import get_switch, set_switch
-from .plugin_manager import list_plugins, set_plugin_enabled
-from .tui_settings import FolderPrompt, GameSettingsScreen, MatchScreen, PathInput, PathSuggester
+from ludex.accounts import get_account, list_accounts, update_account
+from ludex.installed import installed_keys
+from ludex.loader import load_providers
+from ludex.errors import LudexError
+from ludex.executables import find_executables
+from ludex.acquire import download_game
+from ludex.game_settings import default_download_dir, get_download_dir, get_prefix_root, get_settings, set_download_dir, set_prefix_root, update_settings
+from ludex.metadata import cached_match, cached_metadata, choose_match, clear_match, default_query, game_metadata, match_candidates, get_auto_details, get_auto_match, set_auto_details, set_auto_match
+from ludex.jobs import Job, eta_seconds, format_eta, get_job, list_jobs, progress, progress_line, stop_job
+from ludex.launch import install_game, launch_game, open_url
+from ludex.find import find_games, owned_keys
+from ludex.library import get_game, list_games
+from ludex.paths import StatePaths, state_paths
+from ludex.refresh import Refreshed, get_auto_refresh, refresh_all, set_auto_refresh
+from ludex.playtime import Played, describe_played, epoch, play_stats
+from ludex.plugins import ConfigField, Provider
+from ludex.provider_settings import get_values, set_value
+from ludex.runners import find_runners
+from ludex.storage import connect, writer_lock
+from ludex.switches import get_switch, set_switch
+from ludex.plugin_manager import list_plugins, set_plugin_enabled
+from .settings import FolderPrompt, GameSettingsScreen, MatchScreen, PathInput, PathSuggester
 
 
 _SOURCE_LABELS = {
@@ -1035,3 +1038,20 @@ class LudexApp(App[None]):
                 self._show_game(game_id)
         except LudexError as exc:
             self.notify(exc.message, severity="error")
+
+
+def main() -> int:
+    """Run the TUI on the user's library; the ``ludex tui`` command and ``ludex-tui`` script both land here."""
+    sources, _ = load_providers()
+    paths = state_paths()
+    previous_umask = os.umask(0o077)
+    try:
+        LudexApp(
+            paths.database, sources, lambda: installed_keys(paths, sources)[0],
+            lambda store, account: get_account(paths, f"{store}:{account}").config,
+            paths.root / "prefixes", paths.import_lock, paths,
+            played=lambda conn: play_stats(paths, sources, conn)[0],
+        ).run()
+    finally:
+        os.umask(previous_umask)
+    return 0

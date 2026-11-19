@@ -9,8 +9,9 @@ you trust. ludex opens no connection itself: ``uv`` or ``pip`` does the download
 and only when you run ``plugin add``, ``plugin update`` or ``update``.
 
 ponytail: managed plugins are installed with uv, else pip; pipx-style isolation per plugin, version
-pinning and checksums are left to the spec you pass (for example ``name==1.2`` or a wheel path). A plugin must not
-declare ludex as a dependency (it would install a second copy); it imports the running one.
+pinning and checksums are left to the spec you pass (for example ``name==1.2`` or a wheel path). A plugin may declare
+``ludex-core`` as a dependency; the copy installed into its folder (and that copy's built-in providers) is ignored in
+favor of the running one, so a requirement that cannot be satisfied on the index still blocks the install.
 """
 from __future__ import annotations
 
@@ -20,11 +21,12 @@ import secrets
 import shutil
 import subprocess
 import sys
-from importlib.metadata import PackageNotFoundError, distributions, entry_points, version
+from importlib.metadata import PackageNotFoundError, distributions, version
 from pathlib import Path
 from typing import Any
 
 from .errors import LudexError
+from .loader import installed_provider_entries, is_reserved_project
 from .paths import plugins_dir
 from .plugins import GROUP
 
@@ -94,9 +96,10 @@ def _providers(directory: Path) -> list[tuple[str, str, list[str]]]:
     """(dist name, version, provider names) for each plugin distribution inside ``directory``."""
     found = []
     for dist in distributions(path=[str(directory)]):
+        name = _canonical(dist.metadata["Name"] or "")
         names = [ep.name for ep in dist.entry_points if ep.group == GROUP]
-        if names:
-            found.append((_canonical(dist.metadata["Name"] or ""), dist.version or "?", sorted(names)))
+        if names and not is_reserved_project(name):  # a copy of ludex's own providers brought in by a ludex-core dependency
+            found.append((name, dist.version or "?", sorted(names)))
     return found
 
 
@@ -155,7 +158,7 @@ def add_plugin(spec: str, *, upgrade: bool = False) -> dict[str, Any]:
         name, ver, provider_names = found[0]
         if not _NAME.fullmatch(name) or name in (_DIST, "ludex"):
             raise LudexError("not_a_plugin", "that package name cannot be used as a plugin")
-        taken = {ep.name for ep in entry_points(group=GROUP) if ep.dist is not None and _canonical(ep.dist.name) != name}
+        taken = {ep.name for ep in installed_provider_entries() if ep.dist is not None and _canonical(ep.dist.name) != name}
         clash = sorted(set(provider_names) & taken)
         if clash:
             raise LudexError("provider_exists", f"provider name already provided by another package: {', '.join(clash)}")
@@ -224,7 +227,7 @@ def update_core(channel: str | None, dry_run: bool) -> dict[str, Any]:
     try:
         current = version(_DIST)
     except PackageNotFoundError:
-        raise LudexError("not_installed", "ludex is not installed as a package, so it cannot update itself") from None
+        raise LudexError("not_installed", "self-update requires ludex-games; upgrade ludex-cli with your installer") from None
     if _is_editable():
         raise LudexError("development_install", "this is a development install; update it with git instead")
     if channel is None:

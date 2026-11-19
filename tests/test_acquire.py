@@ -56,3 +56,21 @@ def test_acquire_error_mapping_and_missing_capability(tmp_path):
         with pytest.raises(LudexError) as info:
             acquire_game(providers, "demo", "1", "x", tmp_path)
         assert info.value.code == "not_acquirable"
+
+
+def test_the_detached_worker_acquires_into_the_destination_and_reports_failures(tmp_path, monkeypatch, capsys):
+    from ludex import _acquire_worker
+
+    def fn(request, report):
+        report("half", 1, 2)
+        game = request.destination / "game"
+        game.mkdir()
+        return AcquireResult(game, {"executable": "run.sh"})
+
+    monkeypatch.setattr(_acquire_worker, "load_providers", lambda: (_provider(fn), {}))
+    assert _acquire_worker.main(["demo", "7", "--to", str(tmp_path / "dl")]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == f"acquired into {(tmp_path / 'dl' / 'game').resolve()}\n  executable=run.sh\n"
+    assert "half 50%" in captured.err
+    assert _acquire_worker.main(["nope", "7", "--to", str(tmp_path / "dl")]) == 1
+    assert capsys.readouterr().err == "error: provider nope cannot acquire games\n"

@@ -12,7 +12,7 @@ from ludex.metadata import cached_metadata, game_metadata, get_auto_details, set
 from ludex.plugins import Metadata, OwnedGame, Provider, SourceError
 from ludex.sources import steam
 from ludex.storage import connect
-from ludex.tui import LudexApp
+from ludex_tui.app import LudexApp
 from textual.widgets import Static, Switch
 
 

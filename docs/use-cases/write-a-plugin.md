@@ -1,6 +1,6 @@
 # Write a ludex plugin
 
-To add a store, a metadata service or new commands to ludex, write a plugin: a Python package that exports a `Provider` instance from the `ludex.providers` entry-point group. The contract is in the docstrings of [`src/ludex/plugins.py`](https://github.com/hikaps/ludex/blob/main/src/ludex/plugins.py) and [`src/ludex/library.py`](https://github.com/hikaps/ludex/blob/main/src/ludex/library.py); they are the source of truth.
+To add a store, a metadata service or new commands to ludex, write a plugin: a Python package that exports a `Provider` instance from the `ludex.providers` entry-point group. The contract is in the docstrings of [`packages/core/src/ludex/plugins.py`](https://github.com/hikaps/ludex/blob/main/packages/core/src/ludex/plugins.py) and [`packages/core/src/ludex/library.py`](https://github.com/hikaps/ludex/blob/main/packages/core/src/ludex/library.py); they are the source of truth.
 
 ## Summary of the contract
 
@@ -21,4 +21,4 @@ ludex plugin rm NAME
 ludex providers                           # check it loaded and its capabilities
 ```
 
-Bundled sources (`steam`, `epic`, `heroic`, `local`, `shortcuts`, `rawg`) are small, real examples under [`src/ludex/sources/`](https://github.com/hikaps/ludex/tree/main/src/ludex/sources).
+Bundled sources (`steam`, `epic`, `heroic`, `local`, `shortcuts`, `rawg`) are small, real examples under [`packages/core/src/ludex/sources/`](https://github.com/hikaps/ludex/tree/main/src/ludex/sources).

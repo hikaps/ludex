@@ -4,6 +4,15 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.60.0] - 2026-11-19
+
+### Changed
+
+- **packaging:** one repository now publishes four lockstep distributions: `ludex-core` (import `ludex`: library, plugin API, bundled providers), `ludex-cli`, `ludex-tui` and `ludex-games`, which bundles all three, installs the same `ludex` command and keeps the rolling beta URL. Plugins keep importing `ludex`; `API_VERSION` and the database are unchanged. Nothing changes for `uv tool install ludex-games` users. `python -m ludex` is now `python -m ludex_cli`; `ludex.cli`, `ludex.tui` and `ludex.tui_settings` are now `ludex_cli.cli`, `ludex_tui.app` and `ludex_tui.settings`. `ludex-cli` alone reports `tui_missing` for `ludex tui`; `ludex-tui` alone provides a `ludex-tui` command
+- **downloads:** a background download runs a private core worker instead of `ludex acquire`, so it works without the CLI installed
+- **plugins:** a plugin may require `ludex-core`; the copy it installs into its own folder is ignored in favor of the running one, so built-in providers do not register twice
+- **update:** `ludex update` on a standalone `ludex-cli` says it needs `ludex-games`
+
 ## [0.59.1] - 2026-11-17
 
 ### Fixed

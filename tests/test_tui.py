@@ -11,7 +11,7 @@ from ludex.plugins import OwnedGame
 from ludex.sources import epic, steam
 from ludex.game_settings import get_prefix_root
 from ludex.storage import connect
-from ludex.tui import LudexApp
+from ludex_tui.app import LudexApp
 from textual.widgets import Button, DataTable, Input, Static
 
 
@@ -100,7 +100,7 @@ def test_edit_screen_saves_runner_prefix_executable_args_and_env(tmp_path, monke
     proton = tmp_path / "GE"
     proton.mkdir()
     (proton / "proton").write_text("")
-    monkeypatch.setattr("ludex.tui.find_runners", lambda: [Runner("GE", proton, "steam")])
+    monkeypatch.setattr("ludex_tui.app.find_runners", lambda: [Runner("GE", proton, "steam")])
     monkeypatch.setattr("ludex.runners.find_runners", lambda home=None: [Runner("GE", proton, "steam")])
     local = Provider("local", "l", (), lambda c: None, game_folder=lambda config, store_id: folder)
 
@@ -162,7 +162,7 @@ def test_edit_screen_reports_invalid_input_and_stays_open(tmp_path):
 
 
 def test_path_suggester_completes_directories_files_and_home(tmp_path, monkeypatch):
-    from ludex.tui_settings import PathSuggester
+    from ludex_tui.settings import PathSuggester
 
     (tmp_path / "games").mkdir()
     (tmp_path / "gamma.txt").write_text("")
@@ -621,7 +621,7 @@ def test_install_on_a_hit_of_a_downloading_plugin_asks_for_a_folder_starts_a_dow
         started.append((store, store_id, title, destination))
         return start_job(conn, "download", 0, f"{store}:{store_id}", title, ["/bin/sh", "-c", "echo 10 percent; sleep 30"], log_dir)
 
-    monkeypatch.setattr("ludex.tui.download_game", fake_download)
+    monkeypatch.setattr("ludex_tui.app.download_game", fake_download)
     where = tmp_path / "games"
 
     async def scenario():

@@ -18,10 +18,10 @@ from textual.screen import ModalScreen
 from textual.suggester import Suggester
 from textual.widgets import Input, Label, OptionList, Select, Static, TextArea
 
-from .errors import LudexError
-from .game_settings import GameSettings
-from .plugins import SearchHit
-from .runners import Runner
+from ludex.errors import LudexError
+from ludex.game_settings import GameSettings
+from ludex.plugins import SearchHit
+from ludex.runners import Runner
 
 
 class PathSuggester(Suggester):

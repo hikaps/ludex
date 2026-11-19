@@ -60,10 +60,16 @@ def download_game(
     provider = providers.get(store)
     if provider is None or provider.acquire is None:
         raise LudexError("not_acquirable", f"provider {store} cannot acquire games")
-    argv = [sys.executable, "-m", "ludex", "acquire", store, store_id, "--to", str(destination.expanduser())]
+    argv = [sys.executable, "-m", "ludex._acquire_worker", store, store_id, "--to", str(destination.expanduser())]
     if title:
         argv += ["--title", title]
     return start_job(conn, "download", 0, f"{store}:{store_id}", title or store_id, argv, log_dir)
+
+
+def format_acquired(result: AcquireResult) -> str:
+    """The human line for a finished acquisition: the directory, then the sorted hints."""
+    hints = "".join(f"\n  {key}={value}" for key, value in sorted(result.hints.items()))
+    return f"acquired into {result.directory}{hints}"
 
 
 def job_reporter(echo: Callable[[str], None]) -> Report:

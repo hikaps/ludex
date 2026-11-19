@@ -37,8 +37,8 @@ jobs:
 
       - name: Install project and test dependencies
         run: |
-          python -m venv .venv
-          .venv/bin/python -m pip install -e ".[test]"
+          python -m pip install uv==0.13.9
+          uv sync --locked --extra test --python "$(command -v python)"
 
       - name: Check CLI
         run: .venv/bin/ludex --version
