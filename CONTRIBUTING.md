@@ -26,6 +26,6 @@ Setup, code conventions and testing are in [AGENTS.md](AGENTS.md).
 
 A PyPI version can never be reused, so keep a required reviewer on the `pypi` environment (GitHub Settings, Environments): the release waits for approval. Re-running after a failed tag or release step is safe. Pushing tag `vX.Y.Z` by hand also publishes it.
 
-The bundle on PyPI is `ludex-games`; the command and import package stay `ludex`. One-time setup: a PyPI pending publisher for each of `ludex-core`, `ludex-cli`, `ludex-tui` and `ludex-games`, owner `hikaps`, repository `ludex`, workflow `pypi.yml`, environment `pypi`.
+The bundle on PyPI is `ludex-games`; the command and import package stay `ludex`. One-time setup: a PyPI publisher for each of `ludex-core` (environment `pypi`), `ludex-cli` (`pypi-cli`), `ludex-tui` (`pypi-tui`) and `ludex-games` (`pypi`); PyPI allows one pending publisher per repository, workflow and environment, so new projects need distinct environments. Owner `hikaps`, repository `ludex`, workflow `pypi.yml`, environment `pypi`.
 
 CI: `tests.yml` runs on every push and PR. `releases.yml` runs on `develop` pushes and PRs to it: it builds the four distributions as `.devN` wheels plus the `ludex.tar.gz` bundle whose requirements are hash-pinned release URLs, smoke-installs them with uv and pipx, and on pushes moves the single rolling `beta` pre-release (keeping the previous wheel set so an older `ludex.tar.gz` stays installable).
