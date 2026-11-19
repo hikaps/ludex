@@ -862,7 +862,8 @@ class LudexApp(App[None]):
         jobs = sorted(jobs, key=lambda j: (j.state != "running", -j.id))
         rows = [(j.id, j.kind, j.title, j.state, progress_line(j) if j.state == "running" else "" if j.exit_code in (None, 0) else f"exit {j.exit_code}") for j in jobs]
         running = sum(j.state == "running" for j in jobs)
-        self.query_one("#jobs", Tab).label = f"Jobs ({running})" if running else "Jobs"
+        for tab in self.query("#jobs"):  # the tab may not be mounted yet at startup; the next poll sets the label
+            tab.label = f"Jobs ({running})" if running else "Jobs"
         if rows == self._jobs_shown:
             return
         self._jobs_shown = rows
