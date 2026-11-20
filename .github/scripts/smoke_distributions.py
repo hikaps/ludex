@@ -33,7 +33,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from build_distributions import BUNDLE, MEMBERS, ROOT, metadata_of  # noqa: E402
+from build_distributions import BUNDLE, BUNDLED, ROOT, metadata_of  # noqa: E402
 
 BUILTINS = {"steam", "epic", "local", "shortcuts", "heroic", "rawg"}
 
@@ -313,7 +313,7 @@ def verify_production(dist: Path, repository: str) -> str:
     check(meta["Name"] == BUNDLE and re.fullmatch(r"\d+\.\d+\.\d+\.dev\d+", version) is not None, f"bundle sdist metadata {meta['Name']} {version}")
     base = f"https://github.com/{repository}/releases/download/beta"
     requires = {r.split(" @ ")[0]: r.split(" @ ")[1] for r in meta.get_all("Requires-Dist") or [] if " @ " in r}
-    check(set(requires) == set(MEMBERS), f"direct requirements {requires}")
+    check(set(requires) == set(BUNDLED), f"direct requirements {requires}")
     for name, target in requires.items():
         url, _, fragment = target.partition("#sha256=")
         wheel = f"{name.replace('-', '_')}-{version}-py3-none-any.whl"

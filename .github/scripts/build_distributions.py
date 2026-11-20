@@ -25,8 +25,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 BUNDLE = "ludex-games"
-MEMBERS = {"ludex-core": "packages/core", "ludex-cli": "packages/cli", "ludex-tui": "packages/tui"}
-GUI = ("ludex-gui", "packages/gui")  # lockstep and published, but not in the ludex-games bundle (it brings Qt) nor in beta builds
+BUNDLED = {"ludex-core": "packages/core", "ludex-cli": "packages/cli", "ludex-tui": "packages/tui"}  # what ludex-games depends on; all beta builds
+STANDALONE = {"ludex-gui": "packages/gui"}  # same version, own PyPI project; kept out of the bundle (it brings Qt) and of beta builds
+PROJECTS = BUNDLED | STANDALONE
 VERSION = re.compile(r"\d+\.\d+\.\d+")
 LOOPBACK = re.compile(r"http://127\.0\.0\.1:\d+")
 _IGNORE = shutil.ignore_patterns("build", "dist", "*.egg-info", "__pycache__", "*.pyc", ".pytest_cache")
@@ -38,7 +39,7 @@ def _project(root: Path, relative: str) -> dict:
 
 def check_tree(root: Path) -> str:
     """Validate names, versions and exact internal pins of the source tree; return its base version."""
-    projects = {BUNDLE: _project(root, "."), GUI[0]: _project(root, GUI[1])} | {name: _project(root, path) for name, path in MEMBERS.items()}
+    projects = {BUNDLE: _project(root, ".")} | {name: _project(root, path) for name, path in PROJECTS.items()}
     for name, project in projects.items():
         if project["name"] != name:
             raise SystemExit(f"expected project {name}, found {project['name']!r}")
@@ -46,13 +47,13 @@ def check_tree(root: Path) -> str:
     base = versions[BUNDLE]
     if not VERSION.fullmatch(base) or set(versions.values()) != {base}:
         raise SystemExit(f"expected one plain X.Y.Z version for all distributions, got {versions}")
-    init = (root / MEMBERS["ludex-core"] / "src/ludex/__init__.py").read_text()
+    init = (root / BUNDLED["ludex-core"] / "src/ludex/__init__.py").read_text()
     if re.findall(r'^__version__ = "([^"]+)"$', init, re.MULTILINE) != [base]:
         raise SystemExit(f"__version__ disagrees with project version {base!r}")
-    pins = {f"{name}=={base}" for name in MEMBERS}
-    for name in (BUNDLE, "ludex-cli", "ludex-tui", GUI[0]):
+    pins = {f"{name}=={base}" for name in BUNDLED}
+    for name in (BUNDLE, *(n for n in PROJECTS if n != "ludex-core")):
         wanted = pins if name == BUNDLE else {f"ludex-core=={base}"}
-        found = {d for d in projects[name]["dependencies"] if d.split("==")[0] in MEMBERS}
+        found = {d for d in projects[name]["dependencies"] if d.split("==")[0] in PROJECTS}
         if found != wanted:
             raise SystemExit(f"{name} must pin exactly {sorted(wanted)}, found {sorted(found)}")
     return base
@@ -85,7 +86,7 @@ def _sdist_has_license(path: Path) -> bool:
         return any(m.isfile() and m.name.count("/") == 1 and m.name.endswith("/LICENSE") for m in archive.getmembers())
 
 
-_OWNS = {"ludex-core": "ludex/", "ludex-cli": "ludex_cli/", "ludex-tui": "ludex_tui/", GUI[0]: "ludex_gui/", BUNDLE: None}
+_OWNS = {"ludex-core": "ludex/", "ludex-cli": "ludex_cli/", "ludex-tui": "ludex_tui/", "ludex-gui": "ludex_gui/", BUNDLE: None}
 
 
 def verify(outdir: Path, version: str, expected_requires: dict[str, set[str]], *, sdists: bool) -> list[Path]:
@@ -105,7 +106,7 @@ def verify(outdir: Path, version: str, expected_requires: dict[str, set[str]], *
             if meta["Name"] != name or meta["Version"] != version:
                 raise SystemExit(f"{artifact.name}: unexpected metadata {meta['Name']!r} {meta['Version']!r}")
             requires = {r.partition(";")[0].strip() for r in (meta.get_all("Requires-Dist") or []) if "extra ==" not in r}
-            internal = {r for r in requires if r.split("==")[0].split(" @")[0] in MEMBERS}
+            internal = {r for r in requires if r.split("==")[0].split(" @")[0] in PROJECTS}
             if internal != expected_requires[name]:
                 raise SystemExit(f"{artifact.name}: internal requirements {sorted(internal)} != {sorted(expected_requires[name])}")
         top = {n.split("/")[0] for n in _wheel_files(found[0]) if not n.split("/")[0].endswith((".dist-info", ".data"))}
@@ -118,10 +119,10 @@ def verify(outdir: Path, version: str, expected_requires: dict[str, set[str]], *
 
 def build_stable(outdir: Path) -> None:
     base = check_tree(ROOT)
-    for path in (*MEMBERS.values(), GUI[1]):
+    for path in PROJECTS.values():
         _build(ROOT / path, outdir, sdist=True, wheel=True)
     _build(ROOT, outdir, sdist=True, wheel=True)
-    expected = {BUNDLE: {f"{name}=={base}" for name in MEMBERS}} | {"ludex-core": set(), "ludex-cli": {f"ludex-core=={base}"}, "ludex-tui": {f"ludex-core=={base}"}, GUI[0]: {f"ludex-core=={base}"}}
+    expected = {BUNDLE: {f"{name}=={base}" for name in BUNDLED}} | {name: set() if name == "ludex-core" else {f"ludex-core=={base}"} for name in PROJECTS}
     verify(outdir, base, expected, sdists=True)
 
 
@@ -137,16 +138,16 @@ def build_beta(outdir: Path, run_number: str, asset_base: str) -> None:
         for name in ("pyproject.toml", "README.md", "LICENSE"):
             shutil.copy2(ROOT / name, work / name)
         shutil.copytree(ROOT / "packages", work / "packages", symlinks=True, ignore=_IGNORE)
-        files = [work / "pyproject.toml", *(work / p / "pyproject.toml" for p in MEMBERS.values()), work / MEMBERS["ludex-core"] / "src/ludex/__init__.py"]
+        files = [work / "pyproject.toml", *(work / p / "pyproject.toml" for p in BUNDLED.values()), work / BUNDLED["ludex-core"] / "src/ludex/__init__.py"]
         for file in files:
             text = file.read_text()
             stamped = re.sub(rf'(?m)^(version|__version__) = "{re.escape(base)}"$', rf'\1 = "{version}"', text)
             stamped = stamped.replace(f"=={base}\"", f"=={version}\"")
             file.write_text(stamped)
-        for path in MEMBERS.values():
+        for path in BUNDLED.values():
             _build(work / path, outdir, sdist=False, wheel=True)
         digests = {}
-        for name in MEMBERS:
+        for name in BUNDLED:
             wheel = next(outdir.glob(f"{name.replace('-', '_')}-{version}-*.whl"))
             digests[name] = (wheel.name, hashlib.sha256(wheel.read_bytes()).hexdigest())
         pyproject = work / "pyproject.toml"
