@@ -1,0 +1,136 @@
+import QtQuick
+import QtQuick.Controls.Basic
+import QtQuick.Layouts
+
+Item {
+    id: page
+    property bool installedOnly: false
+    property string store: ""
+    readonly property var sortKeys: ["title", "recent", "playtime", "installed"]
+
+    function apply() {
+        backend.setFilter(search.text, page.store, page.installedOnly, sortKeys[sortBox.currentIndex])
+    }
+    function focusGrid() {
+        grid.forceActiveFocus()
+    }
+    function focusSearch() {
+        search.forceActiveFocus()
+        search.selectAll()
+    }
+
+    onInstalledOnlyChanged: apply()
+    onStoreChanged: apply()
+    onVisibleChanged: if (visible) {
+        apply()
+        grid.forceActiveFocus()
+    }
+
+    Timer { id: debounce; interval: 160; onTriggered: page.apply() }
+
+    ColumnLayout {
+        anchors.fill: parent
+        anchors.margins: 24
+        spacing: 14
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 12
+            Txt {
+                text: page.installedOnly ? "Installed" : "Library"
+                font.pixelSize: Theme.title
+                font.bold: true
+            }
+            Txt { text: backend.count + (backend.count === 1 ? " game" : " games"); color: Theme.muted; Layout.alignment: Qt.AlignBottom; Layout.bottomMargin: 4 }
+            Item { Layout.fillWidth: true; Layout.minimumWidth: 0 }
+            TextField {
+                id: search
+                Layout.fillWidth: true
+                Layout.maximumWidth: 280
+                Layout.minimumWidth: 120
+                placeholderText: "Search your library   ( / )"
+                color: Theme.text
+                placeholderTextColor: Theme.muted
+                font.family: Theme.family
+                font.pixelSize: Theme.body
+                selectByMouse: true
+                leftPadding: 14
+                background: Rectangle {
+                    radius: height / 2
+                    color: Theme.surface2
+                    border.width: search.activeFocus ? 2 : 1
+                    border.color: search.activeFocus ? Theme.accent : Theme.border
+                }
+                onTextChanged: debounce.restart()
+                Keys.onEscapePressed: { text = ""; grid.forceActiveFocus() }
+                Keys.onDownPressed: grid.forceActiveFocus()
+                Keys.onReturnPressed: grid.forceActiveFocus()
+            }
+            ComboBox {
+                id: sortBox
+                Layout.preferredWidth: 170
+                Layout.minimumWidth: 120
+                model: ["Title", "Recently played", "Play time", "Installed first"]
+                font.family: Theme.family
+                onActivated: page.apply()
+                contentItem: Txt { leftPadding: 12; text: sortBox.displayText; verticalAlignment: Text.AlignVCenter }
+                background: Rectangle { radius: Theme.radius; color: Theme.surface2; border.width: 1; border.color: Theme.border }
+                delegate: ItemDelegate {
+                    width: sortBox.width
+                    contentItem: Txt { text: modelData }
+                    background: Rectangle { color: highlighted ? Theme.surface3 : Theme.surface2 }
+                    highlighted: sortBox.highlightedIndex === index
+                }
+                popup.background: Rectangle { color: Theme.surface2; border.width: 1; border.color: Theme.border; radius: Theme.radius }
+            }
+            Btn {
+                text: backend.refreshing ? "Refreshing…" : "Refresh"
+                enabled: !backend.refreshing
+                onClicked: { backend.reload(); backend.startRefresh(false) }
+            }
+        }
+
+        Flow {
+            Layout.fillWidth: true
+            spacing: 8
+            visible: backend.stores.length > 1
+            Chip { text: "All stores"; checked: page.store === ""; onClicked: page.store = "" }
+            Repeater {
+                model: backend.stores
+                delegate: Chip { required property string modelData; text: modelData; checked: page.store === modelData; onClicked: page.store = modelData }
+            }
+        }
+
+        GridView {
+            id: grid
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            readonly property int columns: Math.max(2, Math.floor(width / 190))
+            cellWidth: Math.floor(width / columns)
+            cellHeight: Math.round(cellWidth * 1.5) + 62
+            clip: true
+            focus: true
+            keyNavigationEnabled: true
+            highlightFollowsCurrentItem: true
+            cacheBuffer: 0  // only cards on screen exist, so only they ask for covers
+            model: backend.gameModel
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+            delegate: GameCard {
+                width: grid.cellWidth
+                height: grid.cellHeight
+                current: GridView.isCurrentItem && grid.activeFocus
+                onOpened: { grid.currentIndex = index; backend.openGame(gameId) }
+            }
+            Keys.onReturnPressed: if (currentItem) backend.openGame(currentItem.gameId)
+            Keys.onEnterPressed: if (currentItem) backend.openGame(currentItem.gameId)
+
+            Txt {
+                anchors.centerIn: parent
+                visible: backend.count === 0
+                horizontalAlignment: Text.AlignHCenter
+                color: Theme.muted
+                text: page.installedOnly ? "No installed games found." : (search.text !== "" || page.store !== "" ? "No game matches." : "No games here yet.\nAdd a source with 'ludex account add' and run 'ludex import'.")
+            }
+        }
+    }
+}

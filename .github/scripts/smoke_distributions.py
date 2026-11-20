@@ -239,25 +239,27 @@ def check_stable(dist: Path) -> None:
         check(not (python.parent / "ludex").exists(), "ludex-tui must not provide the ludex command")
         tui_in_terminal(python.parent / "ludex-tui", [], scratch.fresh_state("tui"))
 
-        say("GUI without the CLI: ludex-gui opens a window offscreen")
+        say("GUI without the CLI: ludex-gui loads its launcher offscreen")
         gui_python = venv(scratch.root / "gui-venv")
         run([gui_python, "-m", "pip", "install", "-q", f"ludex-gui=={version}"], env=env)
         check(not (gui_python.parent / "ludex").exists(), "ludex-gui must not provide the ludex command")
         check(run([gui_python, "-c", "import importlib.util as u; raise SystemExit(any(u.find_spec(n) is not None for n in ('ludex_cli', 'ludex_tui', 'textual')))"]).returncode == 0, "a TUI or CLI package came with ludex-gui")
         code = (
             "import os\nos.umask(0o077)\n"
-            "from PySide6.QtWidgets import QApplication\n"
-            "app = QApplication([])\n"
+            "from PySide6.QtCore import QObject\n"
+            "from PySide6.QtGui import QGuiApplication\n"
+            "app = QGuiApplication([])\n"
             "from ludex.loader import load_providers\n"
             "from ludex.paths import state_paths\n"
-            "from ludex_gui.app import MainWindow\n"
+            "from ludex_gui.app import build_engine\n"
             "sources, _ = load_providers(); paths = state_paths()\n"
-            "window = MainWindow(paths, sources, lambda: set(), lambda s, a: {}, lambda c: {}, paths.root / 'prefixes', auto_refresh=False)\n"
-            "labels = [window.drawer.item(i).text() for i in range(window.drawer.count())]\n"
-            "assert labels == ['Owned', 'Installed', 'Search', 'Jobs', 'Settings'], labels\n"
-            "window.show(); app.processEvents(); window.close()\n"
+            "launcher = build_engine(paths, sources, lambda: set(), lambda s, a: {}, lambda c: {}, paths.root / 'prefixes')\n"
+            "assert launcher.window is not None and not launcher.warnings, launcher.warnings\n"
+            "for name in ('library', 'installed', 'search', 'jobs', 'settings'):\n"
+            "    assert launcher.window.findChild(QObject, 'nav-' + name) is not None, name\n"
+            "app.processEvents(); launcher.backend.closeDown()\n"
         )
-        run([gui_python, "-c", code], env=scratch.fresh_state("gui") | {"QT_QPA_PLATFORM": "offscreen"})
+        run([gui_python, "-c", code], env=scratch.fresh_state("gui") | {"QT_QPA_PLATFORM": "offscreen", "QT_QUICK_BACKEND": "software"})
 
         say("bundle with uv and pipx: wheel and sdist, one command, TUI, plugin download")
         sdist = next(dist.glob("ludex_games-*.tar.gz"))

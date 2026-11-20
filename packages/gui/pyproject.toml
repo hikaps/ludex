@@ -5,8 +5,8 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ludex-gui"
 version = "0.62.0"
-description = "Desktop (Qt) frontend of ludex"
-readme = { text = "The Qt desktop window of [ludex](https://github.com/hikaps/ludex). Not part of `ludex-games`: install it next to it (`ludex gui`) or on its own (`ludex-gui`).", content-type = "text/markdown" }
+description = "Desktop game launcher (Qt Quick) frontend of ludex"
+readme = { text = "The Qt Quick game launcher of [ludex](https://github.com/hikaps/ludex). Not part of `ludex-games`: install it next to it (`ludex gui`) or on its own (`ludex-gui`).", content-type = "text/markdown" }
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
@@ -36,6 +36,9 @@ ludex-gui = "ludex_gui.app:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["ludex_gui*"]
+
+[tool.setuptools.package-data]
+ludex_gui = ["qml/*"]
 
 [tool.uv.sources]
 ludex-core = { workspace = true }

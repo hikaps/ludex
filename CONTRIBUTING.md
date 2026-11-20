@@ -7,6 +7,7 @@ Setup, code conventions and testing are in [AGENTS.md](AGENTS.md).
 - `main`: stable. Each release PR merged here publishes a tagged `vX.Y.Z` release (see Releases).
 - `develop`: integration. Every push publishes the rolling `beta` prerelease.
 - One feature or fix per branch, created from `develop` and named after the change (for example `steam-import`). Open the PR with `gh pr create --base develop`; the default branch is `main`, so `--base` is required.
+- A PR is merged only after the maintainer explicitly approves that PR; green CI alone never merges it.
 - Feature PRs are squash-merged into `develop`; the PR title becomes the commit subject and must follow the commit conventions below.
 - Both branches are protected: changes land only through PRs, and `Tests (Python 3.11)` and `Tests (Python 3.14)` must pass. Never force-push them.
 

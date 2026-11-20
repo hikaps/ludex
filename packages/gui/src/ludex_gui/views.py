@@ -1,17 +1,14 @@
-"""A drawer page for one plugin view: a native table or label/value panel, with confirmed row actions."""
+"""One plugin view as a QML-facing controller: a table or label/value snapshot, with confirmed row actions."""
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
+from typing import Any
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (
-    QAbstractItemView, QHBoxLayout, QHeaderView, QLabel, QMenu, QMessageBox, QPushButton, QTableWidget,
-    QTableWidgetItem, QVBoxLayout, QWidget,
-)
+from PySide6.QtCore import Property, QObject, Signal, Slot
 
 from ludex.paths import StatePaths
 from ludex.plugin_views import fetch_view, run_view_action
-from ludex.plugins import Provider, View, ViewAction, ViewDetail, ViewRow, ViewTable
+from ludex.plugins import Provider, View, ViewDetail, ViewTable
 
 from .work import run_async
 
@@ -21,151 +18,135 @@ def plain(text: str) -> str:
     return "".join(" " if (ord(c) < 32 and c != "\n") or 127 <= ord(c) < 160 else c for c in text)
 
 
-class ViewPage(QWidget):
-    """Fetched on first show and on Refresh; an action runs only after the user confirms it."""
+class ViewController(QObject):
+    """Fetched on first visit and on ``load``; an action runs only for the snapshot the user was shown and confirmed."""
 
-    def __init__(
-        self,
-        paths: StatePaths,
-        providers: Mapping[str, Provider],
-        key: str,
-        view: View,
-        notify: Callable[[str, bool], None],
-        after_action: Callable[[], None],
-    ) -> None:
-        super().__init__()
+    changed = Signal()
+    notice = Signal(str, bool)
+    actionDone = Signal()
+
+    def __init__(self, paths: StatePaths, providers: Mapping[str, Provider], key: str, view: View, parent: QObject | None = None) -> None:
+        super().__init__(parent)
         self._paths, self._providers, self._key, self._view = paths, providers, key, view
-        self._notify, self._after_action = notify, after_action
-        self.snapshot: ViewTable | ViewDetail | None = None
-        self.error: str | None = None
-        self.busy: str | None = None  # "loading" or "running"
-        self.loaded = False
-        self._generation = 0  # an answer for an older fetch is dropped
+        self._snapshot: ViewTable | ViewDetail | None = None
+        self._error = ""
+        self._busy = ""  # "loading" or "running"
+        self._loaded = False
+        self._generation = 0  # bumps on every fetch start and every snapshot: an older answer or confirmation is refused
 
-        self.status = QLabel()
-        self.refresh_button = QPushButton("Refresh")
-        self.actions_button = QPushButton("Actions…")
-        self.refresh_button.clicked.connect(self.load)
-        self.actions_button.clicked.connect(self._choose_action)
-        self.table = QTableWidget()
-        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.table.verticalHeader().setVisible(False)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.table.itemSelectionChanged.connect(self._sync)
-        bar = QHBoxLayout()
-        bar.addWidget(self.status, 1)
-        bar.addWidget(self.actions_button)
-        bar.addWidget(self.refresh_button)
-        layout = QVBoxLayout(self)
-        layout.addLayout(bar)
-        layout.addWidget(self.table)
-        self._sync()
+    # --- what QML shows -------------------------------------------------------------------------------------
 
-    def showEvent(self, event) -> None:  # noqa: N802 (Qt)
-        super().showEvent(event)
-        if not self.loaded and self.busy is None:
+    def _title(self) -> str:
+        return self._view.title
+
+    def _get_busy(self) -> str:
+        return self._busy
+
+    def _get_error(self) -> str:
+        return self._error
+
+    def _get_loaded(self) -> bool:
+        return self._loaded
+
+    def _get_generation(self) -> int:
+        return self._generation
+
+    def _get_columns(self) -> list[str]:
+        if isinstance(self._snapshot, ViewTable):
+            return list(self._snapshot.columns)
+        return ["Field", "Value"] if isinstance(self._snapshot, ViewDetail) else []
+
+    def _get_rows(self) -> list[dict[str, Any]]:
+        snapshot = self._snapshot
+        if isinstance(snapshot, ViewTable):
+            return [{"id": r.id, "cells": list(r.cells), "actions": [{"label": a.label, "command": a.command} for a in r.actions]} for r in snapshot.rows]
+        if isinstance(snapshot, ViewDetail):
+            return [{"id": label, "cells": [label, value], "actions": []} for label, value in snapshot.fields]
+        return []
+
+    def _get_text(self) -> str:
+        if self._busy == "loading":
+            return "Loading…"
+        if self._busy == "running":
+            return "Running action…"
+        if self._error:
+            return f"{self._error}. Press Refresh to retry."
+        if self._snapshot is not None and not self._get_rows():
+            return "No results."
+        return ""
+
+    title = Property(str, _title, constant=True)
+    busy = Property(str, _get_busy, notify=changed)
+    error = Property(str, _get_error, notify=changed)
+    loaded = Property(bool, _get_loaded, notify=changed)
+    generation = Property(int, _get_generation, notify=changed)
+    columns = Property("QVariantList", _get_columns, notify=changed)
+    rows = Property("QVariantList", _get_rows, notify=changed)
+    text = Property(str, _get_text, notify=changed)
+
+    # --- fetching -------------------------------------------------------------------------------------------
+
+    @Slot()
+    def ensureLoaded(self) -> None:
+        if not self._loaded and not self._busy:
             self.load()
 
+    @Slot()
     def load(self) -> None:
-        if self.busy is not None:
+        if self._busy:
             return
         self._generation += 1
         generation = self._generation
-        self.snapshot, self.error, self.busy, self.loaded = None, None, "loading", False
-        self.table.clear()
-        self.table.setRowCount(0)
-        self.table.setColumnCount(0)
-        self._sync()
-        provider, view = self._providers[self._key], self._view
-        run_async(lambda: fetch_view(self._paths, provider, view), lambda result, error: self._fetched(generation, result, error))
+        self._snapshot, self._error, self._busy, self._loaded = None, "", "loading", False
+        self.changed.emit()
+        provider, view, paths = self._providers[self._key], self._view, self._paths
+        run_async(lambda: fetch_view(paths, provider, view), lambda result, error: self._fetched(generation, result, error))
 
     def _fetched(self, generation: int, snapshot: ViewTable | ViewDetail | None, error: str | None) -> None:
         if generation != self._generation:
             return
-        self.busy, self.loaded, self.snapshot, self.error = None, True, snapshot, error
-        self.table.clear()
-        if isinstance(snapshot, ViewTable):
-            self._fill(snapshot.columns, [row.cells for row in snapshot.rows])
-        elif isinstance(snapshot, ViewDetail):
-            self._fill(("Field", "Value"), [pair for pair in snapshot.fields])
-            self.table.resizeRowsToContents()
-        self._sync()
+        self._generation += 1  # a confirmation dialog opened on an older snapshot can no longer run
+        self._busy, self._loaded, self._snapshot, self._error = "", True, snapshot, error or ""
+        self.changed.emit()
 
-    def _fill(self, columns: tuple[str, ...], rows: list[tuple[str, ...]]) -> None:
-        self.table.setColumnCount(len(columns))
-        self.table.setHorizontalHeaderLabels(list(columns))
-        self.table.setRowCount(len(rows))
-        for r, cells in enumerate(rows):
-            for c, cell in enumerate(cells):
-                item = QTableWidgetItem(cell)  # plain text, never rich text
-                item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-                self.table.setItem(r, c, item)
+    # --- actions --------------------------------------------------------------------------------------------
 
-    def selected_row(self) -> ViewRow | None:
-        if self.busy is not None or not isinstance(self.snapshot, ViewTable):
+    @Slot(int, int, result=str)
+    def confirmText(self, row: int, action: int) -> str:
+        """The question to ask before running; empty when the row or action does not exist."""
+        picked = self._pick(row, action)
+        if picked is None:
+            return ""
+        shown = picked[0].cells[0] if picked[0].cells and picked[0].cells[0].strip() else picked[0].id
+        return f"{picked[1].label}: {shown}?\nRuns {self._key} {picked[1].command}."
+
+    def _pick(self, row: int, action: int):
+        if self._busy or not isinstance(self._snapshot, ViewTable):
             return None
-        rows = self.table.selectionModel().selectedRows()
-        return self.snapshot.rows[rows[0].row()] if rows else None
+        if not 0 <= row < len(self._snapshot.rows):
+            return None
+        chosen = self._snapshot.rows[row]
+        return (chosen, chosen.actions[action]) if 0 <= action < len(chosen.actions) else None
 
-    def _sync(self) -> None:
-        if self.busy == "loading":
-            self.status.setText("Loading…")
-        elif self.busy == "running":
-            self.status.setText("Running action…")
-        elif self.error is not None:
-            self.status.setText(f"{self.error}. Press Refresh to retry.")
-        elif self.snapshot is not None and not self.table.rowCount():
-            self.status.setText("No results.")
-        else:
-            self.status.setText(self._view.title)
-        self.refresh_button.setEnabled(self.busy is None)
-        row = self.selected_row()
-        self.actions_button.setEnabled(row is not None and bool(row.actions))
-
-    def _choose_action(self) -> None:
-        row = self.selected_row()
-        if row is None or not row.actions:
-            return
-        self.menu = QMenu(self)
-        snapshot = self.snapshot
-        for action in row.actions:
-            entry = self.menu.addAction(f"{action.label}  ({action.command})")  # plain text
-            entry.triggered.connect(lambda _=False, a=action: self._confirm(snapshot, row, a))
-        self.menu.popup(self.actions_button.mapToGlobal(self.actions_button.rect().bottomLeft()))
-
-    def _confirm(self, snapshot: object, row: ViewRow, action: ViewAction) -> None:
-        """Picking an action is not confirming it: nothing runs until the user says yes, and only if the data is still current."""
-        if self._confirmed(row, action) and self.snapshot is snapshot:
-            self.run_action(action)
-
-    def _confirmed(self, row: ViewRow, action: ViewAction) -> bool:
-        subject = row.cells[0] if row.cells and row.cells[0].strip() else row.id
-        ask = QMessageBox(QMessageBox.Icon.Question, self._view.title, f"{action.label}: {subject}?", parent=self)
-        ask.setTextFormat(Qt.TextFormat.PlainText)
-        ask.setInformativeText(f"Runs {self._key} {action.command}.")
-        ask.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
-        ask.setDefaultButton(QMessageBox.StandardButton.Cancel)
-        return ask.exec() == QMessageBox.StandardButton.Yes
-
-    def run_action(self, action: ViewAction) -> None:
-        if self.busy is not None:
-            return
-        self.busy = "running"
-        self._sync()
-        run_async(
-            lambda: run_view_action(self._paths, self._providers, self._key, action).text,
-            self._action_done,
-        )
+    @Slot(int, int, int, result=bool)
+    def runAction(self, generation: int, row: int, action: int) -> bool:
+        """Run the confirmed action; refused (False) when the view moved on since the user saw it."""
+        picked = self._pick(row, action)
+        if picked is None or generation != self._generation:
+            return False
+        self._busy = "running"
+        self.changed.emit()
+        chosen, key, paths, providers = picked[1], self._key, self._paths, self._providers
+        run_async(lambda: run_view_action(paths, providers, key, chosen).text, self._action_done)
+        return True
 
     def _action_done(self, text: str | None, error: str | None) -> None:
-        self.busy = None
+        self._busy = ""
         if error is not None:
-            self._notify(plain(error), True)
-            self._sync()
+            self.notice.emit(plain(error), True)
+            self.changed.emit()
             return
-        self.loaded = False
-        self._after_action()  # reloads local data, which rewrites the status line: report afterwards
-        self._notify(plain(text or "Action completed."), False)
+        self._loaded = False
+        self.actionDone.emit()  # reloads local data, which rewrites the status line: report afterwards
+        self.notice.emit(plain(text or "Action completed."), False)
         self.load()

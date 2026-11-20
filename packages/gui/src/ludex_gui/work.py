@@ -27,7 +27,10 @@ class _Task(QRunnable):
             error = exc.message
         except Exception as exc:  # a worker must always report back, or the page stays busy
             error = f"failed ({type(exc).__name__})"
-        self._done.finished.emit(result, error)
+        try:
+            self._done.finished.emit(result, error)
+        except RuntimeError:  # the application is gone; nobody is waiting for the answer
+            pass
 
 
 _live: set[_Done] = set()

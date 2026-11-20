@@ -17,7 +17,7 @@ from typing import Any
 import httpx
 
 from .. import __version__
-from ..plugins import ConfigField, Metadata, Provider, SearchHit, SourceError
+from ..plugins import MAX_COVER_BYTES, ConfigField, Metadata, Provider, SearchHit, SourceError
 
 BASE_URL = "https://api.rawg.io/api"
 MAX_BODY_BYTES = 2 * 1024 * 1024
@@ -107,11 +107,48 @@ def metadata(store_id: str, *, settings: Mapping[str, str], client: httpx.Client
     )
 
 
+_RAW = {"Accept-Encoding": "identity"}  # an image is already compressed; never let a response inflate past the cap
+
+
+def cover(store_id: str, *, settings: Mapping[str, str], client: httpx.Client | None = None, base_url: str = BASE_URL) -> bytes | None:
+    """The RAWG image of one game id (landscape); ``None`` when RAWG has no image for it."""
+    if not store_id.isascii() or not store_id.isdigit():
+        return None
+    data = _get(f"games/{store_id}", {}, settings, client, base_url)
+    if data is None:
+        return None
+    url = data.get("background_image") if isinstance(data, dict) else None
+    if not isinstance(url, str) or not url.startswith("https://"):
+        return None
+    own = client is None
+    client = client or httpx.Client(timeout=10.0, headers={"User-Agent": f"ludex/{__version__}"})
+    try:
+        with client.stream("GET", url, headers=_RAW) as response:
+            if response.status_code in (403, 404):
+                return None
+            if response.status_code != 200:
+                raise SourceError("rawg_unavailable", "RAWG is unavailable")
+            body = bytearray()
+            if response.headers.get("content-encoding", "identity").lower() != "identity":
+                raise _bad_response()
+            for chunk in response.iter_raw():
+                body += chunk
+                if len(body) > MAX_COVER_BYTES:
+                    raise _bad_response()
+            return bytes(body)
+    except httpx.HTTPError:
+        raise SourceError("rawg_unavailable", "RAWG is unavailable") from None
+    finally:
+        if own:
+            client.close()
+
+
 PLUGIN = Provider(
     name="rawg",
     help="RAWG game database: titles and details for games your stores give none for (needs your own key)",
     config_fields=(),
     metadata=metadata,
+    cover=cover,
     match=match,
     settings=(ConfigField("api_key", "your RAWG API key (rawg.io/apidocs)", secret=True),),
 )

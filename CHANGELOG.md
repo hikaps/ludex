@@ -10,7 +10,8 @@ Also includes 0.61.0 below, which was never published to PyPI.
 
 ### Added
 
-- **gui:** `ludex-gui` is a new distribution with a Qt desktop window (`ludex gui`, or the `ludex-gui` command on its own). A drawer lists Owned, Installed, Search, Jobs and Settings, then one entry per plugin view; it launches and installs games, searches and downloads, shows job progress, and edits the same settings as the TUI. A plugin view's row actions run only after a separate confirmation. It uses only the core API (`ludex.plugin_views` for plugin entries) and is not part of `ludex-games`, because it brings Qt (PySide6): install it next to `ludex-games`. Without it `ludex gui` reports `gui_missing`
+- **gui:** `ludex-gui` is a new distribution: a Qt Quick game launcher (`ludex gui`, or the `ludex-gui` command on its own) in the style of Heroic or Hydra. A dark window with a sidebar, a cover-art grid library, a game page with a hero banner and a Play or Install button, Search, Jobs and Settings, and one sidebar page per plugin view (row actions run only after a separate confirmation). It uses only the core API and is not part of `ludex-games`, because it brings Qt (PySide6): install it next to `ludex-games`. Without it `ludex gui` reports `gui_missing`
+- **plugins:** a provider can contribute `cover(store_id)`, the bytes of a game's cover image; `ludex.artwork` (`cached_cover`, `fetch_cover`) asks the plugins, checks the size (4 MiB) and file signature, and keeps the file under the state folder, remembering "no cover" for a week. The Steam provider serves Steam's portrait art (else the store banner); the RAWG provider serves its image, including for games matched by title. The GUI fetches covers only for games on screen and only while `auto_details` is on. `cached_match` also returns the match's `id`. A plugin that offers `cover` needs `ludex-core>=0.62.0`; `API_VERSION` stays 3
 
 ### Changed
 

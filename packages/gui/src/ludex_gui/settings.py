@@ -1,14 +1,16 @@
-"""The Settings page: library switches, prefix folder, sources, plugins, plugin settings and accounts."""
+"""Settings for QML: library switches, prefix folder, sources, plugins, plugin settings and accounts.
+
+Sections are plain dictionaries. A secret value never leaves this module: a field only says whether one is set, and
+saving a blank secret keeps the saved one.
+"""
 from __future__ import annotations
 
 import sqlite3
 from collections.abc import Callable, Mapping
 from pathlib import Path
+from typing import Any
 
-from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-    QScrollArea, QVBoxLayout, QWidget,
-)
+from PySide6.QtCore import Property, QObject, Signal, Slot
 
 from ludex.accounts import get_account, list_accounts, update_account
 from ludex.errors import LudexError
@@ -25,191 +27,157 @@ from ludex.switches import get_switch, set_switch
 SOURCE_LABELS = {"steam_shortcuts": "Steam non-Steam shortcuts", "heroic_sideload": "Heroic sideloaded games"}
 
 
-class _Field:
-    """One plugin or account field: a widget and what to save. Secrets are never shown; blank keeps the saved value."""
-
-    def __init__(self, field: ConfigField, value: str | None) -> None:
-        self.field = field
-        self.saved = "" if field.secret else (value or "")
-        if field.kind == "yes_no":
-            self.widget: QWidget = QCheckBox()
-            self.widget.setChecked(value == "yes")
-        elif field.kind == "choice":
-            self.widget = QComboBox()
-            if field.optional:
-                self.widget.addItem("")
-            self.widget.addItems(list(field.choices))
-            self.widget.setCurrentText(value or "")
-        else:
-            self.widget = QLineEdit(self.saved)
-            if field.secret:
-                self.widget.setEchoMode(QLineEdit.EchoMode.Password)
-                self.widget.setPlaceholderText("(set; type to replace)" if value else "")
-        self.widget.setToolTip(field.help)
-
-    def text(self) -> str:
-        if isinstance(self.widget, QCheckBox):
-            return "yes" if self.widget.isChecked() else "no"
-        if isinstance(self.widget, QComboBox):
-            return self.widget.currentText()
-        return self.widget.text().strip()
-
-    def changed(self) -> bool:
-        if isinstance(self.widget, QCheckBox):
-            return (self.saved == "yes") != self.widget.isChecked()
-        return self.text() != self.saved
-
-    def remember(self) -> None:
-        self.saved = "" if self.field.secret else self.text()
-        if isinstance(self.widget, QLineEdit) and self.field.secret:
-            self.widget.clear()
-            self.widget.setPlaceholderText("(set; type to replace)")
+def _flag(on: bool) -> str:
+    return "yes" if on else "no"
 
 
-class SettingsPage(QScrollArea):
+def _field(name: str, label: str, value: str, *, kind: str = "yes_no", help: str = "") -> dict[str, Any]:
+    return {"name": name, "label": label, "kind": kind, "value": value, "help": help, "choices": [], "optional": False, "hasValue": bool(value)}
+
+
+def _config_field(field: ConfigField, value: str | None) -> dict[str, Any]:
+    kind = "secret" if field.secret else "path" if field.path else field.kind
+    return {
+        "name": field.name, "label": field.name + (" (optional)" if field.optional else ""), "kind": kind, "help": field.help,
+        "value": "" if field.secret else (value or ""), "choices": list(field.choices), "optional": field.optional, "hasValue": bool(value),
+    }
+
+
+class SettingsController(QObject):
+    changed = Signal()
+    notice = Signal(str, bool)
+    libraryChanged = Signal()  # a source switch added or removed games
+
     def __init__(
-        self,
-        paths: StatePaths,
-        conn: sqlite3.Connection,
-        sources: Mapping[str, Provider],
-        notify: Callable[[str, bool], None],
-        changed: Callable[[], None],
-        default_prefix: Path,
+        self, paths: StatePaths, conn: sqlite3.Connection, sources: Mapping[str, Provider], default_prefix: Path,
+        parent: QObject | None = None,
     ) -> None:
-        super().__init__()
-        self._paths, self._conn, self._sources, self._notify, self._changed = paths, conn, sources, notify, changed
-        self._default_prefix = default_prefix
-        self.setWidgetResizable(True)
-        body = QWidget()
-        self._layout = QVBoxLayout(body)
-        self.setWidget(body)
-        self._build()
-        self._layout.addStretch(1)
+        super().__init__(parent)
+        self._paths, self._conn, self._sources, self._default_prefix = paths, conn, sources, default_prefix
+        self._sections: list[dict[str, Any]] = []
+        self.reload()
+
+    def _get_sections(self) -> list[dict[str, Any]]:
+        return self._sections
+
+    sections = Property("QVariantList", _get_sections, notify=changed)
 
     def _write(self, change: Callable[[], object]) -> bool:
         try:
             with writer_lock(self._paths.import_lock):
                 change()
         except LudexError as exc:
-            self._notify(exc.message, True)
+            self.notice.emit(exc.message, True)
             return False
         return True
 
-    def _group(self, title: str, hint: str = "") -> QFormLayout:
-        box = QGroupBox(title)
-        form = QFormLayout(box)
-        if hint:
-            form.addRow(QLabel(hint))
-        self._layout.addWidget(box)
-        return form
-
-    def _switch(self, form: QFormLayout, text: str, on: bool, apply: Callable[[bool], None]) -> QCheckBox:
-        box = QCheckBox(text)
-        box.setChecked(on)
-        box.toggled.connect(apply)
-        form.addRow(box)
-        return box
-
-    def _build(self) -> None:
-        library = self._group("Library")
-        self.auto_refresh = self._switch(library, "Import every account when ludex starts (stores are asked; turn off when offline)", get_auto_refresh(self._conn), lambda on: self._write(lambda: set_auto_refresh(self._conn, on)))
-        self.auto_details = self._switch(library, "Fetch details for the selected game (the store sees its id)", get_auto_details(self._conn), lambda on: self._write(lambda: set_auto_details(self._conn, on)))
-        self.auto_match = self._switch(library, "Match games no store describes by name (sends the folder name to the database plugin)", get_auto_match(self._conn), lambda on: self._write(lambda: set_auto_match(self._conn, on)))
-
-        prefix = self._group("Default prefix folder", "Each game gets its own prefix inside it. Blank resets.")
-        self.prefix = QLineEdit(str(get_prefix_root(self._conn, self._default_prefix)))
-        browse, save = QPushButton("Browse…"), QPushButton("Save")
-        browse.clicked.connect(self._browse)
-        save.clicked.connect(self._save_prefix)
-        row = QHBoxLayout()
-        for widget in (self.prefix, browse, save):
-            row.addWidget(widget)
-        prefix.addRow(row)
-
-        sources = self._group("Sources")
-        self.sources: dict[str, QCheckBox] = {}
-        for key, text in SOURCE_LABELS.items():
-            self.sources[key] = self._switch(sources, text, get_switch(self._paths, key), lambda on, k=key: self._set_source(k, on))
-
+    def reload(self) -> None:
+        conn, paths = self._conn, self._paths
+        sections: list[dict[str, Any]] = [
+            {"id": "library", "title": "Library", "hint": "", "instant": True, "fields": [
+                _field("auto_refresh", "Import every account when ludex starts (stores are asked; turn off when offline)", _flag(get_auto_refresh(conn))),
+                _field("auto_details", "Fetch details and cover art for games on screen (the store sees their ids)", _flag(get_auto_details(conn))),
+                _field("auto_match", "Match games no store describes by name (sends the folder name to the database plugin)", _flag(get_auto_match(conn))),
+            ]},
+            {"id": "prefix", "title": "Default prefix folder", "hint": "Each game gets its own prefix inside it. Blank resets.", "instant": False, "fields": [
+                _field("prefix", "folder", str(get_prefix_root(conn, self._default_prefix)), kind="path"),
+            ]},
+            {"id": "sources", "title": "Sources", "hint": "", "instant": True, "fields": [
+                _field(key, text, _flag(get_switch(paths, key))) for key, text in SOURCE_LABELS.items()
+            ]},
+        ]
         plugins = list_plugins()
-        form = self._group("Plugins", "Enabling or disabling applies the next time ludex starts. Add plugins with: ludex plugin add <git link or package>" if plugins else "No plugins installed. Add one with: ludex plugin add <git link or package>")
-        self.plugins: dict[str, QCheckBox] = {}
-        for plugin in plugins:
-            self.plugins[plugin["name"]] = self._switch(form, f"{plugin['name']} {plugin['version']}  ({', '.join(plugin['providers'])})", plugin["enabled"], lambda on, n=plugin["name"]: self._set_plugin(n, on))
+        sections.append({
+            "id": "plugins", "title": "Plugins", "instant": True,
+            "hint": "Enabling or disabling applies the next time ludex starts. Add plugins with: ludex plugin add <git link or package>" if plugins
+            else "No plugins installed. Add one with: ludex plugin add <git link or package>",
+            "fields": [_field(p["name"], f"{p['name']} {p['version']}  ({', '.join(p['providers'])})", _flag(p["enabled"])) for p in plugins],
+        })
+        for provider in sorted(self._sources.values(), key=lambda p: p.name):
+            if provider.settings:
+                values = get_values(paths, provider.name)
+                sections.append({"id": f"plugin:{provider.name}", "title": f"{provider.name} settings", "hint": "", "instant": False, "fields": [_config_field(f, values.get(f.name)) for f in provider.settings]})
+        for name, source in list_accounts(paths):
+            if source in self._sources:
+                ref = f"{source}:{name}"
+                config = get_account(paths, ref).config
+                sections.append({"id": f"account:{ref}", "title": ref, "hint": "Save, then run 'ludex import' to pick up the change.", "instant": False,
+                                 "fields": [_config_field(f, config.get(f.name)) for f in self._sources[source].config_fields]})
+        self._sections = sections
+        self.changed.emit()
 
-        for plugin in sorted(self._sources.values(), key=lambda p: p.name):
-            if plugin.settings:
-                values = get_values(self._paths, plugin.name)
-                self._fields(f"{plugin.name} settings", plugin.settings, values, lambda put, drop, p=plugin: self._save_plugin(p, put, drop), "")
-        accounts = [(f"{source}:{name}", source) for name, source in list_accounts(self._paths) if source in self._sources]
-        for ref, source in accounts:
-            provider = self._sources[source]
-            config = get_account(self._paths, ref).config
-            self._fields(ref, provider.config_fields, config, lambda put, drop, r=ref, p=provider: self._save_account(r, p, put, drop), "Save, then run 'ludex import' to pick up the change.")
+    # --- changes --------------------------------------------------------------------------------------------
 
-    def _fields(self, title: str, fields: tuple[ConfigField, ...], values: Mapping[str, str], save: Callable[..., None], hint: str) -> None:
-        form = self._group(title, hint)
-        editors = []
-        for field in fields:
-            editor = _Field(field, values.get(field.name))
-            editors.append(editor)
-            form.addRow(f"{field.name}" + (" (optional)" if field.optional else ""), editor.widget)
-        button = QPushButton("Save")
-        button.clicked.connect(lambda: self._save_fields(editors, save))
-        form.addRow(button)
+    @Slot(str, str, str)
+    def setInstant(self, section: str, name: str, value: str) -> None:
+        on = value == "yes"
+        ok = True
+        if section == "library":
+            setter = {"auto_refresh": set_auto_refresh, "auto_details": set_auto_details, "auto_match": set_auto_match}.get(name)
+            ok = setter is not None and self._write(lambda: setter(self._conn, on))
+        elif section == "sources" and name in SOURCE_LABELS:
+            count: list[int] = []
+            ok = self._write(lambda: count.append(set_switch(self._paths, self._conn, self._sources, name, on)))
+            if ok:
+                self.notice.emit(f"{SOURCE_LABELS[name]}: {'added ' + str(count[0]) + ' games' if on else 'removed ' + str(count[0]) + ' records'}", False)
+                self.libraryChanged.emit()
+        elif section == "plugins":
+            try:
+                set_plugin_enabled(name, on)
+            except LudexError as exc:
+                ok = False
+                self.notice.emit(exc.message, True)
+            else:
+                self.notice.emit(f"{'enabled' if on else 'disabled'} {name}; restart ludex to apply", False)
+        if not ok:
+            self.reload()  # show what is true
 
-    def _save_fields(self, editors: list[_Field], save: Callable[[dict[str, str], list[str]], None]) -> None:
+    @Slot(str, "QVariantMap")
+    def save(self, section: str, values: dict[str, Any]) -> None:
+        """Save the edited fields of one section: a blank secret keeps the saved one, a blank optional value is removed."""
+        if section == "prefix":
+            text = str(values.get("prefix", "")).strip()
+            if self._write(lambda: set_prefix_root(self._conn, text or None)):
+                shown = str(get_prefix_root(self._conn, self._default_prefix))
+                self.notice.emit(f"prefix folder: {shown}", False)
+            self.reload()
+            return
+        kind, _, name = section.partition(":")
+        fields: tuple[ConfigField, ...]
+        if kind == "plugin" and name in self._sources:
+            provider, fields, saved = self._sources[name], self._sources[name].settings, get_values(self._paths, name)
+        elif kind == "account":
+            provider = self._sources.get(name.partition(":")[0])
+            if provider is None:
+                return
+            fields, saved = provider.config_fields, get_account(self._paths, name).config
+        else:
+            return
         put: dict[str, str] = {}
         drop: list[str] = []
-        for editor in editors:
-            if not editor.changed():
+        for field in fields:
+            if field.name not in values:
                 continue
-            text = editor.text()
-            if isinstance(editor.widget, QCheckBox) or text:
-                put[editor.field.name] = text
+            text = str(values[field.name]).strip()
+            current = "" if field.secret else saved.get(field.name, "") or ("no" if field.kind == "yes_no" else "")
+            if text == current:
+                continue  # unchanged (a blank secret never replaces the saved one)
+            if field.kind == "yes_no" or text:
+                put[field.name] = text
             else:
-                drop.append(editor.field.name)
-        if (put or drop) and self._write(lambda: save(put, drop)):
-            self._notify("saved", False)
-            for editor in editors:
-                editor.remember()
-
-    def _save_plugin(self, plugin: Provider, put: dict[str, str], drop: list[str]) -> None:
-        for name, text in put.items():
-            set_value(self._paths, plugin, name, text)
-        for name in drop:
-            set_value(self._paths, plugin, name, None)
-
-    def _save_account(self, ref: str, plugin: Provider, put: dict[str, str], drop: list[str]) -> None:
-        update_account(self._paths, ref, plugin.config_fields, put, drop)
-
-    def _browse(self) -> None:
-        folder = QFileDialog.getExistingDirectory(self, "Default prefix folder", self.prefix.text())
-        if folder:
-            self.prefix.setText(folder)
-
-    def _save_prefix(self) -> None:
-        text = self.prefix.text().strip()
-        if self._write(lambda: set_prefix_root(self._conn, text or None)):
-            shown = str(get_prefix_root(self._conn, self._default_prefix))
-            self.prefix.setText(shown)
-            self._notify(f"prefix folder: {shown}", False)
-
-    def _set_source(self, key: str, on: bool) -> None:
-        count: list[int] = []
-        if self._write(lambda: count.append(set_switch(self._paths, self._conn, self._sources, key, on))):
-            self._notify(f"{SOURCE_LABELS[key]}: {'added ' + str(count[0]) + ' games' if on else 'removed ' + str(count[0]) + ' records'}", False)
-            self._changed()
+                drop.append(field.name)
+        if not (put or drop):
             return
-        box = self.sources[key]  # the change failed: show what is true
-        box.blockSignals(True)
-        box.setChecked(get_switch(self._paths, key))
-        box.blockSignals(False)
 
-    def _set_plugin(self, name: str, on: bool) -> None:
-        try:
-            set_plugin_enabled(name, on)
-        except LudexError as exc:
-            self._notify(exc.message, True)
-            return
-        self._notify(f"{'enabled' if on else 'disabled'} {name}; restart ludex to apply", False)
+        def apply() -> None:
+            if kind == "plugin":
+                for key, text in put.items():
+                    set_value(self._paths, provider, key, text)
+                for key in drop:
+                    set_value(self._paths, provider, key, None)
+            else:
+                update_account(self._paths, name, provider.config_fields, put, drop)
+
+        if self._write(apply):
+            self.notice.emit("saved", False)
+        self.reload()

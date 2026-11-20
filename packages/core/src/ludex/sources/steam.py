@@ -27,7 +27,7 @@ import httpx
 import vdf
 
 from .. import __version__
-from ..plugins import ConfigField, FetchResult, Metadata, OwnedGame, PlayRecord, Provider, SearchHit, SourceError
+from ..plugins import MAX_COVER_BYTES, ConfigField, FetchResult, Metadata, OwnedGame, PlayRecord, Provider, SearchHit, SourceError
 from .steam_cache import cached_games
 
 DEFAULT_BASE_URL = "https://api.steampowered.com"
@@ -343,6 +343,42 @@ def metadata(store_id: str, *, url: str = APP_DETAILS_URL, client: httpx.Client 
     )
 
 
+COVER_BASE_URL = "https://cdn.cloudflare.steamstatic.com/steam/apps"
+_COVER_FILES = ("library_600x900.jpg", "header.jpg")  # portrait art, else the store banner
+
+
+_RAW = {"Accept-Encoding": "identity"}  # an image is already compressed; never let a response inflate past the cap
+
+
+def cover(store_id: str, *, base_url: str = COVER_BASE_URL, client: httpx.Client | None = None) -> bytes | None:
+    """Steam's public library art for one app (no key); ``None`` when Steam has no image for it."""
+    if not store_id.isascii() or not store_id.isdigit():
+        return None
+    own = client is None
+    client = client or httpx.Client(timeout=10.0, headers={"User-Agent": f"ludex/{__version__}"})
+    try:
+        for name in _COVER_FILES:
+            with client.stream("GET", f"{base_url}/{store_id}/{name}", headers=_RAW) as response:
+                if response.status_code in (403, 404):
+                    continue
+                if response.status_code != 200:
+                    raise SourceError("steam_unavailable", "Steam is unavailable")
+                body = bytearray()
+                if response.headers.get("content-encoding", "identity").lower() != "identity":
+                    raise _bad_response()
+                for chunk in response.iter_raw():
+                    body += chunk
+                    if len(body) > MAX_COVER_BYTES:
+                        raise _bad_response()
+                return bytes(body)
+    except httpx.HTTPError:
+        raise SourceError("steam_unavailable", "Steam is unavailable") from None
+    finally:
+        if own:
+            client.close()
+    return None
+
+
 def fetch(config: Mapping[str, str]) -> FetchResult:
     if config.get("api_key"):
         steam_id = config.get("steam_id")
@@ -368,6 +404,7 @@ PLUGIN = Provider(
     playtime=playtime,
     search=search,
     metadata=metadata,
+    cover=cover,
     match=search,
     install_url=lambda store_id: f"steam://install/{quote(store_id, safe='')}",
     launch_url=lambda store_id: f"steam://rungameid/{quote(store_id, safe='')}",

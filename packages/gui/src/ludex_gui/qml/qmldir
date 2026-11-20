@@ -1,0 +1,13 @@
+singleton Theme Theme.qml
+Txt Txt.qml
+Btn Btn.qml
+Chip Chip.qml
+CoverArt CoverArt.qml
+NavItem NavItem.qml
+GameCard GameCard.qml
+LibraryPage LibraryPage.qml
+GamePage GamePage.qml
+SearchPage SearchPage.qml
+JobsPage JobsPage.qml
+SettingsPage SettingsPage.qml
+PluginViewPage PluginViewPage.qml
