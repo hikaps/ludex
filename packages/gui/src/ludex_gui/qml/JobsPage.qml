@@ -25,7 +25,7 @@ Item {
                 id: job
                 required property var modelData
                 readonly property bool running: modelData.state === "running"
-                width: list.width - 12
+                width: list.width
                 height: running ? 92 : 64
                 radius: Theme.radius
                 color: Theme.surface

@@ -6,6 +6,7 @@ import QtQuick.Layouts
 Item {
     id: page
     property var pathTarget: null
+    property string pendingSpec: ""
     // Unsaved edits, kept here so that saving one section (or a background refresh) never clears another's.
     property var drafts: ({})
     function draftOf(section, name, fallback) {
@@ -32,6 +33,32 @@ Item {
         }
     }
 
+
+    Dialog {
+        id: trust
+        objectName: "trust"
+        modal: true
+        anchors.centerIn: Overlay.overlay
+        padding: 20
+        background: Rectangle { radius: Theme.radius; color: Theme.surface2; border.width: 1; border.color: Theme.border }
+        header: Txt { text: "Add plugin"; font.bold: true; font.pixelSize: 16; padding: 20; bottomPadding: 0 }
+        contentItem: Txt {
+            width: 420
+            wrapMode: Text.Wrap
+            lineHeight: 1.2
+            text: "A plugin runs with your permissions. Install only code you trust.\n\nAdd " + page.pendingSpec + "?"
+        }
+        footer: DialogButtonBox {
+            padding: 16
+            spacing: 8
+            background: Item { }
+            delegate: Btn { }
+            standardButtons: Dialog.Yes | Dialog.Cancel
+        }
+        onOpened: standardButton(Dialog.Cancel).forceActiveFocus()
+        onAccepted: backend.settingsController.addPlugin(page.pendingSpec)
+    }
+
     Flickable {
         anchors.fill: parent
         contentHeight: column.implicitHeight + 48
@@ -42,7 +69,7 @@ Item {
             id: column
             x: 24
             y: 24
-            width: Math.min(parent.width - 48, 860)
+            width: parent.width - 48
             spacing: 18
 
             Txt { text: "Settings"; font.pixelSize: Theme.title; font.bold: true }
@@ -88,8 +115,19 @@ Item {
                                 Layout.fillWidth: true
                                 spacing: 12
 
+                                Txt {
+                                    Layout.fillWidth: !(row.toggle === false)
+                                    Layout.preferredWidth: row.toggle ? -1 : 200
+                                    text: row.modelData.label
+                                    wrapMode: Text.Wrap
+                                    color: row.toggle ? Theme.text : Theme.muted
+                                    ToolTip.visible: hover.hovered && row.modelData.help !== ""
+                                    ToolTip.text: row.modelData.help
+                                    HoverHandler { id: hover }
+                                }
                                 Switch {
                                     id: toggle
+                                    padding: 0
                                     visible: row.toggle
                                     checked: (section.modelData.instant ? row.modelData.value : page.draftOf(section.modelData.id, row.modelData.name, row.modelData.value)) === "yes"
                                     onToggled: {
@@ -101,22 +139,11 @@ Item {
                                         }
                                     }
                                 }
-                                Txt {
-                                    Layout.fillWidth: !(row.toggle === false)
-                                    Layout.preferredWidth: row.toggle ? -1 : 200
-                                    text: row.modelData.label
-                                    wrapMode: Text.Wrap
-                                    color: row.toggle ? Theme.text : Theme.muted
-                                    ToolTip.visible: hover.hovered && row.modelData.help !== ""
-                                    ToolTip.text: row.modelData.help
-                                    HoverHandler { id: hover }
-                                }
-                                ComboBox {
+                                Combo {
                                     visible: row.modelData.kind === "choice"
                                     Layout.fillWidth: true
                                     model: row.modelData.optional ? [""].concat(row.modelData.choices) : row.modelData.choices
                                     currentIndex: Math.max(0, model.indexOf(page.draftOf(section.modelData.id, row.modelData.name, row.modelData.value)))
-                                    font.family: Theme.family
                                     onActivated: section.edit(row.modelData.name, currentText)
                                 }
                                 TextField {
@@ -138,6 +165,30 @@ Item {
                                     text: "Browse…"
                                     onClicked: { page.pathTarget = input; folderDialog.open() }
                                 }
+                            }
+                        }
+                        RowLayout {
+                            visible: section.modelData.id === "plugins"
+                            Layout.fillWidth: true
+                            spacing: 10
+                            TextField {
+                                id: spec
+                                Layout.fillWidth: true
+                                placeholderText: "Git link, package name or folder of a plugin"
+                                placeholderTextColor: Theme.muted
+                                color: Theme.text
+                                font.family: Theme.family
+                                selectByMouse: true
+                                implicitHeight: 36
+                                background: Rectangle { radius: 6; color: Theme.surface2; border.width: spec.activeFocus ? 2 : 1; border.color: spec.activeFocus ? Theme.accent : Theme.border }
+                                onAccepted: addButton.clicked()
+                            }
+                            Btn {
+                                id: addButton
+                                primary: true
+                                text: backend.settingsController.installing ? "Adding…" : "Add plugin"
+                                enabled: !backend.settingsController.installing && spec.text.trim() !== ""
+                                onClicked: if (enabled) { page.pendingSpec = spec.text.trim(); trust.open() }
                             }
                         }
                         Btn {
