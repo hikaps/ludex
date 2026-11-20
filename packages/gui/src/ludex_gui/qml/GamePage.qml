@@ -31,6 +31,8 @@ Item {
         }
     }
 
+    LaunchOptions { id: options }
+
     Btn { id: backButton; text: "‹  Back"; x: 24; y: 20; onClicked: page.back() }
 
     Flickable {
@@ -87,6 +89,11 @@ Item {
                         implicitWidth: 200
                         text: page.installed ? "▶  Play" : "⇩  Install"
                         onClicked: page.installed ? backend.launch(game.gameId) : backend.install(game.gameId)
+                    }
+                    Btn {
+                        implicitHeight: 52
+                        text: "Launch options"
+                        onClicked: options.openFor(game.gameId)
                     }
                     Btn {
                         visible: page.running

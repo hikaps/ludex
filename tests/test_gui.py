@@ -263,6 +263,35 @@ def test_a_plugin_is_added_in_the_background_and_reported(qapp, tmp_path, monkey
     launcher.backend.closeDown()
 
 
+def test_launch_options_round_trip_and_reject_a_bad_environment_line(qapp, tmp_path):
+    from ludex.game_settings import get_settings
+
+    paths = _paths(tmp_path)
+    folder = tmp_path / "game"
+    folder.mkdir()
+    (folder / "run.sh").write_text("#!/bin/sh\n")
+    conn = connect(paths.database)
+    import_account(conn, "m", [OwnedGame("shop", "1", "Hades")], store="shop")
+    import_account(conn, "m", [OwnedGame("plain", "2", "Doom")], store="plain")
+    conn.close()
+    sources = {"shop": Provider("shop", "s", (), game_folder=lambda config, store_id: folder), "plain": Provider("plain", "p", ())}
+    launcher = _launcher(paths, sources)
+    backend = launcher.backend
+    ident = {"Hades": 1, "Doom": 2}
+    info = backend.gameSettings(ident["Hades"])
+    assert info["available"] is True and info["runner"] == "" and info["args"] == "" and "run.sh" in info["candidates"]
+    assert backend.gameSettings(ident["Doom"])["available"] is False
+    backend.saveGameSettings(ident["Hades"], {"runner": "", "prefix": "", "executable": "run.sh", "args": "--fullscreen 'a b'", "env": "A=1\n\nB=x=y"})
+    conn = connect(paths.database)
+    saved = get_settings(conn, "shop", "1")
+    assert saved.executable == "run.sh" and saved.args == ("--fullscreen", "a b") and saved.env == {"A": "1", "B": "x=y"}
+    backend.saveGameSettings(ident["Hades"], {"env": "no equals sign"})
+    assert backend.statusError and get_settings(conn, "shop", "1") == saved  # a rejected form changes nothing
+    assert backend.gameSettings(ident["Hades"])["args"] == "--fullscreen 'a b'"
+    conn.close()
+    backend.closeDown()
+
+
 def test_no_screen_renders_text_as_markup():
     import re
 

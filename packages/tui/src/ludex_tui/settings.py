@@ -6,7 +6,6 @@ detected list only; add cycling or a free path when that gets in the way.
 """
 from __future__ import annotations
 
-import shlex
 from rich.text import Text
 from collections.abc import Callable
 from pathlib import Path
@@ -19,7 +18,7 @@ from textual.suggester import Suggester
 from textual.widgets import Input, Label, OptionList, Select, Static, TextArea
 
 from ludex.errors import LudexError
-from ludex.game_settings import GameSettings
+from ludex.game_settings import GameSettings, format_arguments, format_environment, parse_arguments, parse_environment
 from ludex.plugins import SearchHit
 from ludex.runners import Runner
 
@@ -131,9 +130,9 @@ class GameSettingsScreen(_Form):
                 yield Select([(str(path), str(path)) for path in self._candidates], prompt="Pick one found in the game folder", allow_blank=True, id="exe-pick")
             yield PathInput(self._current.executable or "", suggester=PathSuggester(self._game_folder), id="executable")
             yield Label("Arguments")
-            yield Input(shlex.join(self._current.args), id="args")
+            yield Input(format_arguments(self._current.args), id="args")
             yield Label("Environment variables, one NAME=VALUE per line")
-            yield TextArea("\n".join(f"{k}={v}" for k, v in self._current.env.items()), id="env")
+            yield TextArea(format_environment(self._current.env), id="env")
             yield from self._buttons()
 
     def on_select_changed(self, event: Select.Changed) -> None:
@@ -143,24 +142,13 @@ class GameSettingsScreen(_Form):
             box.focus()
 
     def _values(self) -> dict:
-        env: dict[str, str] = {}
-        for line in self.query_one("#env", TextArea).text.splitlines():
-            if line.strip():
-                name, sep, value = line.partition("=")
-                if not sep:
-                    raise LudexError("invalid_setting", f"environment line needs NAME=VALUE: {line.strip()[:40]}")
-                env[name.strip()] = value
-        try:
-            args = shlex.split(self.query_one("#args", Input).value)
-        except ValueError:
-            raise LudexError("invalid_setting", "the arguments have unbalanced quotes") from None
         runner = self.query_one("#runner", Select).value
         return {
             "runner": runner if isinstance(runner, str) else None,
             "prefix": self.query_one("#prefix", Input).value.strip() or None,
             "executable": self.query_one("#executable", Input).value.strip() or None,
-            "args": args,
-            "env": env,
+            "args": parse_arguments(self.query_one("#args", Input).value),
+            "env": parse_environment(self.query_one("#env", TextArea).text),
         }
 
 

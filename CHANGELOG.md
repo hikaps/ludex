@@ -10,11 +10,12 @@ Also includes 0.61.0 below, which was never published to PyPI.
 
 ### Added
 
-- **gui:** `ludex-gui` is a new distribution: a Qt Quick game launcher (`ludex gui`, or the `ludex-gui` command on its own) in the style of Heroic or Hydra. A dark window with a sidebar, a cover-art grid library, a game page with a hero banner and a Play or Install button, Search, Jobs and Settings (which can also add a plugin after a trust confirmation), and one sidebar page per plugin view (row actions run only after a separate confirmation). It uses only the core API and is not part of `ludex-games`, because it brings Qt (PySide6): install it next to `ludex-games`. Without it `ludex gui` reports `gui_missing`
+- **gui:** `ludex-gui` is a new distribution: a Qt Quick game launcher (`ludex gui`, or the `ludex-gui` command on its own) in the style of Heroic or Hydra. A dark window with a sidebar, a cover-art grid library, a game page with a hero banner and a Play or Install button, Search, Jobs and Settings (which can also add a plugin after a trust confirmation), a Launch options dialog on each game page (runner, prefix, executable, arguments, environment), and one sidebar page per plugin view (row actions run only after a separate confirmation). It uses only the core API and is not part of `ludex-games`, because it brings Qt (PySide6): install it next to `ludex-games`. Without it `ludex gui` reports `gui_missing`
 - **plugins:** a provider can contribute `cover(store_id)`, the bytes of a game's cover image; `ludex.artwork` (`cached_cover`, `fetch_cover`) asks the plugins, checks the size (4 MiB) and file signature, and keeps the file under the state folder, remembering "no cover" for a week. The Steam provider serves Steam's portrait art (else the store banner); the RAWG provider serves its image, including for games matched by title. The GUI fetches covers only for games on screen and only while `auto_details` is on. `cached_match` also returns the match's `id`. A plugin that offers `cover` needs `ludex-core>=0.62.0`; `API_VERSION` stays 3
 
 ### Changed
 
+- **game settings:** `ludex.game_settings` gains `format_arguments`, `parse_arguments`, `format_environment` and `parse_environment`, shared by the TUI and GUI launch-settings forms
 - **packaging:** the workspace has a fifth member, `ludex-gui`, versioned in lockstep and published last by `pypi.yml` from the new `pypi-gui` environment, so a missing PyPI publisher cannot hold back the tag or the other projects. Beta builds and the `ludex-games` bundle do not include it
 
 ## [0.61.0] - 2026-11-19
