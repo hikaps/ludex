@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -35,6 +36,36 @@ def get_settings(conn: sqlite3.Connection, store: str, store_id: str) -> GameSet
     if row is None:
         return GameSettings()
     return GameSettings(row["runner"], row["prefix"], row["executable"], tuple(json.loads(row["args_json"])), json.loads(row["env_json"]))
+
+
+def format_arguments(args: tuple[str, ...]) -> str:
+    """Arguments as one editable line (quoted like a shell would)."""
+    return shlex.join(args)
+
+
+def parse_arguments(text: str) -> list[str]:
+    """The inverse of ``format_arguments``."""
+    try:
+        return shlex.split(text)
+    except ValueError:
+        raise LudexError("invalid_setting", "the arguments have unbalanced quotes") from None
+
+
+def format_environment(env: dict[str, str]) -> str:
+    """Environment variables as editable text, one NAME=VALUE per line."""
+    return "\n".join(f"{k}={v}" for k, v in env.items())
+
+
+def parse_environment(text: str) -> dict[str, str]:
+    """The inverse of ``format_environment``; blank lines are skipped."""
+    env: dict[str, str] = {}
+    for line in text.splitlines():
+        if line.strip():
+            name, sep, value = line.partition("=")
+            if not sep:
+                raise LudexError("invalid_setting", f"environment line needs NAME=VALUE: {line.strip()[:40]}")
+            env[name.strip()] = value
+    return env
 
 
 def pick_copy(conn: sqlite3.Connection, game_id: int, store: str | None = None) -> tuple[str, str]:

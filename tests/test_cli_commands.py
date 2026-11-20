@@ -785,3 +785,27 @@ def test_game_exes_lists_candidates_from_the_game_folder(world: World, capsys: p
     assert code == 0 and out.splitlines() == ["doom.exe", "start.sh", "bin/helper.exe"]
     data = json.loads(run(capsys, "--json", "game", "exes", "Doom")[1])["data"]
     assert data["executables"] == ["doom.exe", "start.sh", "bin/helper.exe"]
+
+
+def test_details_for_every_game_feed_genres_and_the_genre_filter(world: World, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+    from ludex.plugins import Metadata
+
+    genres = {"1": ("Action", "Roguelike"), "2": ("Puzzle",)}
+    plugin = Provider(
+        name="fake", help="Fake store", config_fields=(ConfigField("user", "account user"), ConfigField("key", "API key", secret=True)),
+        fetch=lambda config: FetchResult(world.fetch(config), True, "fake"), metadata=lambda store_id: Metadata("d", genres[store_id]),
+    )
+    monkeypatch.setattr("ludex_cli.cli.load_providers", lambda: ({"fake": plugin}, {}))
+    world.catalogs["me"] = [("1", "Hades"), ("2", "Portal")]
+    add(capsys, monkeypatch, "main", "me")
+    assert run(capsys, "import", "main")[0] == 0
+    code, out, _ = run(capsys, "--json", "genres")
+    assert json.loads(out)["data"] == {"genres": [], "games_without_details": 2}
+    code, out, err = run(capsys, "--json", "metadata", "--all")
+    assert code == 0 and json.loads(out)["data"] == {"fetched": 2, "unavailable": 0, "failed": 0, "stopped": False}
+    assert "details: 2/2" in err
+    code, out, _ = run(capsys, "--json", "genres")
+    assert [(g["genre"], g["games"]) for g in json.loads(out)["data"]["genres"]] == [("Action", 1), ("Puzzle", 1), ("Roguelike", 1)]
+    code, out, _ = run(capsys, "--json", "ls", "--genre", "puzzle")
+    assert [g["title"] for g in json.loads(out)["data"]["games"]] == ["Portal"]
+    assert run(capsys, "metadata", "Hades", "--all")[0] != 0

@@ -32,7 +32,7 @@ def cached_metadata(conn: sqlite3.Connection, store: str, store_id: str) -> Meta
 
 
 def cached_match(conn: sqlite3.Connection, store: str, store_id: str) -> dict[str, Any] | None:
-    """``{"plugin", "title", "url", "manual"}`` when the cached metadata of this copy came from a title match.
+    """``{"plugin", "id", "title", "url", "manual"}`` when the cached metadata of this copy came from a title match.
 
     ``url`` is the match's page (an ``https`` link, the credit some databases require) or ``""``;
     ``manual`` is true when the user chose the match (a refresh never replaces it).
@@ -42,7 +42,7 @@ def cached_match(conn: sqlite3.Connection, store: str, store_id: str) -> dict[st
     if not isinstance(matched, dict):
         return None
     url = matched.get("url")
-    return {"plugin": str(matched["plugin"]), "title": str(matched["title"]), "url": url if isinstance(url, str) and url.startswith("https://") else "", "manual": matched.get("manual") is True}
+    return {"plugin": str(matched["plugin"]), "id": str(matched.get("id") or ""), "title": str(matched["title"]), "url": url if isinstance(url, str) and url.startswith("https://") else "", "manual": matched.get("manual") is True}
 
 
 def _store(conn: sqlite3.Connection, store: str, store_id: str, found: Metadata, extra: dict | None = None) -> None:

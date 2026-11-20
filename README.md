@@ -17,12 +17,13 @@ Status: early development.
 - **Library**: `import`, `ls` (query, `--store`, `--account`, `--installed`, `--removed`), `show`, `find` (search store catalogs), `export` (JSON or CSV), `review` and `merge` for title matches that need a decision.
 - **Launch**: `launch` starts a game through its store's client; Windows games run via `umu-run` with Proton builds found by `runners`. Per-game runner, prefix, executable, arguments and environment via `game set` (or `e` in the TUI, which offers the executables it finds in the game folder; `game exes GAME` lists them). A game ludex starts itself (a local folder) runs as a background job with its output in a log: `launch --status`, `launch --stop`. Games started through Steam or Heroic belong to that client and are not tracked.
 - **Install**: `install` asks the owning store's client to install a game (Epic goes through Legendary). Started installs run as background jobs: `install --status`, `install --stop`.
-- **Metadata**: `metadata` shows description, genres and developer, asked of the plugin once and then kept; `match` picks a game-database entry (bundled: `rawg`, needs your own API key).
+- **Metadata**: `metadata` shows description, genres and developer, asked of the plugin once and then kept; `match` picks a game-database entry (bundled: `rawg`, needs your own API key). `metadata --all` fetches it for every game, then `genres` lists the genres and `ls --genre NAME` filters by one (`f` and `d` in the TUI, a genre box in the GUI).
 - **Downloads and jobs**: `i` on a Search hit of a plugin that downloads games (it has `acquire`) asks for a folder and downloads there in the background (`ludex download STORE ID`, `--status`, `--stop`); the Jobs tab lists installs, downloads and games ludex started, with progress (a bar and time left when the plugin reports numbers), and `x` stops one; the folder is remembered as `download_dir` (`ludex config download_dir`, default `~/Games`). `ludex acquire STORE ID` uses it when `--to` is left out. Stores with their own client (Steam, Heroic) still open that client, which asks for its own library.
 - **Play time**: `show` and `ls --sort played|recent` report how long you played, from what Steam and Heroic (Epic and sideloads) recorded on this machine, plus the games ludex started itself. The TUI shows it in Detail and `o` changes the order.
 - **TUI**: `ludex tui` browses, searches and launches games in the terminal. It imports every account when it starts and again on `r` (in the background; `ludex config auto_refresh no` turns the startup import off).
+- **GUI**: `pip install ludex-gui` (or `uv tool install ludex-games --with ludex-gui`), then `ludex gui` opens a game launcher (cover-art grid, game pages with Play or Install, launch options and title matching, search, jobs, settings with accounts and plugins, and a sidebar page for every plugin view). Covers come from the Steam and RAWG plugins and are fetched only for games on screen while `ludex config auto_details` is on. It is separate from `ludex-games` because it brings Qt.
 - **Scripting**: `ludex --json <command>` prints `{"ok": ..., "data": ...}` (errors go to stderr).
-- **Plugins**: `plugin add/ls/rm/enable/disable/update`; `update` updates ludex from its release channel.
+- **Plugins**: `plugin add/ls/view/rm/enable/disable/update` (`plugin view` lists the tables and panels plugins contribute, which the TUI shows as extra tabs); `update` updates ludex from its release channel.
 
 ## Install
 
@@ -56,7 +57,7 @@ ludex export --format csv > library.csv
 
 ## Plugins
 
-A plugin is a `Provider` instance exported from a Python entry point in the group `ludex.providers`. It declares the capabilities it supports (owned games, launch, install, installed, search, metadata, acquire, commands) and the core only calls what is declared. Plugins report whether an ownership result is complete; the core removes missing games only then. Install one with `ludex plugin add <package, URL or path>`; it runs with your permissions. The contract, including the `API_VERSION` rules, is documented in the docstrings of [packages/core/src/ludex/plugins.py](https://github.com/hikaps/ludex/blob/main/packages/core/src/ludex/plugins.py).
+A plugin is a `Provider` instance exported from a Python entry point in the group `ludex.providers`. It declares the capabilities it supports (owned games, launch, install, installed, search, metadata, acquire, commands, views) and the core only calls what is declared. Plugins report whether an ownership result is complete; the core removes missing games only then. Install one with `ludex plugin add <package, URL or path>`; it runs with your permissions. The contract, including the `API_VERSION` rules, is documented in the docstrings of [packages/core/src/ludex/plugins.py](https://github.com/hikaps/ludex/blob/main/packages/core/src/ludex/plugins.py).
 
 ## Privacy and scope
 

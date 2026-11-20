@@ -1,4 +1,4 @@
-"""Layering: the core imports no frontend or UI toolkit, the CLI no toolkit and only lazily the TUI, the TUI never the CLI."""
+"""Layering: the core imports no frontend or UI toolkit, the CLI no toolkit and only lazily the TUI, the TUI never the CLI, the GUI neither."""
 from __future__ import annotations
 
 import ast
@@ -6,10 +6,11 @@ from pathlib import Path
 
 import ludex
 import ludex_cli
+import ludex_gui
 import ludex_tui
 
-TOOLKITS = {"textual", "rich"}
-FRONTENDS = {"ludex_cli", "ludex_tui"}
+TOOLKITS = {"textual", "rich", "PySide6", "shiboken6"}
+FRONTENDS = {"ludex_cli", "ludex_tui", "ludex_gui"}
 
 
 def _imports(path: Path, package: str) -> set[str]:
@@ -43,12 +44,12 @@ def test_core_imports_no_frontend_or_ui_toolkit():
     assert _tree(ludex, TOOLKITS | FRONTENDS) == {}
 
 
-def test_cli_imports_no_toolkit_and_only_hands_off_to_the_tui():
-    assert _tree(ludex_cli, TOOLKITS | {"ludex_tui"}, {"cli.py": {"ludex_tui"}}) == {}
+def test_cli_imports_no_toolkit_and_only_hands_off_to_the_tui_and_gui():
+    assert _tree(ludex_cli, TOOLKITS | {"ludex_tui", "ludex_gui"}, {"cli.py": {"ludex_tui", "ludex_gui"}}) == {}
     source = (Path(ludex_cli.__file__).parent / "cli.py").read_text()
     tree = ast.parse(source)
     top_level = [n for n in tree.body if isinstance(n, (ast.Import, ast.ImportFrom))]
-    assert not any(_imports_module(n, "ludex_tui") for n in top_level)  # lazy: --help and --version never load the TUI
+    assert not any(_imports_module(n, name) for n in top_level for name in ("ludex_tui", "ludex_gui"))  # lazy: --help and --version load neither
 
 
 def _imports_module(node: ast.stmt, name: str) -> bool:
@@ -59,3 +60,7 @@ def _imports_module(node: ast.stmt, name: str) -> bool:
 
 def test_tui_never_imports_the_cli():
     assert _tree(ludex_tui, {"ludex_cli"}) == {}
+
+
+def test_gui_never_imports_the_cli_or_the_tui():
+    assert _tree(ludex_gui, {"ludex_cli", "ludex_tui", "textual"}) == {}

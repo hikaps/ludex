@@ -4,6 +4,28 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.62.0] - 2026-11-20
+
+Also includes 0.61.0 below, which was never published to PyPI.
+
+### Added
+
+- **gui:** `ludex-gui` is a new distribution: a Qt Quick game launcher (`ludex gui`, or the `ludex-gui` command on its own) in the style of Heroic or Hydra. A dark window with a sidebar, a cover-art grid library, a game page with a hero banner and a Play or Install button, Search, Jobs and Settings (which can also add a plugin after a trust confirmation), a Launch options dialog and a title-match chooser on each game page, account setup and removal in Settings, and one sidebar page per plugin view (row actions run only after a separate confirmation). It uses only the core API and is not part of `ludex-games`, because it brings Qt (PySide6): install it next to `ludex-games`. Without it `ludex gui` reports `gui_missing`
+- **genres:** filter and browse by genre from the kept details of your games. `ludex ls --genre`, `ludex genres`, and `ludex metadata --all` (asks for the details of every game that has none, one request each) in the CLI; `f` cycles the genre filter and `d` fetches missing details in the TUI; a genre box and a Fetch details button in the GUI library. Core: `list_games(genre=)`, `ludex.library.list_genres`, and `ludex.details` (`fetch_missing_details`, `games_without_details`). Games a plugin has no details for are asked again on the next run.
+- **plugins:** a provider can contribute `cover(store_id)`, the bytes of a game's cover image; `ludex.artwork` (`cached_cover`, `fetch_cover`) asks the plugins, checks the size (4 MiB) and file signature, and keeps the file under the state folder, remembering "no cover" for a week. The Steam provider serves Steam's portrait art (else the store banner); the RAWG provider serves its image, including for games matched by title. The GUI fetches covers only for games on screen and only while `auto_details` is on. `cached_match` also returns the match's `id`. A plugin that offers `cover` needs `ludex-core>=0.62.0`; `API_VERSION` stays 3
+
+### Changed
+
+- **accounts:** `ludex.account_setup` (`create_account`, `delete_account`) holds what `ludex account add` and `ludex account rm` do, so the GUI shares it with the CLI
+- **game settings:** `ludex.game_settings` gains `format_arguments`, `parse_arguments`, `format_environment` and `parse_environment`, shared by the TUI and GUI launch-settings forms
+- **packaging:** the workspace has a fifth member, `ludex-gui`, versioned in lockstep and published last by `pypi.yml` from the new `pypi-gui` environment, so a missing PyPI publisher cannot hold back the tag or the other projects. Beta builds and the `ludex-games` bundle do not include it
+
+## [0.61.0] - 2026-11-19
+
+### Added
+
+- **plugins:** a provider can contribute `views`: a table or a detail panel with optional confirmed row actions that run its own commands (`View`, `ViewTable`, `ViewRow`, `ViewAction`, `ViewDetail` in `ludex.plugins`). The TUI shows each as a tab, fetched on first visit and again with `r`; an action opens a chooser and runs only after you press Run. `ludex plugin view [PROVIDER [VIEW]]` lists views or prints one (`--json` too). `ludex.plugin_views` (`list_views`, `get_view`, `fetch_view`, `run_view_action`) is the frontend-neutral API a future GUI drawer would use. `API_VERSION` stays 3; a plugin that declares views needs `ludex-core>=0.61.0`
+
 ## [0.60.0] - 2026-11-19
 
 Also includes 0.55.0 to 0.59.1 below, which were never published to PyPI.

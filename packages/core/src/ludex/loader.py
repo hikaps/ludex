@@ -10,7 +10,7 @@ from dataclasses import replace
 from importlib.metadata import EntryPoint, entry_points as _entry_points
 
 from .paths import plugins_dir, state_paths
-from .plugins import API_VERSION, GROUP, Command, ConfigField, Provider
+from .plugins import API_VERSION, GROUP, Command, ConfigField, Provider, View, _view_label
 from .provider_settings import get_values
 
 _NAME = re.compile(r"[a-z][a-z0-9-]{0,31}\Z")
@@ -49,6 +49,17 @@ def _valid_commands(commands) -> bool:
             isinstance(c, Command) and re.fullmatch(r"[a-z][a-z0-9-]*", c.name) and callable(c.run) for c in commands
         )
     except TypeError:
+        return False
+
+
+def _valid_views(views) -> bool:
+    try:
+        ids = [v.id for v in views]
+        return isinstance(views, tuple) and len(set(ids)) == len(ids) and all(
+            isinstance(v, View) and isinstance(v.id, str) and _NAME.fullmatch(v.id) and _view_label(v.title) and callable(v.fetch)
+            for v in views
+        )
+    except (TypeError, AttributeError):
         return False
 
 
@@ -92,9 +103,9 @@ def _valid_settings(plugin: Provider) -> bool:
 
 
 def _bind_settings(provider: Provider) -> Provider:
-    """Give ``search``/``metadata``/``match`` functions that declare ``settings`` the plugin's settings, read per call."""
+    """Give ``search``/``metadata``/``match``/``cover`` functions that declare ``settings`` the plugin's settings, read per call."""
     bound = {}
-    for attr in ("search", "metadata", "match"):
+    for attr in ("search", "metadata", "match", "cover"):
         function = getattr(provider, attr)
         try:
             wants = function is not None and "settings" in inspect.signature(function).parameters
@@ -145,6 +156,8 @@ def load_providers(
                 problems[name] = "declares no capability"
             elif not _valid_commands(value.commands):
                 problems[name] = "has an invalid command (need unique lowercase names and a callable run)"
+            elif not _valid_views(value.views):
+                problems[name] = "has an invalid view (need unique lowercase ids, titles and a callable fetch)"
             elif not _valid_settings(value):
                 problems[name] = "has invalid settings (need unique lowercase names that are not account fields)"
             else:

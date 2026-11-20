@@ -26,6 +26,8 @@ calls what is declared (``Provider.capabilities`` lists them):
 - ``playtime``: ``playtime``, below.
 - ``acquire``: ``acquire``, below.
 - ``commands``: ``commands``, below.
+- ``views``: ``views``, below.
+- ``cover``: ``cover``, below.
 
 An owned-only provider needs nothing else. ``API_VERSION`` changes only when an existing field
 changes meaning; adding a capability field is compatible and does not change it. A provider whose
@@ -59,6 +61,15 @@ it only when the user asks (``ludex metadata``, the TUI ``m`` key) and caches th
 library database. It may use the network under the same rules as ``search``. Several providers
 may offer it; the core uses the first one that owns a copy of the game.
 
+Cover art (optional): ``cover(store_id)`` returns the bytes of the game's cover image (PNG, JPEG or
+WebP, portrait preferred, at most ``MAX_COVER_BYTES``) or ``None`` when the store has none. The
+plugin does the network request under the same rules as ``search`` (bounded response, verified TLS,
+``https`` only, fixed secret-free ``SourceError`` messages); the core never fetches images. A
+graphical frontend asks for it through ``ludex.artwork`` only for games on screen, after the user
+allowed contacting the stores (``auto_details``); the core checks the size and the file signature,
+never decodes the image, and keeps the file in the state folder. Plugins that offer ``cover`` and
+``match`` serve games a title match attached (their ``store_id`` is the match's).
+
 Match (optional): ``match(title)`` returns ``SearchHit`` records for catalog games with a similar
 title, best first, so the core can attach a proper title and details to a game whose own store
 supplies none (a folder of local games). Same network rules as ``search``. A provider that offers
@@ -66,7 +77,7 @@ supplies none (a folder of local games). Same network rules as ``search``. A pro
 cleaned folder name (case and punctuation aside), asks the same provider for its ``metadata``, and
 does so only when the user has turned ``auto_match`` on, since it sends the title to that service.
 
-Settings in ``search``, ``metadata`` and ``match``: when one of these functions declares a
+Settings in ``search``, ``metadata``, ``match`` and ``cover``: when one of these functions declares a
 parameter named ``settings``, the core passes the plugin's ``Provider.settings`` values (a mapping
 of strings, read at call time) as that keyword argument; functions without it are called as before.
 
@@ -137,7 +148,20 @@ Services: a command may start a long-running background process with
 with output in a private log under the state directory, and visible in the TUI Jobs tab. Stopping ends
 its whole process group. One service of a given name runs at a time.
 Raise ``LudexError`` with a fixed, secret-free message for expected failures; any other exception
-is reported as ``command_failed`` without its text. Commands cannot add TUI tabs.
+is reported as ``command_failed`` without its text. Commands alone do not add tabs; see Views.
+
+Views (optional): ``views`` is a tuple of ``View(id, title, fetch)``; ids are lowercase letters, digits
+and ``-``, unique within the provider, and ``title`` is a single line. A frontend lists them as
+navigation entries (a TUI tab, a GUI drawer item) identified by ``(provider name, view id)``.
+``fetch(settings)`` receives the plugin-wide settings (read at call time, never account settings) and
+returns either a ``ViewTable(columns, rows)`` or a ``ViewDetail(fields)``. A ``ViewRow`` has a string
+``id`` (unique in the table), one string cell per column and optional ``ViewAction(label, command,
+args)`` records. An action names one of this provider's ``commands``; the frontend shows the label,
+asks the user to confirm, and only then runs the command with ``args`` (no shell). Fetching never
+runs an action. Everything is plain text (no markup, no links the frontend opens); ``fetch`` may
+block, so frontends call it off their UI thread, and the same rules as ``search`` apply: bounded
+responses, verified TLS, fixed secret-free ``LudexError`` messages (any other exception is reported
+as ``view_failed`` without its text). Actions run like commands and must not prompt or print.
 
 Errors raised by ``fetch`` must carry a fixed, secret-free message: never include API keys,
 tokens, or URLs with query strings.
@@ -153,6 +177,7 @@ from typing import Any, Protocol
 from .errors import LudexError
 
 API_VERSION = 3
+MAX_COVER_BYTES = 4 * 1024 * 1024
 GROUP = "ludex.providers"
 
 
@@ -247,6 +272,38 @@ class Command:
 
 
 @dataclass(frozen=True, slots=True)
+class ViewAction:
+    label: str
+    command: str  # one of the provider's ``commands``
+    args: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ViewRow:
+    id: str
+    cells: tuple[str, ...]
+    actions: tuple[ViewAction, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ViewTable:
+    columns: tuple[str, ...]
+    rows: tuple[ViewRow, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ViewDetail:
+    fields: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class View:
+    id: str
+    title: str
+    fetch: Callable[[Mapping[str, str]], ViewTable | ViewDetail]
+
+
+@dataclass(frozen=True, slots=True)
 class PlayRecord:
     minutes: int
     last_played: str | None = None  # ISO 8601 UTC, for example 2026-11-08T19:38:29Z
@@ -279,8 +336,15 @@ class Provider:
     match: Callable[..., Sequence[SearchHit]] | None = None
     install_command: Callable[[Mapping[str, str], str], Sequence[str]] | None = None
     playtime: Callable[[Mapping[str, str]], Mapping[str, PlayRecord]] | None = None
+    views: tuple[View, ...] = ()
+    cover: Callable[..., bytes | None] | None = None
 
     @property
     def capabilities(self) -> tuple[str, ...]:
-        found = (("owned", self.fetch), ("installed", self.installed), ("search", self.search), ("metadata", self.metadata), ("match", self.match), ("launch", self.launch_url or self.launch_command or self.game_folder), ("install", self.install_url or self.install_command), ("playtime", self.playtime), ("acquire", self.acquire), ("commands", self.commands or None))
+        found = (("owned", self.fetch), ("installed", self.installed), ("search", self.search), ("metadata", self.metadata), ("match", self.match), ("launch", self.launch_url or self.launch_command or self.game_folder), ("install", self.install_url or self.install_command), ("playtime", self.playtime), ("acquire", self.acquire), ("commands", self.commands or None), ("views", self.views or None), ("cover", self.cover))
         return tuple(name for name, value in found if value is not None)
+
+
+def _view_label(value: object) -> bool:
+    """A nonblank single-line string without control characters (the shape of titles and labels)."""
+    return isinstance(value, str) and bool(value.strip()) and not any(ord(c) < 32 or 127 <= ord(c) < 160 for c in value)

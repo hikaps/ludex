@@ -108,7 +108,7 @@ def test_match_sets_title_and_details_once_and_is_cached(tmp_path):
     found = game_metadata(conn, sources, game_id, match=True)
     assert found.genres == ("Action",) and calls == ["Hades"]
     assert get_game(conn, game_id)["title"] == "Hades"
-    assert cached_match(conn, "local", "Hades_v1.2_(GOG)") == {"plugin": "db", "title": "Hades", "url": "https://x/hades", "manual": False}
+    assert cached_match(conn, "local", "Hades_v1.2_(GOG)") == {"plugin": "db", "id": "7", "title": "Hades", "url": "https://x/hades", "manual": False}
     assert game_metadata(conn, sources, game_id, match=True) == found and calls == ["Hades"]
 
 

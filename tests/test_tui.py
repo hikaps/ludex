@@ -723,3 +723,39 @@ def test_r_imports_every_account_and_startup_does_it_unless_turned_off(tmp_path,
     assert asyncio.run(rows()) == 1
     setting(None)
     assert asyncio.run(rows()) == 2  # on by default
+
+
+def test_d_fetches_missing_details_and_f_cycles_the_genre_filter(tmp_path):
+    from ludex.paths import StatePaths
+    from ludex.plugins import Metadata, Provider
+
+    root = tmp_path / "home"
+    root.mkdir(mode=0o700)
+    paths = StatePaths(root, root / "library.sqlite3", root / "accounts.json", root / "import.lock")
+    conn = connect(paths.database)
+    import_account(conn, "m", [OwnedGame("shop", "1", "Alpha"), OwnedGame("shop", "2", "Bravo")], store="shop")
+    conn.close()
+    genres = {"1": ("Action",), "2": ("Puzzle",)}
+    shop = Provider("shop", "s", (), metadata=lambda store_id: Metadata("d", genres[store_id]))
+
+    async def scenario():
+        app = LudexApp(paths.database, {"shop": shop}, paths=paths, lock=paths.import_lock)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            owned = app.query_one("#owned-table", DataTable)
+            titles = lambda: [str(owned.get_row_at(i)[1]) for i in range(owned.row_count)]
+            await pilot.press("f")  # nothing is known yet
+            assert titles() == ["Alpha", "Bravo"] and app._genre is None
+            await pilot.press("d")
+            for _ in range(200):
+                await pilot.pause(0.05)
+                if not app._fetching:
+                    break
+            await pilot.press("f")
+            assert titles() == ["Alpha"] and "genre Action" in app.query_one("#left").border_subtitle
+            await pilot.press("f")
+            assert titles() == ["Bravo"]
+            await pilot.press("f")
+            assert titles() == ["Alpha", "Bravo"] and app._genre is None
+
+    asyncio.run(scenario())

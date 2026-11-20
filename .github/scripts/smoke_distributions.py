@@ -33,7 +33,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from build_distributions import BUNDLE, MEMBERS, ROOT, metadata_of  # noqa: E402
+from build_distributions import BUNDLE, BUNDLED, ROOT, metadata_of  # noqa: E402
 
 BUILTINS = {"steam", "epic", "local", "shortcuts", "heroic", "rawg"}
 
@@ -86,20 +86,21 @@ def installed_versions(python: Path, env) -> dict[str, str]:
     return dict(line.split() for line in run([python, "-I", "-c", code], env=env).stdout.splitlines())
 
 
-def tui_in_terminal(binary: Path, args: list[str], env) -> None:
-    """Start the TUI on a pseudo-terminal, wait for its tabs, press q, expect a clean exit."""
+def tui_in_terminal(binary: Path, args: list[str], env, extra_tabs: tuple[str, ...] = ()) -> None:
+    """Start the TUI on a pseudo-terminal, wait for its tabs (and ``extra_tabs``), press q, expect a clean exit."""
     pid, fd = pty.fork()
     if pid == 0:
         os.execve(str(binary), [str(binary), *args], env)
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
+    tabs = ("Owned", "Installed", "Search", "Jobs", "Settings", *extra_tabs)
     seen, deadline = b"", time.time() + 40
-    while time.time() < deadline and b"Settings" not in seen:
+    while time.time() < deadline and not all(tab.encode() in seen for tab in tabs):
         if select.select([fd], [], [], 0.5)[0]:
             try:
                 seen += os.read(fd, 65536)
             except OSError:
                 break
-    check(all(tab.encode() in seen for tab in ("Owned", "Installed", "Search", "Jobs", "Settings")), f"{binary.name} {' '.join(args)}: tabs not drawn: {seen[-300:]!r}")
+    check(all(tab.encode() in seen for tab in tabs), f"{binary.name} {' '.join(args)}: tabs not drawn: {seen[-300:]!r}")
     os.write(fd, b"q")
     status = None
     for _ in range(100):
@@ -123,7 +124,7 @@ def tui_in_terminal(binary: Path, args: list[str], env) -> None:
 FIXTURE = '''\
 from pathlib import Path
 
-from ludex.plugins import AcquireResult, FetchResult, Provider
+from ludex.plugins import AcquireResult, FetchResult, Provider, View, ViewRow, ViewTable
 
 
 def acquire(request, report):
@@ -134,7 +135,11 @@ def acquire(request, report):
     return AcquireResult(game, {"executable": "run.sh"})
 
 
-PLUGIN = Provider("fixture", "offline fixture", (), lambda context: FetchResult([], True, None), acquire=acquire)
+def people(settings):
+    return ViewTable(("Name", "State"), (ViewRow("alice", ("Alice", "online")),))
+
+
+PLUGIN = Provider("fixture", "offline fixture", (), lambda context: FetchResult([], True, None), acquire=acquire, views=(View("people", "People", people),))
 '''
 
 
@@ -234,6 +239,28 @@ def check_stable(dist: Path) -> None:
         check(not (python.parent / "ludex").exists(), "ludex-tui must not provide the ludex command")
         tui_in_terminal(python.parent / "ludex-tui", [], scratch.fresh_state("tui"))
 
+        say("GUI without the CLI: ludex-gui loads its launcher offscreen")
+        gui_python = venv(scratch.root / "gui-venv")
+        run([gui_python, "-m", "pip", "install", "-q", f"ludex-gui=={version}"], env=env)
+        check(not (gui_python.parent / "ludex").exists(), "ludex-gui must not provide the ludex command")
+        check(run([gui_python, "-c", "import importlib.util as u; raise SystemExit(any(u.find_spec(n) is not None for n in ('ludex_cli', 'ludex_tui', 'textual')))"]).returncode == 0, "a TUI or CLI package came with ludex-gui")
+        code = (
+            "import os\nos.umask(0o077)\n"
+            "from PySide6.QtCore import QObject\n"
+            "from PySide6.QtGui import QGuiApplication\n"
+            "app = QGuiApplication([])\n"
+            "from ludex.loader import load_providers\n"
+            "from ludex.paths import state_paths\n"
+            "from ludex_gui.app import build_engine\n"
+            "sources, _ = load_providers(); paths = state_paths()\n"
+            "launcher = build_engine(paths, sources, lambda: set(), lambda s, a: {}, lambda c: {}, paths.root / 'prefixes')\n"
+            "assert launcher.window is not None and not launcher.warnings, launcher.warnings\n"
+            "for name in ('library', 'installed', 'search', 'jobs', 'settings'):\n"
+            "    assert launcher.window.findChild(QObject, 'nav-' + name) is not None, name\n"
+            "app.processEvents(); launcher.backend.closeDown()\n"
+        )
+        run([gui_python, "-c", code], env=scratch.fresh_state("gui") | {"QT_QPA_PLATFORM": "offscreen", "QT_QUICK_BACKEND": "software"})
+
         say("bundle with uv and pipx: wheel and sdist, one command, TUI, plugin download")
         sdist = next(dist.glob("ludex_games-*.tar.gz"))
         for label, source in (("wheel", wheels["ludex_games"]), ("sdist", sdist)):
@@ -257,6 +284,11 @@ def check_stable(dist: Path) -> None:
         names, problems = providers_of(binary, state)
         check(names == BUILTINS | {"fixture"} and not problems, f"providers with plugin: {names} {problems}")
         download_through_cli(binary, state, scratch.root / "bundle-dl")
+        shown = json.loads(run([binary, "--json", "plugin", "view", "fixture", "people"], env=state).stdout)["data"]
+        check(shown["kind"] == "table" and shown["rows"] == [{"id": "alice", "cells": ["Alice", "online"], "actions": []}], f"plugin view: {shown}")
+        missing = run([binary, "--json", "plugin", "view", "fixture", "nope"], env=state, check=False)
+        check(missing.returncode == 1 and json.loads(missing.stderr)["error"]["code"] == "unknown_view", f"unknown view: {missing.stderr}")
+        tui_in_terminal(binary, ["tui"], state, ("People",))
         say("stable smoke passed")
     finally:
         scratch.close()
@@ -283,7 +315,7 @@ def verify_production(dist: Path, repository: str) -> str:
     check(meta["Name"] == BUNDLE and re.fullmatch(r"\d+\.\d+\.\d+\.dev\d+", version) is not None, f"bundle sdist metadata {meta['Name']} {version}")
     base = f"https://github.com/{repository}/releases/download/beta"
     requires = {r.split(" @ ")[0]: r.split(" @ ")[1] for r in meta.get_all("Requires-Dist") or [] if " @ " in r}
-    check(set(requires) == set(MEMBERS), f"direct requirements {requires}")
+    check(set(requires) == set(BUNDLED), f"direct requirements {requires}")
     for name, target in requires.items():
         url, _, fragment = target.partition("#sha256=")
         wheel = f"{name.replace('-', '_')}-{version}-py3-none-any.whl"
