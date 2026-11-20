@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ludex-games"
-version = "0.60.0"
+version = "0.61.0"
 description = "Headless, scriptable library of the games you own across stores"
 readme = "README.md"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
-dependencies = ["ludex-core==0.60.0", "ludex-cli==0.60.0", "ludex-tui==0.60.0"]
+dependencies = ["ludex-core==0.61.0", "ludex-cli==0.61.0", "ludex-tui==0.61.0"]
 keywords = ["game-library", "steam", "epic-games", "gog", "linux-gaming", "cli", "tui", "plugins", "sqlite"]
 classifiers = [
     "Development Status :: 3 - Alpha",

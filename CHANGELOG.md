@@ -4,6 +4,12 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.61.0] - 2026-11-19
+
+### Added
+
+- **plugins:** a provider can contribute `views`: a table or a detail panel with optional confirmed row actions that run its own commands (`View`, `ViewTable`, `ViewRow`, `ViewAction`, `ViewDetail` in `ludex.plugins`). The TUI shows each as a tab, fetched on first visit and again with `r`; an action opens a chooser and runs only after you press Run. `ludex plugin view [PROVIDER [VIEW]]` lists views or prints one (`--json` too). `ludex.plugin_views` (`list_views`, `get_view`, `fetch_view`, `run_view_action`) is the frontend-neutral API a future GUI drawer would use. `API_VERSION` stays 3; a plugin that declares views needs `ludex-core>=0.61.0`
+
 ## [0.60.0] - 2026-11-19
 
 Also includes 0.55.0 to 0.59.1 below, which were never published to PyPI.

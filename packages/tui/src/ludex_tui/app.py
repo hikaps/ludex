@@ -10,6 +10,7 @@ import os
 import re
 import sqlite3
 from contextlib import nullcontext
+from dataclasses import dataclass
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
@@ -37,13 +38,15 @@ from ludex.library import get_game, list_games
 from ludex.paths import StatePaths, state_paths
 from ludex.refresh import Refreshed, get_auto_refresh, refresh_all, set_auto_refresh
 from ludex.playtime import Played, describe_played, epoch, play_stats
-from ludex.plugins import ConfigField, Provider
+from ludex.plugins import ConfigField, Provider, View, ViewDetail, ViewRow, ViewTable
 from ludex.provider_settings import get_values, set_value
 from ludex.runners import find_runners
 from ludex.storage import connect, writer_lock
 from ludex.switches import get_switch, set_switch
 from ludex.plugin_manager import list_plugins, set_plugin_enabled
+from ludex.plugin_views import fetch_view, list_views, run_view_action
 from .settings import FolderPrompt, GameSettingsScreen, MatchScreen, PathInput, PathSuggester
+from .view_actions import ViewActionsScreen
 
 
 _SOURCE_LABELS = {
@@ -65,6 +68,16 @@ def _stores_text(stores) -> Text:
     for i, store in enumerate(stores):
         out.append(", " if i else "").append(store, style=_store_color(store))
     return out
+
+
+@dataclass(slots=True)
+class _ViewState:
+    """What one plugin view tab shows; lives for the session, never on disk."""
+
+    snapshot: ViewTable | ViewDetail | None = None
+    error: str | None = None
+    busy: str | None = None  # "loading" or "running" while a worker owns the tab
+    loaded: bool = False  # a fetch finished (well or badly) and nothing invalidated it since
 
 
 class LudexApp(App[None]):
@@ -125,6 +138,7 @@ class LudexApp(App[None]):
         Binding("g", "cursor('top')", "Top", show=False),
         Binding("G", "cursor('bottom')", "Bottom", show=False),
         Binding("enter", "enter_list", "Search", priority=True),  # priority: an empty table swallows Enter
+        Binding("enter", "view_actions", "Actions", priority=True),
         Binding("slash", "focus_filter", "Search", show=False),
         Binding("escape", "clear", "Back to list", show=False),
         Binding("l", "launch", "Launch"),
@@ -177,16 +191,23 @@ class LudexApp(App[None]):
         self._group_of: dict[str, str] = {}  # text input id -> its Save button id
         self._saved: dict[str, str] = {}  # text input id -> the text last saved (secrets: "")
         self._conn = None
+        self._last_status = ""  # what the built-in tabs last said in the status line
+        self._view_tabs: dict[str, tuple[str, View]] = (  # tab id -> (provider key, view); none without state paths
+            {f"view-{key}_{view.id}": (key, view) for key, view in list_views(sources)} if paths is not None else {}
+        )
+        self._views = {tab_id: _ViewState() for tab_id in self._view_tabs}
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="main"):
             with Vertical(id="left"):
-                yield Tabs(Tab("Owned", id="owned"), Tab("Installed", id="installed"), Tab("Search", id="search"), Tab("Jobs", id="jobs"), Tab("Settings", id="settings"), id="tabs")
+                yield Tabs(Tab("Owned", id="owned"), Tab("Installed", id="installed"), Tab("Search", id="search"), Tab("Jobs", id="jobs"), Tab("Settings", id="settings"), *(Tab(Text(view.title), id=tab_id) for tab_id, (_, view) in self._view_tabs.items()), id="tabs")
                 with ContentSwitcher(id="views", initial="owned-table"):
                     yield DataTable(id="owned-table", cursor_type="row", show_header=False)
                     yield DataTable(id="installed-table", cursor_type="row", show_header=False)
                     yield DataTable(id="search-table", cursor_type="row")
                     yield DataTable(id="jobs-table", cursor_type="row")
+                    for tab_id in self._view_tabs:
+                        yield DataTable(id=f"{tab_id}-table", cursor_type="row")
                     with VerticalScroll(id="settings-table"):
                         yield from self._settings_widgets()
                 yield Input(id="filter")
@@ -206,7 +227,9 @@ class LudexApp(App[None]):
         table.refresh()
 
     def _status(self, text: str) -> None:
-        self.query_one("#left").border_subtitle = text
+        self._last_status = text
+        if self._plugin_tab() is None:  # a plugin tab owns the line while it is shown
+            self.query_one("#left").border_subtitle = text
 
     def on_mount(self) -> None:
         self.query_one("#left").border_title = "ludex"
@@ -221,7 +244,9 @@ class LudexApp(App[None]):
             self.query_one("#opt-auto_details", Switch).value = self._auto
             self.query_one("#opt-auto_match", Switch).value = self._match
         for table in self.query(DataTable):
-            if table.id == "jobs-table":
+            if (table.id or "").removesuffix("-table") in self._view_tabs:
+                continue  # plugin tables get their columns from what the view returns
+            elif table.id == "jobs-table":
                 table.add_column("kind", width=9, key="kind")
                 table.add_column("state", width=8, key="state")
                 table.add_column("title", key="title")  # the rest; progress is in the detail card
@@ -248,6 +273,17 @@ class LudexApp(App[None]):
         # tab, arrows and paging belong to the list only on the main screen; forms keep their own
         if len(self.screen_stack) > 1 and action not in {"quit"}:
             return False
+        plugin = self._plugin_tab()
+        if plugin is not None:
+            if action == "view_actions":
+                picked = self._selected_view_row()
+                return picked is not None and bool(picked[1].actions)
+            if action in {"enter_list", "focus_filter", "clear"}:
+                return False
+            if action == "reload":
+                return self._views[plugin].busy is None
+        elif action == "view_actions":
+            return False
         tab_actions = {"owned": {"install", "edit", "match", "stop_job", "order"}, "installed": {"launch", "edit", "match", "stop_job", "order"}, "search": {"install"}, "jobs": {"stop_job"}}
         if action == "stop_job" and self._active() == "jobs":
             job = self._selected_job()
@@ -271,18 +307,23 @@ class LudexApp(App[None]):
 
     def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
         name = event.tab.id or "owned"
+        view = self._view_tabs.get(name)
+        if view is None:
+            self.query_one("#left").border_subtitle = self._last_status  # back from a plugin tab
         self.refresh_bindings()
         self.query_one(ContentSwitcher).current = f"{name}-table"
         self.query_one("#main").set_class(name == "settings", "-settings")
         self.query_one("#main").set_class(name == "search", "-search")
         self.call_after_refresh(self._fit_search)
         box = self.query_one("#filter", Input)
-        box.display = name not in {"settings", "jobs"}
+        box.display = name not in {"settings", "jobs"} and view is None
         box.placeholder = "store search: type a name, Enter" if name == "search" else "filter: type, then Enter or Esc"
         (self.query_one("#folder") if name == "settings" else self._table()).focus()
         if name == "settings":
             self._status("")
             self.query_one("#detail", Static).update("")
+        elif view is not None:
+            self._open_view(name)
         else:
             self._show_hint()
         if name == "jobs":
@@ -341,6 +382,8 @@ class LudexApp(App[None]):
 
     def _show_hint(self) -> None:
         """Say what to do when the visible list is empty; otherwise the detail card waits for a row."""
+        if self._plugin_tab() is not None:
+            return
         name = self._active()
         hints = {
             "owned": "No games here yet. Add a source with 'ludex account add' and run 'ludex import'." ,
@@ -388,7 +431,8 @@ class LudexApp(App[None]):
         for key, h in self._hits.items():
             table.add_row(Text(h["store"], style=_store_color(h["store"])), h["title"], Text(h["price"] or "-", style="#e0af68"), Text("✔ owned", style="bold #9ece6a") if h["owned"] else "", key=key)
         self._status(f"{len(hits)} results for {query!r}")
-        self.query_one("#detail", Static).update("" if hits else f"[dim]No results for {escape(query)!r}.[/]")
+        if self._plugin_tab() is None:
+            self.query_one("#detail", Static).update("" if hits else f"[dim]No results for {escape(query)!r}.[/]")
         if self._active() == "search" and self.focused is self.query_one("#filter"):
             table.focus()
         for name, reason in sorted(problems.items()):
@@ -396,6 +440,13 @@ class LudexApp(App[None]):
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         key = event.row_key.value if event.row_key is not None else None  # None: the table is empty
+        table_id = event.data_table.id or ""
+        if table_id.removesuffix("-table") in self._view_tabs:
+            if self._active() == table_id.removesuffix("-table"):
+                self._view_chrome(table_id.removesuffix("-table"))
+            return
+        if self._plugin_tab() is not None:
+            return  # a built-in table changed behind a plugin tab
         if event.data_table.id == "search-table":
             hit = self._hits.get(key or "")
             self.query_one("#detail", Static).update(
@@ -505,7 +556,10 @@ class LudexApp(App[None]):
         self.query_one(Tabs).active = "settings"
 
     def action_reload(self) -> None:
-        """r: re-read local state now and import every account again in the background."""
+        """r: re-read local state now and import every account again in the background (on a plugin tab: fetch that view again)."""
+        if (tab_id := self._plugin_tab()) is not None:
+            self._load_view(tab_id)
+            return
         self._reload_local()
         self._start_refresh(quiet=False)
 
@@ -1039,6 +1093,146 @@ class LudexApp(App[None]):
                 self._show_game(game_id)
         except LudexError as exc:
             self.notify(exc.message, severity="error")
+
+    def _plugin_tab(self) -> str | None:
+        active = self._active()
+        return active if active in self._view_tabs else None
+
+    def _selected_view_row(self) -> tuple[str, ViewRow] | None:
+        """The table row under the cursor of the shown plugin view, once it has loaded and nothing is running."""
+        tab_id = self._plugin_tab()
+        if tab_id is None:
+            return None
+        state = self._views[tab_id]
+        table = self.query_one(f"#{tab_id}-table", DataTable)
+        if state.busy is not None or not isinstance(state.snapshot, ViewTable) or table.row_count == 0:
+            return None
+        key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
+        row = next((r for r in state.snapshot.rows if r.id == key), None)
+        return (tab_id, row) if row is not None else None
+
+    def _open_view(self, tab_id: str) -> None:
+        """First visit fetches; later visits show what is kept (r fetches again)."""
+        state = self._views[tab_id]
+        if state.loaded or state.busy is not None:
+            self._view_chrome(tab_id)
+        else:
+            self._load_view(tab_id)
+
+    def _load_view(self, tab_id: str) -> None:
+        state = self._views[tab_id]
+        if state.busy is not None:
+            return
+        key, view = self._view_tabs[tab_id]
+        state.snapshot, state.error, state.busy, state.loaded = None, None, "loading", False
+        self.query_one(f"#{tab_id}-table", DataTable).clear(columns=True)
+        self._view_chrome(tab_id)
+
+        def work() -> None:
+            try:
+                snapshot, error = fetch_view(self._paths, self._sources[key], view), None
+            except LudexError as exc:
+                snapshot, error = None, exc.message
+            except Exception:
+                snapshot, error = None, "plugin view failed"
+            self.call_from_thread(self._view_ready, tab_id, snapshot, error)
+
+        self.run_worker(work, thread=True, group="plugin-view")
+
+    def _view_ready(self, tab_id: str, snapshot: ViewTable | ViewDetail | None, error: str | None) -> None:
+        state = self._views[tab_id]
+        state.busy, state.loaded, state.snapshot, state.error = None, True, snapshot, error
+        table = self.query_one(f"#{tab_id}-table", DataTable)
+        table.clear(columns=True)
+        if isinstance(snapshot, ViewTable):
+            table.add_columns(*(Text(c) for c in snapshot.columns))
+            for row in snapshot.rows:
+                table.add_row(*(Text(c) for c in row.cells), key=row.id)
+        elif isinstance(snapshot, ViewDetail):
+            table.add_columns(Text("Field"), Text("Value"))
+            for i, (label, value) in enumerate(snapshot.fields):
+                table.add_row(Text(label), Text(value), height=None, key=str(i))
+        self._view_chrome(tab_id)
+        self.refresh_bindings()
+
+    def _view_chrome(self, tab_id: str) -> None:
+        """Status line and detail card of a plugin tab; only the tab that is shown may write them."""
+        if self._active() != tab_id:
+            return
+        key, view = self._view_tabs[tab_id]
+        state = self._views[tab_id]
+        lines = [f"[b #7aa2f7]{escape(view.title)}[/]", f"[dim]{escape(key)}.{escape(view.id)}[/]"]
+        status = ""
+        if state.busy is not None:
+            status = "loading..." if state.busy == "loading" else "running action..."
+            lines.append("[dim]Loading…[/]" if state.busy == "loading" else "[dim]Running action…[/]")
+        elif state.error is not None:
+            status = "failed"
+            lines += [f"[b #f7768e]{escape(state.error)}[/]", "[dim]Press r to retry.[/]"]
+        elif isinstance(state.snapshot, ViewTable):
+            status = f"{len(state.snapshot.rows)} rows"
+            picked = self._selected_view_row()
+            if picked is None:
+                lines.append("[dim]No results.[/]")
+            else:
+                row = picked[1]
+                lines += [""] + [f"[dim]{escape(col)}:[/] {escape(cell)}" for col, cell in zip(state.snapshot.columns, row.cells)]
+                if row.actions:
+                    lines += ["", "[dim]Enter: actions[/]"]
+        elif isinstance(state.snapshot, ViewDetail) and not state.snapshot.fields:
+            lines.append("[dim]No results.[/]")
+        self.query_one("#left").border_subtitle = status
+        self.query_one("#detail", Static).update("\n".join(lines))
+
+    def action_view_actions(self) -> None:
+        picked = self._selected_view_row()
+        if picked is None or not picked[1].actions:
+            return
+        tab_id, row = picked
+        key, view = self._view_tabs[tab_id]
+        snapshot = self._views[tab_id].snapshot
+        self.push_screen(
+            ViewActionsScreen(f"{key}.{view.id}", row.cells[0] if row.cells and row.cells[0].strip() else row.id, row.actions),
+            lambda choice: self._run_view_action(tab_id, snapshot, row, choice),
+        )
+
+    def _run_view_action(self, tab_id: str, snapshot: object, row: ViewRow, choice: int | None) -> None:
+        if choice is None:
+            return
+        state = self._views[tab_id]
+        if state.busy is not None or state.snapshot is not snapshot:
+            self.notify("the view changed; the action was not run", severity="warning")
+            return
+        key, _ = self._view_tabs[tab_id]
+        action = row.actions[choice]
+        state.busy = "running"
+        self._view_chrome(tab_id)
+        self.refresh_bindings()
+
+        def work() -> None:
+            try:
+                text, error = run_view_action(self._paths, self._sources, key, action).text, None
+            except LudexError as exc:
+                text, error = None, exc.message
+            except Exception:
+                text, error = None, "plugin view command failed"
+            self.call_from_thread(self._action_done, tab_id, text, error)
+
+        self.run_worker(work, thread=True, group="plugin-view")
+
+    def _action_done(self, tab_id: str, text: str | None, error: str | None) -> None:
+        state = self._views[tab_id]
+        state.busy = None
+        message = "".join(" " if ord(c) < 32 and c != "\n" or 127 <= ord(c) < 160 else c for c in (error if error is not None else text or "Action completed."))
+        self.notify(message, severity="error" if error is not None else "information", markup=False)
+        if error is not None:
+            self._view_chrome(tab_id)
+        else:
+            state.loaded = False  # the next visit (or now) fetches again
+            self._reload_local()
+            if self._active() == tab_id:
+                self._load_view(tab_id)
+        self.refresh_bindings()
 
 
 def main() -> int:
