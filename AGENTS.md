@@ -45,3 +45,5 @@ The repository is a uv workspace of four distributions with lockstep versions: `
 ## Workflow
 
 Branching, commit conventions, PRs and releases are in [CONTRIBUTING.md](CONTRIBUTING.md). A change to a command or convention updates README.md or this file in the same PR.
+
+**Never merge a pull request (feature or release) without the maintainer's explicit approval for that PR**, even when CI is green and an earlier PR was approved. Open the PR, wait for CI, report the result and stop; merge only after the maintainer says so. This applies to agents and automation alike.
