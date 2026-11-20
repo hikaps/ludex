@@ -43,6 +43,7 @@ Item {
                     border.width: query.activeFocus ? 2 : 1
                     border.color: query.activeFocus ? Theme.accent : Theme.border
                 }
+                implicitHeight: 36
                 onAccepted: backend.search(text)
                 Keys.onDownPressed: results.forceActiveFocus()
             }
@@ -57,12 +58,12 @@ Item {
             spacing: 8
             model: backend.hits
             keyNavigationEnabled: true
-            ScrollBar.vertical: ScrollBar {}
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
             delegate: Rectangle {
                 id: hit
                 required property var modelData
                 required property int index
-                width: results.width - 12
+                width: results.width
                 height: 84
                 radius: Theme.radius
                 color: ListView.isCurrentItem && results.activeFocus ? Theme.surface3 : Theme.surface

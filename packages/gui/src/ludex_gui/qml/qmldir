@@ -11,3 +11,4 @@ SearchPage SearchPage.qml
 JobsPage JobsPage.qml
 SettingsPage SettingsPage.qml
 PluginViewPage PluginViewPage.qml
+Combo Combo.qml

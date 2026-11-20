@@ -55,6 +55,7 @@ Item {
                 font.pixelSize: Theme.body
                 selectByMouse: true
                 leftPadding: 14
+                implicitHeight: 36
                 background: Rectangle {
                     radius: height / 2
                     color: Theme.surface2
@@ -66,22 +67,12 @@ Item {
                 Keys.onDownPressed: grid.forceActiveFocus()
                 Keys.onReturnPressed: grid.forceActiveFocus()
             }
-            ComboBox {
+            Combo {
                 id: sortBox
                 Layout.preferredWidth: 170
                 Layout.minimumWidth: 120
                 model: ["Title", "Recently played", "Play time", "Installed first"]
-                font.family: Theme.family
                 onActivated: page.apply()
-                contentItem: Txt { leftPadding: 12; text: sortBox.displayText; verticalAlignment: Text.AlignVCenter }
-                background: Rectangle { radius: Theme.radius; color: Theme.surface2; border.width: 1; border.color: Theme.border }
-                delegate: ItemDelegate {
-                    width: sortBox.width
-                    contentItem: Txt { text: modelData }
-                    background: Rectangle { color: highlighted ? Theme.surface3 : Theme.surface2 }
-                    highlighted: sortBox.highlightedIndex === index
-                }
-                popup.background: Rectangle { color: Theme.surface2; border.width: 1; border.color: Theme.border; radius: Theme.radius }
             }
             Btn {
                 text: backend.refreshing ? "Refreshing…" : "Refresh"

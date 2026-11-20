@@ -17,12 +17,14 @@ from ludex.errors import LudexError
 from ludex.game_settings import get_prefix_root, set_prefix_root
 from ludex.metadata import get_auto_details, get_auto_match, set_auto_details, set_auto_match
 from ludex.paths import StatePaths
-from ludex.plugin_manager import list_plugins, set_plugin_enabled
+from ludex.plugin_manager import add_plugin, list_plugins, set_plugin_enabled
 from ludex.plugins import ConfigField, Provider
 from ludex.provider_settings import get_values, set_value
 from ludex.refresh import get_auto_refresh, set_auto_refresh
 from ludex.storage import writer_lock
 from ludex.switches import get_switch, set_switch
+
+from .work import run_async
 
 SOURCE_LABELS = {"steam_shortcuts": "Steam non-Steam shortcuts", "heroic_sideload": "Heroic sideloaded games"}
 
@@ -47,6 +49,7 @@ class SettingsController(QObject):
     changed = Signal()
     notice = Signal(str, bool)
     libraryChanged = Signal()  # a source switch added or removed games
+    installingChanged = Signal()
 
     def __init__(
         self, paths: StatePaths, conn: sqlite3.Connection, sources: Mapping[str, Provider], default_prefix: Path,
@@ -55,12 +58,41 @@ class SettingsController(QObject):
         super().__init__(parent)
         self._paths, self._conn, self._sources, self._default_prefix = paths, conn, sources, default_prefix
         self._sections: list[dict[str, Any]] = []
+        self._installing = False
         self.reload()
 
     def _get_sections(self) -> list[dict[str, Any]]:
         return self._sections
 
     sections = Property("QVariantList", _get_sections, notify=changed)
+
+    def _get_installing(self) -> bool:
+        return self._installing
+
+    installing = Property(bool, _get_installing, notify=installingChanged)
+
+    @Slot(str)
+    def addPlugin(self, spec: str) -> None:
+        """Install a plugin (a git link, package name or path) in the background; the user confirmed first.
+
+        Plugins load when ludex starts, so the new one appears after a restart.
+        """
+        if self._installing:
+            return
+        self._installing = True
+        self.installingChanged.emit()
+        self.notice.emit("adding plugin…", False)
+
+        def done(added: Any, error: str | None) -> None:
+            self._installing = False
+            self.installingChanged.emit()
+            if error is not None:
+                self.notice.emit(f"plugin: {error}", True)
+            else:
+                self.notice.emit(f"added plugin {added['name']} {added['version']}; restart ludex to load it", False)
+            self.reload()
+
+        run_async(lambda: add_plugin(spec), done)
 
     def _write(self, change: Callable[[], object]) -> bool:
         try:
@@ -89,8 +121,8 @@ class SettingsController(QObject):
         plugins = list_plugins()
         sections.append({
             "id": "plugins", "title": "Plugins", "instant": True,
-            "hint": "Enabling or disabling applies the next time ludex starts. Add plugins with: ludex plugin add <git link or package>" if plugins
-            else "No plugins installed. Add one with: ludex plugin add <git link or package>",
+            "hint": "Enabling or disabling applies the next time ludex starts. Add one below." if plugins
+            else "No plugins installed. Add one below.",
             "fields": [_field(p["name"], f"{p['name']} {p['version']}  ({', '.join(p['providers'])})", _flag(p["enabled"])) for p in plugins],
         })
         for provider in sorted(self._sources.values(), key=lambda p: p.name):

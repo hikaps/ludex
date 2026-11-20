@@ -246,6 +246,23 @@ def test_folders_round_trip_through_file_urls_even_with_url_characters(qapp, tmp
     backend.closeDown()
 
 
+def test_a_plugin_is_added_in_the_background_and_reported(qapp, tmp_path, monkeypatch):
+    import ludex_gui.settings as settings_mod
+
+    seen: list = []
+    monkeypatch.setattr(settings_mod, "add_plugin", lambda spec: seen.append((spec, threading.current_thread() is threading.main_thread())) or {"name": "demo", "version": "1.0", "providers": ["demo"]})
+    launcher = _launcher(_paths(tmp_path), {})
+    controller = launcher.backend.settingsController
+    notes: list = []
+    controller.notice.connect(lambda text, bad: notes.append((text, bad)))
+    controller.addPlugin("git+https://example.org/demo")
+    assert controller.installing
+    _until(qapp, lambda: not controller.installing)
+    assert seen == [("git+https://example.org/demo", False)]
+    assert notes[-1] == ("added plugin demo 1.0; restart ludex to load it", False)
+    launcher.backend.closeDown()
+
+
 def test_no_screen_renders_text_as_markup():
     import re
 
