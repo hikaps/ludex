@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 import pytest
 from textual.app import App
 
-from ludex.tui import LudexApp
+from ludex_tui.app import LudexApp
 
 
 @pytest.fixture(autouse=True)

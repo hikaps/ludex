@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - develop
+  pull_request:
+    branches:
+      - develop
 
 permissions:
   contents: read
@@ -13,8 +16,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     outputs:
-      channel: ${{ steps.version.outputs.channel }}
-      version: ${{ steps.version.outputs.version }}
+      version: ${{ steps.build.outputs.version }}
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -27,91 +29,33 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Stamp the disposable package version
-        id: version
+      - name: Build the disposable beta packages
+        id: build
         env:
-          BRANCH: ${{ github.ref_name }}
           RUN_NUMBER: ${{ github.run_number }}
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          import os
-          import re
-          import tomllib
-          from pathlib import Path
-
-          project_path = Path("pyproject.toml")
-          init_path = Path("src/ludex/__init__.py")
-          project = project_path.read_text()
-          init = init_path.read_text()
-          base = tomllib.loads(project)["project"]["version"]
-          if not re.fullmatch(r"\d+\.\d+\.\d+", base):
-              raise SystemExit(f"expected a plain numeric project version, got {base!r}")
-          init_versions = re.findall(r'^__version__ = "([^"]+)"$', init, re.MULTILINE)
-          if init_versions != [base]:
-              raise SystemExit(f"package version {base!r} disagrees with __version__ assignments {init_versions!r}")
-
-          branch = os.environ["BRANCH"]
-          run_number = os.environ["RUN_NUMBER"]
-          if branch != "develop":
-              raise SystemExit(f"unsupported release branch: {branch!r}")
-          channel, version = "beta", f"{base}.dev{run_number}"
-
-          project, project_count = re.subn(
-              r'(?m)^version = "' + re.escape(base) + r'"$',
-              f'version = "{version}"', project,
-          )
-          init, init_count = re.subn(
-              r'(?m)^__version__ = "' + re.escape(base) + r'"$',
-              f'__version__ = "{version}"', init,
-          )
-          if project_count != 1 or init_count != 1:
-              raise SystemExit(f"expected one version assignment per file, got {project_count} and {init_count}")
-          project_path.write_text(project)
-          init_path.write_text(init)
-          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
-              output.write(f"channel={channel}\nversion={version}\n")
-          print(f"Building {channel} package version {version}")
-          PY
-
-      - name: Build wheel and source distribution
-        env:
-          EXPECTED_VERSION: ${{ steps.version.outputs.version }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
           python -m pip install build
-          python -m build --sdist --wheel --outdir dist
-          python - <<'PY'
-          import email
-          import hashlib
-          import os
-          import shutil
-          import tarfile
-          import zipfile
+          # The same commit must build the same bytes on a retry.
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          export SOURCE_DATE_EPOCH
+          python .github/scripts/build_distributions.py --outdir dist \
+            --beta-run-number "$RUN_NUMBER" \
+            --asset-base "https://github.com/$REPOSITORY/releases/download/beta"
+          VERSION="$(python - <<'PY'
+          import sys
           from pathlib import Path
 
-          dist = Path("dist")
-          sdists = list(dist.glob("*.tar.gz"))
-          wheels = list(dist.glob("*.whl"))
-          if len(sdists) != 1 or len(wheels) != 1:
-              raise SystemExit(f"expected one sdist and one wheel; found {sdists!r}, {wheels!r}")
-          expected = os.environ["EXPECTED_VERSION"]
-          with zipfile.ZipFile(wheels[0]) as wheel:
-              metadata_name = next(name for name in wheel.namelist() if name.endswith(".dist-info/METADATA"))
-              wheel_metadata = email.message_from_bytes(wheel.read(metadata_name))
-          with tarfile.open(sdists[0], "r:gz") as archive:
-              metadata_member = next(member for member in archive.getmembers() if member.name.endswith("/PKG-INFO"))
-              sdist_metadata = email.message_from_bytes(archive.extractfile(metadata_member).read())
-          for kind, metadata in (("wheel", wheel_metadata), ("sdist", sdist_metadata)):
-              if metadata.get("Name") != "ludex-games" or metadata.get("Version") != expected:
-                  raise SystemExit(f"unexpected {kind} metadata: {metadata.get('Name')!r} {metadata.get('Version')!r}")
-          archive = dist / "ludex.tar.gz"
-          shutil.move(sdists[0], archive)
-          files = [archive, wheels[0]]
-          (dist / "SHA256SUMS").write_text("".join(
-              f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n" for path in files
-          ))
+          sys.path.insert(0, ".github/scripts")
+          from build_distributions import metadata_of
+
+          print(metadata_of(next(Path("dist").glob("ludex_games-*.whl")))["Version"])
           PY
+          )"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Built beta package version $VERSION"
+
       - name: Upload packages
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -128,6 +72,12 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
@@ -139,108 +89,16 @@ jobs:
           name: packages
           path: dist
 
-      - name: Verify checksums
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          import hashlib
-          from pathlib import Path
+      - name: Install build tools, uv and pipx
+        run: python -m pip install build uv pipx
 
-          dist = Path("dist")
-          entries = [line.split("  ", 1) for line in (dist / "SHA256SUMS").read_text().splitlines()]
-          if len(entries) != 2:
-              raise SystemExit(f"expected two package checksums, found {len(entries)}")
-          for expected, name in entries:
-              path = dist / name
-              actual = hashlib.sha256(path.read_bytes()).hexdigest()
-              if actual != expected:
-                  raise SystemExit(f"checksum mismatch: {name}")
-          if not (dist / "ludex.tar.gz").is_file() or len(list(dist.glob("*.whl"))) != 1:
-              raise SystemExit("package artifact set is incomplete")
-          PY
-
-      - name: Install uv and pipx
-        run: python -m pip install uv pipx
-
-      - name: Install each distribution and check its CLI
-        env:
-          EXPECTED_VERSION: ${{ needs.build.outputs.version }}
-          PYTHONPATH: ""
+      - name: Verify the packages, then install them with uv and pipx
         working-directory: ${{ runner.temp }}
+        env:
+          PYTHONPATH: ""
         run: |
-          set -euo pipefail
-          python - <<'PY'
-          import os
-          import shutil
-          import subprocess
-          import sys
-          import tempfile
-          import threading
-          from functools import partial
-          from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-          from pathlib import Path
-
-          assets = Path(os.environ["GITHUB_WORKSPACE"]) / "dist"
-          scratch = Path(tempfile.mkdtemp(prefix="ludex-release-smoke-", dir="/tmp"))
-          for name, value in {
-              "UV_TOOL_DIR": scratch / "uv-tools",
-              "UV_TOOL_BIN_DIR": scratch / "uv-bin",
-              "UV_CACHE_DIR": scratch / "uv-cache",
-              "PIPX_HOME": scratch / "pipx-home",
-              "PIPX_BIN_DIR": scratch / "pipx-bin",
-              "PIPX_MAN_DIR": scratch / "pipx-man",
-          }.items():
-              Path(value).mkdir(parents=True, exist_ok=True)
-              os.environ[name] = str(value)
-          os.environ.pop("PYTHONPATH", None)
-
-          class QuietHandler(SimpleHTTPRequestHandler):
-              def log_message(self, format, *args):
-                  pass
-
-          server = ThreadingHTTPServer(("127.0.0.1", 0), partial(QuietHandler, directory=str(assets)))
-          thread = threading.Thread(target=server.serve_forever, daemon=True)
-          thread.start()
-          url = f"http://127.0.0.1:{server.server_port}/ludex.tar.gz"
-          expected = f"ludex {os.environ['EXPECTED_VERSION']}"
-
-          def call(args, *, env=None, timeout=120):
-              result = subprocess.run(args, check=True, capture_output=True, text=True, env=env, timeout=timeout)
-              return result.stdout.strip()
-
-          def check_cli(binary, label):
-              actual = call([str(binary), "--version"])
-              if actual != expected:
-                  raise AssertionError(f"{label}: expected {expected!r}, got {actual!r}")
-              call([str(binary), "--help"])
-
-          try:
-              uv_install = [sys.executable, "-m", "uv", "tool", "install", "--python", sys.executable, url]
-              call(uv_install)
-              uv_cli = Path(os.environ["UV_TOOL_BIN_DIR"]) / "ludex"
-              check_cli(uv_cli, "uv source install")
-              call([sys.executable, "-m", "uv", "tool", "install", "--reinstall", "--python", sys.executable, url])
-              check_cli(uv_cli, "uv source reinstall")
-
-              pipx_install = [sys.executable, "-m", "pipx", "install", "--python", sys.executable, url]
-              call(pipx_install)
-              pipx_cli = Path(os.environ["PIPX_BIN_DIR"]) / "ludex"
-              check_cli(pipx_cli, "pipx source install")
-              call([sys.executable, "-m", "pipx", "install", "--force", "--pip-args=--no-cache-dir",
-                    "--python", sys.executable, url])
-              check_cli(pipx_cli, "pipx source reinstall")
-
-              venv = scratch / "wheel-venv"
-              subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True, timeout=60)
-              wheel = next(assets.glob("*.whl"))
-              call([str(venv / "bin" / "python"), "-m", "pip", "install", str(wheel)], timeout=180)
-              check_cli(venv / "bin" / "ludex", "wheel install")
-          finally:
-              server.shutdown()
-              thread.join(timeout=10)
-              server.server_close()
-              shutil.rmtree(scratch, ignore_errors=True)
-          PY
+          python "$GITHUB_WORKSPACE/.github/scripts/smoke_distributions.py" \
+            --mode beta --dist "$GITHUB_WORKSPACE/dist" --repository "${{ github.repository }}"
 
   publish:
     needs:
@@ -256,7 +114,7 @@ jobs:
       contents: write
     env:
       GH_TOKEN: ${{ github.token }}
-      CHANNEL: ${{ needs.build.outputs.channel }}
+      CHANNEL: beta
       PACKAGE_VERSION: ${{ needs.build.outputs.version }}
       SOURCE_SHA: ${{ github.sha }}
       SOURCE_BRANCH: ${{ github.ref_name }}
@@ -277,23 +135,23 @@ jobs:
       - name: Update rolling GitHub Release
         run: |
           set -euo pipefail
-          WHEEL_NAME="$(python - <<'PY'
+          python - <<'PY'
           import hashlib
           from pathlib import Path
 
           dist = Path("dist")
-          entries = [line.split("  ", 1) for line in (dist / "SHA256SUMS").read_text().splitlines()]
-          if len(entries) != 2:
-              raise SystemExit("expected checksums for one source archive and one wheel")
-          for expected, name in entries:
-              if hashlib.sha256((dist / name).read_bytes()).hexdigest() != expected:
+          sums = dict(line.split("  ", 1)[::-1] for line in (dist / "SHA256SUMS").read_text().splitlines())
+          names = {p.name for p in dist.iterdir()} - {"SHA256SUMS"}
+          wheels = {n for n in names if n.endswith(".whl")}
+          prefixes = {"ludex_core-", "ludex_cli-", "ludex_tui-", "ludex_games-"}
+          if set(sums) != names or "ludex.tar.gz" not in names or len(wheels) != 4 or {w.split("-")[0] + "-" for w in wheels} != prefixes:
+              raise SystemExit(f"package artifact set is incomplete or unexpected: {sorted(names)}")
+          for name, digest in sums.items():
+              if hashlib.sha256((dist / name).read_bytes()).hexdigest() != digest:
                   raise SystemExit(f"checksum mismatch: {name}")
-          wheels = list(dist.glob("*.whl"))
-          if not (dist / "ludex.tar.gz").is_file() or len(wheels) != 1:
-              raise SystemExit("package artifact set is incomplete")
-          print(wheels[0].name)
           PY
-          )"
+          WHEELS=(dist/ludex_core-*.whl dist/ludex_cli-*.whl dist/ludex_tui-*.whl)
+          BUNDLE_WHEEL=(dist/ludex_games-*.whl)
 
           BRANCH_HEAD="$(git ls-remote --heads origin "refs/heads/$SOURCE_BRANCH")"
           if [[ -z "$BRANCH_HEAD" ]]; then
@@ -354,18 +212,52 @@ jobs:
             if [[ "$PRERELEASE" == "true" ]]; then
               RELEASE_FLAGS+=(--prerelease)
             fi
-            gh release create "$CHANNEL" dist/ludex.tar.gz dist/SHA256SUMS "dist/$WHEEL_NAME" \
+            gh release create "$CHANNEL" dist/ludex.tar.gz dist/SHA256SUMS dist/*.whl \
               --verify-tag --title "$TITLE" --notes "$NOTES" "${RELEASE_FLAGS[@]}"
           else
             RELEASE_ID="$(jq -r '.[0].id' <<< "$RELEASES")"
-            gh release upload "$CHANNEL" dist/ludex.tar.gz dist/SHA256SUMS "dist/$WHEEL_NAME" --clobber
+
+            # The previous manifest names the wheels the archive being replaced depends on. If it cannot be
+            # read, nothing is pruned this time.
+            mkdir -p "$RUNNER_TEMP/previous"
+            PREVIOUS_WHEELS=""
+            if gh release download "$CHANNEL" --pattern SHA256SUMS --dir "$RUNNER_TEMP/previous" --clobber 2>/dev/null; then
+              PREVIOUS_WHEELS="$(awk '$2 ~ /\.whl$/ {print $2}' "$RUNNER_TEMP/previous/SHA256SUMS")"
+            fi
+
+            gh api --paginate "repos/$REPOSITORY/releases/$RELEASE_ID/assets?per_page=100" --jq '.[].name' > "$RUNNER_TEMP/assets.txt"
+
+            # A versioned wheel is never overwritten: an existing one must be byte-identical (a retry) or the run fails
+            # before the rolling archive changes.
+            upload_wheel() {
+              local file="$1" name
+              name="$(basename "$file")"
+              if grep -qxF "$name" "$RUNNER_TEMP/assets.txt"; then
+                mkdir -p "$RUNNER_TEMP/existing"
+                gh release download "$CHANNEL" --pattern "$name" --dir "$RUNNER_TEMP/existing" --clobber
+                if [[ "$(sha256sum "$RUNNER_TEMP/existing/$name" | cut -d' ' -f1)" != "$(sha256sum "$file" | cut -d' ' -f1)" ]]; then
+                  echo "Release asset $name already exists with different contents; refusing to replace it" >&2
+                  exit 1
+                fi
+              else
+                gh release upload "$CHANNEL" "$file"
+              fi
+            }
+            for wheel in "${WHEELS[@]}"; do upload_wheel "$wheel"; done
+            gh release upload "$CHANNEL" dist/ludex.tar.gz --clobber
+            upload_wheel "${BUNDLE_WHEEL[0]}"
+            gh release upload "$CHANNEL" dist/SHA256SUMS --clobber
             gh api --method PATCH "repos/$REPOSITORY/releases/$RELEASE_ID" \
               -f name="$TITLE" -f body="$NOTES" -F draft=false -F prerelease="$PRERELEASE" -f make_latest="$MAKE_LATEST" >/dev/null
-            gh api --paginate "repos/$REPOSITORY/releases/$RELEASE_ID/assets?per_page=100" \
-              | jq -r --arg wheel "$WHEEL_NAME" '.[] | select(.name | (startswith("ludex-") or startswith("ludex_games-")) and endswith(".whl")) | select(.name != $wheel) | .id' \
-              | while IFS= read -r asset_id; do
-                  [[ -n "$asset_id" ]] && gh api --method DELETE "repos/$REPOSITORY/releases/assets/$asset_id" >/dev/null
-                done
+
+            if [[ -n "$PREVIOUS_WHEELS" ]]; then
+              KEEP="$(printf '%s\n' "$PREVIOUS_WHEELS"; awk '$2 ~ /\.whl$/ {print $2}' dist/SHA256SUMS)"
+              gh api --paginate "repos/$REPOSITORY/releases/$RELEASE_ID/assets?per_page=100" \
+                | jq -r --arg keep "$KEEP" '($keep | split("\n")) as $k | .[] | select(.name | (startswith("ludex-") or startswith("ludex_")) and endswith(".whl")) | select(.name as $n | $k | index($n) | not) | .id' \
+                | while IFS= read -r asset_id; do
+                    [[ -n "$asset_id" ]] && gh api --method DELETE "repos/$REPOSITORY/releases/assets/$asset_id" >/dev/null
+                  done
+            fi
           fi
 
           {

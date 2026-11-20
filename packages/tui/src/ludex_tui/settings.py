@@ -18,10 +18,10 @@ from textual.screen import ModalScreen
 from textual.suggester import Suggester
 from textual.widgets import Input, Label, OptionList, Select, Static, TextArea
 
-from .errors import LudexError
-from .game_settings import GameSettings
-from .plugins import SearchHit
-from .runners import Runner
+from ludex.errors import LudexError
+from ludex.game_settings import GameSettings
+from ludex.plugins import SearchHit
+from ludex.runners import Runner
 
 
 class PathSuggester(Suggester):
@@ -107,8 +107,10 @@ class GameSettingsScreen(_Form):
         default_prefix: Path,
         game_folder: Path | None,
         save: Callable[[dict], None],
+        candidates: list[Path] | None = None,
     ) -> None:
         super().__init__(f"Launch settings: {title}", lambda: save(self._values()))
+        self._candidates = candidates or []
         self._current = current
         self._runners = runners
         self._default_prefix = default_prefix
@@ -125,12 +127,20 @@ class GameSettingsScreen(_Form):
             yield Label(f"Prefix folder (blank: {self._default_prefix}/<game>)")
             yield PathInput(self._current.prefix or "", suggester=PathSuggester(dirs_only=True), id="prefix")
             yield Label("Executable (relative to the game folder or absolute; blank: automatic)")
+            if self._candidates:
+                yield Select([(str(path), str(path)) for path in self._candidates], prompt="Pick one found in the game folder", allow_blank=True, id="exe-pick")
             yield PathInput(self._current.executable or "", suggester=PathSuggester(self._game_folder), id="executable")
             yield Label("Arguments")
             yield Input(shlex.join(self._current.args), id="args")
             yield Label("Environment variables, one NAME=VALUE per line")
             yield TextArea("\n".join(f"{k}={v}" for k, v in self._current.env.items()), id="env")
             yield from self._buttons()
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id == "exe-pick" and isinstance(event.value, str):
+            box = self.query_one("#executable", Input)
+            box.value = event.value
+            box.focus()
 
     def _values(self) -> dict:
         env: dict[str, str] = {}

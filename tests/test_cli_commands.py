@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from ludex.cli import main
+from ludex_cli.cli import main
 from ludex.plugins import ConfigField, FetchResult, OwnedGame, SourceError, Provider
 from ludex.storage import connect, writer_lock
 
@@ -47,7 +47,7 @@ def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> World:
         fetch=lambda config: FetchResult(w.fetch(config), True, "fake"),
         settings=(ConfigField("region", "store region", optional=True), ConfigField("token", "API token", secret=True, optional=True)),
     )
-    monkeypatch.setattr("ludex.cli.load_providers", lambda: ({"fake": plugin}, {"broken": "failed to import"}))
+    monkeypatch.setattr("ludex_cli.cli.load_providers", lambda: ({"fake": plugin}, {"broken": "failed to import"}))
     return w
 
 
@@ -370,7 +370,7 @@ def test_optional_field_may_be_left_blank_and_partial_import_says_so(
         return FetchResult([OwnedGame("fake", "1", "Alpha")], False, "local")
 
     plugin = Provider("fake", "Fake", (ConfigField("key", "API key", secret=True, optional=True),), fetch)
-    monkeypatch.setattr("ludex.cli.load_providers", lambda: ({"fake": plugin}, {}))
+    monkeypatch.setattr("ludex_cli.cli.load_providers", lambda: ({"fake": plugin}, {}))
     monkeypatch.setattr("sys.stdin", io.StringIO("\n"))
     code, _, err = run(capsys, "account", "add", "fake", "main")
     assert code == 0, err
@@ -421,7 +421,7 @@ def test_same_name_in_two_sources_is_allowed_and_needs_qualifying(
 ) -> None:
     other = Provider("other", "Other", (), lambda config: FetchResult([OwnedGame("other", "1", "Zed")], True, "o"))
     fake = Provider("fake", "Fake", (), lambda config: FetchResult([OwnedGame("fake", "1", "Alpha")], True, "f"))
-    monkeypatch.setattr("ludex.cli.load_providers", lambda: ({"fake": fake, "other": other}, {}))
+    monkeypatch.setattr("ludex_cli.cli.load_providers", lambda: ({"fake": fake, "other": other}, {}))
     for source in ("fake", "other"):
         code, _, err = run(capsys, "account", "add", source, "main")
         assert code == 0, err
@@ -452,7 +452,7 @@ def test_export_json_and_csv(world: World, capsys: pytest.CaptureFixture[str], m
 
 
 def test_path_completion_lists_matches_and_marks_directories(tmp_path: Path) -> None:
-    from ludex.cli import _complete_path
+    from ludex_cli.cli import _complete_path
 
     (tmp_path / "games").mkdir()
     (tmp_path / "gzip.txt").write_text("x")
@@ -498,7 +498,7 @@ def test_provider_without_owned_capability_cannot_have_accounts(
     world: World, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     searchless = Provider("lookup", "Lookup only", (), launch_url=lambda store_id: "x://" + store_id)
-    monkeypatch.setattr("ludex.cli.load_providers", lambda: ({"lookup": searchless}, {}))
+    monkeypatch.setattr("ludex_cli.cli.load_providers", lambda: ({"lookup": searchless}, {}))
     code, _, err = run(capsys, "account", "add", "lookup", "a")
     assert code == 1 and "cannot list owned games" in err
     code, out, _ = run(capsys, "providers")
@@ -516,7 +516,7 @@ def test_acquire_command_prints_directory_and_hints(
         return AcquireResult(request.destination / "g", {"executable": "run.sh"})
 
     plugin = Provider("demo", "Demo", (), acquire=fn)
-    monkeypatch.setattr("ludex.cli.load_providers", lambda: ({"demo": plugin}, {}))
+    monkeypatch.setattr("ludex_cli.cli.load_providers", lambda: ({"demo": plugin}, {}))
     code, out, err = run(capsys, "acquire", "demo", "7", "--to", str(tmp_path / "dl"))
     assert code == 0 and "step 1" in err and "executable=run.sh" in out and str((tmp_path / "dl").resolve() / "g") in out
     code, _, err = run(capsys, "acquire", "steam", "7", "--to", str(tmp_path / "dl"))
@@ -539,7 +539,7 @@ def _demo_provider(monkeypatch):
         raise RuntimeError("secret token abc")
 
     plugin = Provider("demo", "Demo", (), commands=(Command("count", "count games", count), Command("boom", "fails", boom)))
-    monkeypatch.setattr("ludex.cli.load_providers", lambda: ({"demo": plugin}, {}))
+    monkeypatch.setattr("ludex_cli.cli.load_providers", lambda: ({"demo": plugin}, {}))
 
 
 def test_plugin_commands_run_with_library_access_and_report_errors(
@@ -565,7 +565,7 @@ def test_builtin_commands_win_over_a_provider_with_the_same_name(
     from ludex.plugins import Command, CommandResult
 
     plugin = Provider("ls", "Evil", (), commands=(Command("x", "x", lambda c, a: CommandResult(None, "hijacked")),))
-    monkeypatch.setattr("ludex.cli.load_providers", lambda: ({"ls": plugin}, {}))
+    monkeypatch.setattr("ludex_cli.cli.load_providers", lambda: ({"ls": plugin}, {}))
     assert "hijacked" not in run(capsys, "ls", "x")[1]
 
 
@@ -583,7 +583,7 @@ def test_game_set_and_show_and_runners_commands(
     proton = tmp_path / "GE"
     proton.mkdir()
     (proton / "proton").write_text("")
-    monkeypatch.setattr("ludex.cli.find_runners", lambda: [Runner("GE", proton, "steam")])
+    monkeypatch.setattr("ludex_cli.cli.find_runners", lambda: [Runner("GE", proton, "steam")])
     code, out, _ = run(capsys, "--json", "runners")
     assert code == 0 and json.loads(out)["data"]["runners"][0]["name"] == "GE"
     code, out, _ = run(capsys, "--json", "game", "set", "hades", "--runner", str(proton), "--env", "A=1", "--args=-w '1 2'", "--exe", "g.exe")
@@ -682,7 +682,7 @@ def test_launch_starts_a_command_game_as_a_job_that_status_and_stop_report(world
         "disk", "Disk", (), lambda config: FetchResult([OwnedGame("disk", "g", "Gem")], False, "disk"),
         launch_command=lambda config, store_id: [str(exe)],
     )
-    monkeypatch.setattr("ludex.cli.load_providers", lambda: ({"disk": local}, {}))
+    monkeypatch.setattr("ludex_cli.cli.load_providers", lambda: ({"disk": local}, {}))
     assert run(capsys, "account", "add", "disk", "main")[0] == 0
     assert run(capsys, "import", "--all")[0] == 0
     code, out, err = run(capsys, "--json", "launch", "Gem")
@@ -706,7 +706,7 @@ def test_show_and_ls_sort_report_play_time_from_the_store_record(world: World, c
         "rec", "Recording", (), lambda config: FetchResult([OwnedGame("rec", "1", "Alpha"), OwnedGame("rec", "2", "Bravo"), OwnedGame("rec", "3", "Charlie")], True, "rec"),
         playtime=lambda config: {"1": PlayRecord(30, "2026-11-01T10:00:00Z"), "3": PlayRecord(725, "2026-10-01T10:00:00Z")},
     )
-    monkeypatch.setattr("ludex.cli.load_providers", lambda: ({"rec": store}, {}))
+    monkeypatch.setattr("ludex_cli.cli.load_providers", lambda: ({"rec": store}, {}))
     assert run(capsys, "account", "add", "rec", "main")[0] == 0
     assert run(capsys, "import", "--all")[0] == 0
     assert [line.split()[1] for line in run(capsys, "ls")[1].splitlines()] == ["Alpha", "Bravo", "Charlie"]
@@ -730,10 +730,58 @@ def test_acquire_without_to_uses_the_download_dir_setting(world: World, capsys: 
         return AcquireResult(request.destination / "G", {})
 
     store = Provider("rel", "Releases", (), lambda config: FetchResult([], True, "rel"), acquire=acquire)
-    monkeypatch.setattr("ludex.cli.load_providers", lambda: ({"rel": store}, {}))
+    monkeypatch.setattr("ludex_cli.cli.load_providers", lambda: ({"rel": store}, {}))
     where = tmp_path / "dl"
     assert run(capsys, "config", "download_dir", str(where))[0] == 0
     code, out, _ = run(capsys, "acquire", "rel", "1")
     assert code == 0 and (where / "G").is_dir() and str(where / "G") in out
     assert run(capsys, "config", "download_dir", "relative/dir")[0] != 0
     assert run(capsys, "config", "download_dir", "--reset")[0] == 0
+
+
+def test_download_runs_acquire_in_its_own_process_as_a_job_without_a_game(world: World, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    import sys
+
+    from ludex.plugins import AcquireResult
+
+    store = Provider("rel", "Releases", (), lambda config: FetchResult([], True, "rel"), acquire=lambda r, report: AcquireResult(r.destination, {}))
+    monkeypatch.setattr("ludex_cli.cli.load_providers", lambda: ({"rel": store}, {}))
+    seen = []
+
+    def fake_start(conn, kind, game_id, target, title, argv, log_dir, **kw):
+        seen.append((kind, game_id, target, title, argv))
+        return real_start(conn, "download", game_id, target, title, ["/bin/sh", "-c", "echo 40 percent; sleep 30"], log_dir)
+
+    from ludex import acquire as acquire_mod
+
+    real_start = acquire_mod.start_job
+    monkeypatch.setattr(acquire_mod, "start_job", fake_start)
+    code, out, _ = run(capsys, "--json", "download", "rel", "9", "--to", str(tmp_path / "dl"), "--title", "Doom")
+    assert code == 0
+    kind, game_id, target, title, argv = seen[0]
+    assert (kind, game_id, target, title) == ("download", 0, "rel:9", "Doom")
+    assert argv[0] == sys.executable and argv[1:] == ["-m", "ludex._acquire_worker", "rel", "9", "--to", str(tmp_path / "dl"), "--title", "Doom"]
+    assert run(capsys, "download", "rel", "9")[0] != 0  # one running download per game
+    code, out, _ = run(capsys, "download", "--status")
+    assert code == 0 and "running" in out and "40 percent" in out
+    assert run(capsys, "download", "rel", "1", "--stop")[0] != 0
+    code, out, _ = run(capsys, "download", "rel", "9", "--stop")
+    assert code == 0 and "stopped the download of Doom" in out
+    assert run(capsys, "download", "nope", "1")[0] != 0  # a provider that cannot acquire
+
+
+def test_game_exes_lists_candidates_from_the_game_folder(world: World, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    from ludex.sources import local
+
+    monkeypatch.setattr("ludex_cli.cli.load_providers", lambda: ({"local": local.PLUGIN}, {}))
+    root = tmp_path / "games"
+    (root / "Doom" / "bin").mkdir(parents=True)
+    for name in ("Doom/doom.exe", "Doom/unins000.exe", "Doom/bin/helper.exe", "Doom/start.sh"):
+        (root / name).write_bytes(b"x")
+    (root / "Doom" / "start.sh").chmod(0o755)
+    assert run(capsys, "account", "add", "local", "games", "--set", f"path={root}", "--set", "exclude=_none_")[0] == 0
+    assert run(capsys, "import", "--all")[0] == 0
+    code, out, _ = run(capsys, "game", "exes", "Doom")
+    assert code == 0 and out.splitlines() == ["doom.exe", "start.sh", "bin/helper.exe"]
+    data = json.loads(run(capsys, "--json", "game", "exes", "Doom")[1])["data"]
+    assert data["executables"] == ["doom.exe", "start.sh", "bin/helper.exe"]

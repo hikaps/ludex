@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools==84.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ludex-cli"
+version = "0.60.0"
+description = "Command-line frontend of ludex"
+readme = { text = "The `ludex` command-line frontend of [ludex](https://github.com/hikaps/ludex). Install `ludex-games` for the CLI together with the terminal UI.", content-type = "text/markdown" }
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+dependencies = ["ludex-core==0.60.0"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Games/Entertainment",
+]
+
+[project.urls]
+Homepage = "https://hikaps.github.io/ludex/"
+Repository = "https://github.com/hikaps/ludex"
+Issues = "https://github.com/hikaps/ludex/issues"
+Changelog = "https://github.com/hikaps/ludex/blob/main/CHANGELOG.md"
+
+[project.scripts]
+ludex = "ludex_cli.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["ludex_cli*"]
+
+[tool.uv.sources]
+ludex-core = { workspace = true }

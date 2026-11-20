@@ -145,7 +145,7 @@ def test_the_detail_pane_credits_the_match_with_a_link(tmp_path):
 
     from textual.widgets import Static
 
-    from ludex.tui import LudexApp
+    from ludex_tui.app import LudexApp
 
     conn, game_id = database(tmp_path)
     game_metadata(conn, {"db": db_provider([SearchHit("db", "7", "Hades", "https://x/hades")])}, game_id, match=True)
@@ -199,7 +199,7 @@ def test_m_opens_the_picker_and_a_choice_sets_the_title_and_details(tmp_path):
 
     from textual.widgets import OptionList
 
-    from ludex.tui import LudexApp
+    from ludex_tui.app import LudexApp
 
     conn, game_id = database(tmp_path)
     conn.close()

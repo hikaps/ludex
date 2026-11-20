@@ -47,7 +47,9 @@ must not touch the network. Raise ``SourceError`` when the answer cannot be dete
 
 Search (optional): ``search(query)`` returns ``SearchHit`` records for a store's catalog (any
 game, owned or not). This is the only capability besides ``fetch`` that may use the network; the
-same rules apply: bounded responses, verified TLS, ``https`` links only, and errors that are
+same rules apply: bounded responses, verified TLS, ``https`` links only (a hit with another link is
+skipped and reported, unless the provider has ``acquire``: then the hit is kept and its link is not
+used), and errors that are
 ``SourceError`` with fixed, secret-free messages. The core adds the "owned" marker and merges
 results across providers; a failing provider is reported and skipped.
 
@@ -109,7 +111,9 @@ games it started (``launch_command``).
 
 Acquiring (optional): ``acquire(request, report)`` gets a ``AcquireRequest`` (store id, title, and a
 ``destination`` directory the core created) and does the whole job itself: download, unpack, or
-drive an official client. It calls ``report(message)`` with short progress lines and returns an
+drive an official client. It calls ``report(message, done=None, total=None)`` with short progress lines
+(``done`` and ``total`` are optional non-negative numbers in any one unit, bytes or files; with both
+the core shows a percentage and a time estimate, otherwise only the message) and returns an
 ``AcquireResult``: the game's ``directory``, which MUST lie inside ``destination`` (the core checks
 this and rejects anything else), and string ``hints`` (for example ``{"executable": "game.sh"}``).
 The core ships no implementation and takes no position on where a plugin gets its files; the
@@ -126,6 +130,12 @@ the raw argument strings after the command name; it parses them itself (``argpar
 printed as JSON under ``--json`` and ``text`` otherwise. Act on the library through the functions
 in ``ludex.library`` (``list_games``, ``get_game``, ``resolve_game``, ``run_import``, ...), not raw
 SQL. The core holds the writer lock for the whole run, so commands are serialized with imports.
+
+Services: a command may start a long-running background process with
+``ludex.services.start_service(ctx.conn, provider, name, argv, cwd=..., settle=...)``, and later
+``stop_service`` / ``service_status``. ludex runs it as a ``service`` job: detached, in its own session,
+with output in a private log under the state directory, and visible in the TUI Jobs tab. Stopping ends
+its whole process group. One service of a given name runs at a time.
 Raise ``LudexError`` with a fixed, secret-free message for expected failures; any other exception
 is reported as ``command_failed`` without its text. Commands cannot add TUI tabs.
 
@@ -138,7 +148,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from .errors import LudexError
 
@@ -199,6 +209,10 @@ class Metadata:
     released: str | None = None  # as the source prints it
 
 
+class Report(Protocol):
+    def __call__(self, message: str, done: float | None = None, total: float | None = None) -> None: ...
+
+
 @dataclass(frozen=True, slots=True)
 class AcquireRequest:
     store_id: str
@@ -256,7 +270,7 @@ class Provider:
     launch_command: Callable[[Mapping[str, str], str], Sequence[str]] | None = None
     game_folder: Callable[[Mapping[str, str], str], Path] | None = None
     install_url: Callable[[str], str] | None = None
-    acquire: Callable[[AcquireRequest, Callable[[str], None]], AcquireResult] | None = None
+    acquire: Callable[[AcquireRequest, Report], AcquireResult] | None = None
     installed: Callable[[Mapping[str, str]], Iterable[str]] | None = None
     search: Callable[[str], Sequence[SearchHit]] | None = None
     metadata: Callable[[str], Metadata | None] | None = None

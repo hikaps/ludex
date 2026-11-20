@@ -5,12 +5,13 @@ import asyncio
 import pytest
 
 from ludex import launch as launch_mod
+from ludex.jobs import start_job
 from ludex.library import import_account, list_games
 from ludex.plugins import OwnedGame
 from ludex.sources import epic, steam
 from ludex.game_settings import get_prefix_root
 from ludex.storage import connect
-from ludex.tui import LudexApp
+from ludex_tui.app import LudexApp
 from textual.widgets import Button, DataTable, Input, Static
 
 
@@ -99,7 +100,7 @@ def test_edit_screen_saves_runner_prefix_executable_args_and_env(tmp_path, monke
     proton = tmp_path / "GE"
     proton.mkdir()
     (proton / "proton").write_text("")
-    monkeypatch.setattr("ludex.tui.find_runners", lambda: [Runner("GE", proton, "steam")])
+    monkeypatch.setattr("ludex_tui.app.find_runners", lambda: [Runner("GE", proton, "steam")])
     monkeypatch.setattr("ludex.runners.find_runners", lambda home=None: [Runner("GE", proton, "steam")])
     local = Provider("local", "l", (), lambda c: None, game_folder=lambda config, store_id: folder)
 
@@ -161,7 +162,7 @@ def test_edit_screen_reports_invalid_input_and_stays_open(tmp_path):
 
 
 def test_path_suggester_completes_directories_files_and_home(tmp_path, monkeypatch):
-    from ludex.tui_settings import PathSuggester
+    from ludex_tui.settings import PathSuggester
 
     (tmp_path / "games").mkdir()
     (tmp_path / "gamma.txt").write_text("")
@@ -242,14 +243,14 @@ def test_settings_tab_saves_the_prefix_folder_and_toggles_sources_and_plugins(tm
         async with app.run_test() as pilot:
             await pilot.pause()
             assert app.query_one("#owned-table", DataTable).row_count == 1
-            await pilot.press("tab", "tab", "tab")  # Owned -> Installed -> Search -> Settings
+            await pilot.press("tab", "tab", "tab", "tab")  # Owned -> Installed -> Search -> Jobs -> Settings
             await pilot.pause()
             assert app.query_one("Tabs").active == "settings" and app.focused is app.query_one("#folder")
             assert not app.query_one("#filter").display
             app.query_one("#folder", Input).value = str(tmp_path / "all-prefixes")
             await pilot.press("enter")
             await pilot.pause()
-            await pilot.press("down", "down", "down")  # arrows move between the settings
+            await pilot.press("down", "down", "down", "down")  # arrows move between the settings
             await pilot.pause()
             assert app.focused is app.query_one("#src-steam_shortcuts", Switch)
             app.query_one("#src-steam_shortcuts", Switch).value = False  # off: account and games go, no dialog
@@ -286,7 +287,7 @@ def test_settings_tab_edits_plugin_settings_and_account_fields(tmp_path, monkeyp
         app = LudexApp(paths.database, {"demo": provider}, prefix_root=root / "p", paths=paths)
         async with app.run_test(size=(100, 60)) as pilot:
             await pilot.pause()
-            await pilot.press("tab", "tab", "tab")
+            await pilot.press("tab", "tab", "tab", "tab")
             await pilot.pause()
             ids = {target[-1].name + ":" + target[0]: i for i, target in app._fields.items()}
             def edit(name, value):
@@ -607,24 +608,20 @@ def test_o_orders_by_play_time_and_the_detail_shows_it(tmp_path):
     asyncio.run(scenario())
 
 
-def test_install_on_a_hit_of_a_downloading_plugin_asks_for_a_folder_and_remembers_it(tmp_path, monkeypatch):
+def test_install_on_a_hit_of_a_downloading_plugin_asks_for_a_folder_starts_a_download_job_and_the_jobs_tab_stops_it(tmp_path, monkeypatch):
     from ludex.game_settings import get_download_dir
-    from ludex.plugins import AcquireResult, Provider, SearchHit
+    from ludex.plugins import Provider, SearchHit
 
     db = tmp_path / "db.sqlite3"
     connect(db).close()
-    got = []
+    store = Provider("rel", "r", (), search=lambda q: [SearchHit("rel", "7", "Doom", "https://rel.example/7")], acquire=lambda r, report: None)
+    started = []
 
-    def acquire(request, report):
-        report("fetching")
-        got.append((request.store_id, request.title, request.destination))
-        target = request.destination / "Doom"
-        target.mkdir()
-        return AcquireResult(target, {})
+    def fake_download(conn, providers, store, store_id, title, destination, log_dir):
+        started.append((store, store_id, title, destination))
+        return start_job(conn, "download", 0, f"{store}:{store_id}", title, ["/bin/sh", "-c", "echo 10 percent; sleep 30"], log_dir)
 
-    store = Provider("rel", "r", (), search=lambda q: [SearchHit("rel", "7", "Doom", "https://rel.example/7")], acquire=acquire)
-    opened = []
-    monkeypatch.setattr(launch_mod.subprocess, "run", lambda argv, **kw: opened.append(argv))
+    monkeypatch.setattr("ludex_tui.app.download_game", fake_download)
     where = tmp_path / "games"
 
     async def scenario():
@@ -641,11 +638,88 @@ def test_install_on_a_hit_of_a_downloading_plugin_asks_for_a_folder_and_remember
             box = app.screen.query_one("#folder-input", Input)
             box.value = str(where)
             await pilot.press("enter")
-            await app.workers.wait_for_complete()
             await pilot.pause()
             assert get_download_dir(app._conn, tmp_path) == where
+            assert "Jobs (1)" in str(app.query_one("#jobs").label)
+            await pilot.press("tab")  # Search -> Jobs: the download is listed with its progress
+            await pilot.pause(0.3)
+            table = app.query_one("#jobs-table", DataTable)
+            app._poll_jobs()
+            await pilot.pause()
+            assert [str(c) for c in table.get_row_at(0)][:3] == ["download", "running", "Doom"]
+            assert "x stops it" in str(app.query_one("#detail", Static).visual.plain)
+            await pilot.press("x")  # stops it from the Jobs tab
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert [str(c) for c in table.get_row_at(0)][1] == "stopped"
 
     asyncio.run(scenario())
-    assert opened == []  # the page link is never handed to the desktop
-    assert [(i, t, d.name) for i, t, d in got] == [("7", "Doom", "games")]
-    assert (where / "Doom").is_dir()
+    assert [(s_, i, t, d.name) for s_, i, t, d in started] == [("rel", "7", "Doom", "games")]
+
+
+def test_edit_screen_offers_the_executables_found_in_the_game_folder(tmp_path):
+    from textual.widgets import Select
+
+    from ludex.plugins import Provider
+
+    db = tmp_path / "db.sqlite3"
+    conn = connect(db)
+    import_account(conn, "disk", [OwnedGame("local", "g", "Hades")], store="local")
+    conn.close()
+    folder = tmp_path / "g"
+    (folder / "bin").mkdir(parents=True)
+    (folder / "Hades.exe").write_bytes(b"x")
+    (folder / "unins000.exe").write_bytes(b"x")
+    (folder / "bin" / "other.exe").write_bytes(b"x")
+    local = Provider("local", "l", (), lambda c: None, game_folder=lambda config, store_id: folder)
+
+    async def scenario():
+        app = LudexApp(db, {"local": local}, config_for=lambda s, a: {}, prefix_root=tmp_path / "default")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("e")
+            await pilot.pause()
+            pick = app.screen.query_one("#exe-pick", Select)
+            assert [str(v) for _, v in pick._options if isinstance(v, str)] == ["Hades.exe", "bin/other.exe"]
+            pick.value = "bin/other.exe"
+            await pilot.pause()
+            assert app.screen.query_one("#executable", Input).value == "bin/other.exe"
+
+    asyncio.run(scenario())
+
+
+def test_r_imports_every_account_and_startup_does_it_unless_turned_off(tmp_path, monkeypatch):
+    from ludex.accounts import add_account
+    from ludex.paths import state_paths
+    from ludex.plugins import FetchResult, Provider
+    from ludex.refresh import set_auto_refresh
+
+    monkeypatch.setenv("LUDEX_HOME", str(tmp_path / "home"))
+    paths = state_paths()
+    stock = [OwnedGame("fake", "1", "Alpha")]
+    fake = Provider("fake", "f", (), lambda config: FetchResult(list(stock), True, "api"))
+    add_account(paths, "main", "fake", {})
+
+    def setting(value):
+        conn = connect(paths.database)
+        set_auto_refresh(conn, value)
+        conn.close()
+
+    async def rows(press=None):
+        app = LudexApp(paths.database, {"fake": fake}, paths=paths)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            if press:
+                await pilot.press(press)
+                await app.workers.wait_for_complete()
+            await pilot.pause()
+            return app.query_one("#owned-table", DataTable).row_count
+
+    setting(False)
+    assert asyncio.run(rows()) == 0  # startup refresh is off
+    assert asyncio.run(rows("r")) == 1  # r imports
+    stock.append(OwnedGame("fake", "2", "Beta"))
+    assert asyncio.run(rows()) == 1
+    setting(None)
+    assert asyncio.run(rows()) == 2  # on by default

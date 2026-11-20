@@ -9,7 +9,7 @@ from ludex.errors import LudexError
 from ludex.loader import _valid_settings
 from ludex.paths import StatePaths
 from ludex.plugins import ConfigField, FetchResult, Provider
-from ludex.tui import LudexApp
+from ludex_tui.app import LudexApp
 from ludex.storage import connect
 from textual.widgets import Select, Switch
 
