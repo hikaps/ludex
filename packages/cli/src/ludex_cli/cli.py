@@ -14,7 +14,8 @@ from pathlib import Path
 from typing import Any
 
 from ludex import __version__
-from ludex.accounts import add_account, get_account, list_accounts, remove_account, update_account
+from ludex.account_setup import create_account, delete_account
+from ludex.accounts import get_account, list_accounts, update_account
 from ludex.provider_settings import describe, field_for, set_value
 from ludex.errors import LudexError
 from ludex.game_settings import default_download_dir, get_download_dir, get_prefix_root, get_settings, pick_copy, set_download_dir, set_prefix_root, update_settings
@@ -27,7 +28,7 @@ from ludex.acquire import acquire_game, download_game, format_acquired, job_repo
 from ludex.jobs import Job, eta_seconds, list_jobs, progress, progress_line, stop_job
 from ludex.playtime import Played, describe_played, epoch, play_stats
 from ludex.launch import install_game, launch_game, prepare_install, prepare_launch
-from ludex.library import resolve_game, delete_account_records, export_games, dismiss_review, get_game, list_games, list_review, merge_games, run_import
+from ludex.library import resolve_game, export_games, dismiss_review, get_game, list_games, list_review, merge_games, run_import
 from ludex.loader import load_providers
 from ludex.plugin_commands import run_command
 from ludex.plugin_views import fetch_view, get_view, list_views
@@ -291,7 +292,7 @@ def _cmd_account_add(args: argparse.Namespace) -> tuple[object, str]:
             raise LudexError("empty_value", f"field {field.name} must not be empty")
         if value:
             config[field.name] = field.clean(value)
-    add_account(paths, args.name, plugin.name, config)
+    create_account(paths, plugin, args.name, config)
     return {"account": args.name, "source": plugin.name}, f"added account {args.name} ({plugin.name})"
 
 
@@ -326,25 +327,7 @@ def _cmd_account_ls(args: argparse.Namespace) -> tuple[object, str]:
 
 
 def _cmd_account_rm(args: argparse.Namespace) -> tuple[object, str]:
-    paths = state_paths()
-    try:
-        account = get_account(paths, args.name)
-    except LudexError as exc:
-        if exc.code != "account_not_found" or ":" in args.name:
-            raise
-        # an account already gone from the file can still have stale records: clear those
-        name, scope = args.name, {"keep_stores": [s for n, s in list_accounts(paths) if n == args.name]}
-    else:
-        remove_account(paths, args.name)
-        name, scope = account.name, {"store": account.source}
-    with writer_lock(paths.import_lock):
-        conn = connect(paths.database)
-        try:
-            changed = delete_account_records(conn, name, **scope)
-        finally:
-            conn.close()
-    if "keep_stores" in scope and not changed:
-        raise LudexError("account_not_found", f"account {args.name} not found")
+    changed = delete_account(state_paths(), args.name)
     return {"account": args.name, "records_removed": changed}, f"removed account {args.name}; deleted {changed} records"
 
 

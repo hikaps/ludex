@@ -17,7 +17,7 @@ from ludex.errors import LudexError
 from ludex.library import import_account
 from ludex.metadata import set_auto_details
 from ludex.paths import StatePaths
-from ludex.plugins import Command, CommandResult, ConfigField, OwnedGame, Provider, SearchHit, View, ViewAction, ViewDetail, ViewRow, ViewTable
+from ludex.plugins import Command, CommandResult, ConfigField, FetchResult, Metadata, OwnedGame, Provider, SearchHit, View, ViewAction, ViewDetail, ViewRow, ViewTable
 from ludex.provider_settings import get_values
 from ludex.sources import steam
 from ludex.storage import connect
@@ -289,6 +289,51 @@ def test_launch_options_round_trip_and_reject_a_bad_environment_line(qapp, tmp_p
     assert backend.statusError and get_settings(conn, "shop", "1") == saved  # a rejected form changes nothing
     assert backend.gameSettings(ident["Hades"])["args"] == "--fullscreen 'a b'"
     conn.close()
+    backend.closeDown()
+
+
+def test_an_account_is_added_imported_and_removed_from_settings(qapp, tmp_path):
+    paths = _paths(tmp_path)
+    shop = Provider("shop", "A shop", (ConfigField("token", "the token", secret=True),), fetch=lambda config: FetchResult([OwnedGame("shop", "1", "Hades")], True, "fake"))
+    launcher = _launcher(paths, {"shop": shop})
+    backend, controller = launcher.backend, launcher.backend.settingsController
+    form = controller.accountForm("shop")
+    assert form["name"] == "shop" and [f["name"] for f in form["fields"]] == ["token"] and form["fields"][0]["kind"] == "secret"
+    assert controller.accountForm("nope") == {}
+    notes: list = []
+    controller.notice.connect(lambda text, bad: notes.append((text, bad)))
+    assert controller.addAccount("shop", "shop", {"token": ""}) is False  # a required field must be given
+    assert notes[-1][1] is True
+    assert controller.addAccount("shop", "shop", {"token": "s3cret"}) is True
+    assert controller.accountForm("shop")["name"] == "shop2"
+    _until(qapp, lambda: backend.count == 1)
+    assert "s3cret" not in repr([s for s in controller.sections])
+    controller.removeAccount("shop:shop")
+    assert backend.count == 0 and not [s for s in controller.sections if s["id"] == "account:shop:shop"]
+    backend.closeDown()
+
+
+def test_a_match_is_chosen_off_the_ui_thread_then_cleared(qapp, tmp_path):
+    paths = _paths(tmp_path)
+    conn = connect(paths.database)
+    import_account(conn, "m", [OwnedGame("local", "1", "hades_v1.2")], store="local")
+    conn.close()
+    db = Provider(
+        "db", "A database", (), match=lambda query: [SearchHit("db", "77", "Hades", "https://x/hades")],
+        metadata=lambda store_id: Metadata("Escape.", ("Roguelike",), ("Supergiant",), "2020"),
+    )
+    launcher = _launcher(paths, {"local": Provider("local", "l", ()), "db": db})
+    backend = launcher.backend
+    assert backend.canMatch and backend.matchQuery(1) == "hades"
+    backend.findMatches("hades")
+    _until(qapp, lambda: backend.matches)
+    assert [(m["plugin"], m["title"]) for m in backend.matches] == [("db", "Hades")]
+    backend.chooseMatch(1, 0)
+    _until(qapp, lambda: backend.current.get("matched"))
+    assert backend.current["title"] == "Hades" and backend.current["genres"] == "Roguelike"
+    backend.chooseMatch(1, -1)
+    _until(qapp, lambda: not backend.current.get("matched"))
+    assert backend.current["title"] == "hades_v1.2"
     backend.closeDown()
 
 

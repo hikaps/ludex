@@ -12,6 +12,7 @@ from typing import Any
 
 from PySide6.QtCore import Property, QObject, Signal, Slot
 
+from ludex.account_setup import create_account, delete_account
 from ludex.accounts import get_account, list_accounts, update_account
 from ludex.errors import LudexError
 from ludex.game_settings import get_prefix_root, set_prefix_root
@@ -50,6 +51,7 @@ class SettingsController(QObject):
     notice = Signal(str, bool)
     libraryChanged = Signal()  # a source switch added or removed games
     installingChanged = Signal()
+    accountsChanged = Signal()  # an account was added and its games should be imported
 
     def __init__(
         self, paths: StatePaths, conn: sqlite3.Connection, sources: Mapping[str, Provider], default_prefix: Path,
@@ -94,6 +96,43 @@ class SettingsController(QObject):
 
         run_async(lambda: add_plugin(spec), done)
 
+    @Slot(str, result="QVariantMap")
+    def accountForm(self, source: str) -> dict[str, Any]:
+        """The fields to ask for a new account of ``source`` and a free default name; empty when it has no accounts."""
+        provider = self._sources.get(source)
+        if provider is None or provider.fetch is None:
+            return {}
+        taken = {name for name, kind in list_accounts(self._paths) if kind == source}
+        name, number = source, 2
+        while name in taken:
+            name, number = f"{source}{number}", number + 1
+        return {"source": source, "help": provider.help, "name": name, "fields": [_config_field(f, None) for f in provider.config_fields]}
+
+    @Slot(str, str, "QVariantMap", result=bool)
+    def addAccount(self, source: str, name: str, values: dict[str, Any]) -> bool:
+        """Save a new account, then ask for its games to be imported. ``False`` (and a notice) when it was refused."""
+        provider = self._sources.get(source)
+        if provider is None:
+            return False
+        if not self._write(lambda: create_account(self._paths, provider, name.strip(), {k: str(v).strip() for k, v in values.items()})):
+            return False
+        self.notice.emit(f"added account {name.strip()} ({source}); importing…", False)
+        self.reload()
+        self.accountsChanged.emit()
+        return True
+
+    @Slot(str)
+    def removeAccount(self, ref: str) -> None:
+        """Forget an account and delete its records (games another account owns stay)."""
+        try:
+            changed = delete_account(self._paths, ref)
+        except LudexError as exc:
+            self.notice.emit(exc.message, True)
+            return
+        self.notice.emit(f"removed account {ref}; deleted {changed} records", False)
+        self.reload()
+        self.libraryChanged.emit()
+
     def _write(self, change: Callable[[], object]) -> bool:
         try:
             with writer_lock(self._paths.import_lock):
@@ -129,6 +168,11 @@ class SettingsController(QObject):
             if provider.settings:
                 values = get_values(paths, provider.name)
                 sections.append({"id": f"plugin:{provider.name}", "title": f"{provider.name} settings", "hint": "", "instant": False, "fields": [_config_field(f, values.get(f.name)) for f in provider.settings]})
+        addable = sorted(p.name for p in self._sources.values() if p.fetch is not None)
+        sections.append({
+            "id": "accounts", "title": "Accounts", "instant": True, "sources": addable, "fields": [],
+            "hint": "Each account is imported into the library. Add one for a store below." if addable else "No installed plugin lists owned games.",
+        })
         for name, source in list_accounts(paths):
             if source in self._sources:
                 ref = f"{source}:{name}"
