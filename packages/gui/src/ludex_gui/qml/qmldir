@@ -13,3 +13,5 @@ SettingsPage SettingsPage.qml
 PluginViewPage PluginViewPage.qml
 Combo Combo.qml
 LaunchOptions LaunchOptions.qml
+MatchDialog MatchDialog.qml
+AddAccount AddAccount.qml

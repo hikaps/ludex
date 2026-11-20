@@ -34,6 +34,29 @@ Item {
     }
 
 
+    AddAccount { id: newAccount }
+
+    Dialog {
+        id: forget
+        objectName: "forgetAccount"
+        property string ref: ""
+        modal: true
+        anchors.centerIn: Overlay.overlay
+        padding: 20
+        background: Rectangle { radius: Theme.radius; color: Theme.surface2; border.width: 1; border.color: Theme.border }
+        header: Txt { text: "Remove account"; font.bold: true; font.pixelSize: 16; padding: 20; bottomPadding: 0 }
+        contentItem: Txt { width: 420; wrapMode: Text.Wrap; lineHeight: 1.2; text: "Remove " + forget.ref + " and its games from the library? Games another account owns stay. Your files and the store are untouched." }
+        footer: DialogButtonBox {
+            padding: 16
+            spacing: 8
+            background: Item { }
+            delegate: Btn { }
+            standardButtons: Dialog.Yes | Dialog.Cancel
+        }
+        onOpened: standardButton(Dialog.Cancel).forceActiveFocus()
+        onAccepted: backend.settingsController.removeAccount(forget.ref)
+    }
+
     Dialog {
         id: trust
         objectName: "trust"
@@ -190,6 +213,19 @@ Item {
                                 enabled: !backend.settingsController.installing && spec.text.trim() !== ""
                                 onClicked: if (enabled) { page.pendingSpec = spec.text.trim(); trust.open() }
                             }
+                        }
+                        RowLayout {
+                            visible: section.modelData.id === "accounts" && section.modelData.sources.length > 0
+                            Layout.fillWidth: true
+                            spacing: 10
+                            Combo { id: sourcePick; Layout.fillWidth: true; model: section.modelData.sources }
+                            Btn { primary: true; text: "Add account"; onClicked: newAccount.openFor(sourcePick.currentText) }
+                        }
+                        Btn {
+                            visible: section.modelData.id.indexOf("account:") === 0
+                            text: "Remove account"
+                            Layout.alignment: Qt.AlignRight
+                            onClicked: { forget.ref = section.modelData.id.substring(8); forget.open() }
                         }
                         Btn {
                             visible: !section.modelData.instant

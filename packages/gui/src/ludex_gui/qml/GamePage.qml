@@ -32,6 +32,7 @@ Item {
     }
 
     LaunchOptions { id: options }
+    MatchDialog { id: matcher }
 
     Btn { id: backButton; text: "‹  Back"; x: 24; y: 20; onClicked: page.back() }
 
@@ -94,6 +95,12 @@ Item {
                         implicitHeight: 52
                         text: "Launch options"
                         onClicked: options.openFor(game.gameId)
+                    }
+                    Btn {
+                        visible: backend.canMatch
+                        implicitHeight: 52
+                        text: "Match…"
+                        onClicked: matcher.openFor(game.gameId, game.title)
                     }
                     Btn {
                         visible: page.running

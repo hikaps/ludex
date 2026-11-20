@@ -24,7 +24,10 @@ from ludex.game_settings import (
 from ludex.jobs import Job, list_jobs, progress_line, stop_job
 from ludex.launch import install_game, launch_game, open_url
 from ludex.library import get_game, list_games
-from ludex.metadata import cached_match, cached_metadata, game_metadata, get_auto_details, get_auto_match
+from ludex.metadata import (
+    cached_match, cached_metadata, choose_match, clear_match, default_query, game_metadata, get_auto_details, get_auto_match,
+    match_candidates,
+)
 from ludex.paths import StatePaths
 from ludex.playtime import Played, describe_played, epoch
 from ludex.plugin_views import list_views
@@ -88,6 +91,7 @@ class Backend(QObject):
     hitsChanged = Signal()
     jobsChanged = Signal()
     busyChanged = Signal()
+    matchesChanged = Signal()
 
     def __init__(
         self,
@@ -113,6 +117,8 @@ class Backend(QObject):
         self._hits: dict[str, dict[str, Any]] = {}
         self._hit_rows: list[dict[str, Any]] = []
         self._searching = False
+        self._matches: list[tuple[str, Any]] = []
+        self._matching = False
         self._refreshing = False
         self._jobs: list[dict[str, Any]] = []
         self._running_jobs = 0
@@ -127,6 +133,7 @@ class Backend(QObject):
         self.settings = SettingsController(paths, self._conn, sources, prefix_root, self)
         self.settings.notice.connect(self.notify)
         self.settings.libraryChanged.connect(self.reload)
+        self.settings.accountsChanged.connect(lambda: self.startRefresh(True))
         self._views = [ViewController(paths, sources, key, view, self) for key, view in list_views(sources)]
         for page in self._views:
             page.notice.connect(self.notify)
@@ -170,6 +177,15 @@ class Backend(QObject):
     def _get_settings(self) -> QObject:
         return self.settings
 
+    def _get_matches(self) -> list[dict[str, Any]]:
+        return [{"plugin": plugin, "title": hit.title, "price": str(hit.price or ""), "url": hit.url} for plugin, hit in self._matches]
+
+    def _get_matching(self) -> bool:
+        return self._matching
+
+    def _get_can_match(self) -> bool:
+        return any(p.match and p.metadata for p in self._sources.values())
+
     def _get_busy(self) -> bool:
         return self._refreshing
 
@@ -188,6 +204,9 @@ class Backend(QObject):
     gameModel = Property(QObject, _get_games, constant=True)
     settingsController = Property(QObject, _get_settings, constant=True)
     refreshing = Property(bool, _get_busy, notify=busyChanged)
+    matches = Property("QVariantList", _get_matches, notify=matchesChanged)
+    matching = Property(bool, _get_matching, notify=matchesChanged)
+    canMatch = Property(bool, _get_can_match, constant=True)
     searching = Property(bool, _get_searching, notify=hitsChanged)
 
     @Slot(str, bool)
@@ -404,6 +423,73 @@ class Backend(QObject):
             self.notify(exc.message, True)
             return
         self.notify(f"saved launch options for {title}")
+
+    @Slot(int, result=str)
+    def matchQuery(self, game_id: int) -> str:
+        """The title to start looking up: the folder name, cleaned."""
+        try:
+            return default_query(self._conn, game_id)
+        except LudexError as exc:
+            self.notify(exc.message, True)
+            return ""
+
+    @Slot(str)
+    def findMatches(self, query: str) -> None:
+        """Ask the database plugins for entries named ``query`` (the plugin sees the query)."""
+        query = query.strip()
+        if not query or self._matching:
+            return
+        self._matching = True
+        self.matchesChanged.emit()
+        sources = self._sources
+
+        def done(result: tuple | None, error: str | None) -> None:
+            self._matching = False
+            self._matches = result[0] if result else []
+            self.matchesChanged.emit()
+            if error is not None:
+                self.notify(f"match: {error}", True)
+            elif result and result[1]:
+                self.notify("; ".join(f"{name}: {reason}" for name, reason in result[1].items()), True)
+
+        run_async(lambda: match_candidates(sources, query), done)
+
+    @Slot()
+    def clearMatches(self) -> None:
+        self._matches = []
+        self.matchesChanged.emit()
+
+    @Slot(int, int)
+    def chooseMatch(self, game_id: int, index: int) -> None:
+        """Keep entry ``index`` of the last results as the game's title and details (or, with -1, forget the match)."""
+        if index >= len(self._matches):
+            return
+        pick = self._matches[index] if index >= 0 else None
+        paths, sources = self._paths, self._sources
+
+        def work() -> str:
+            conn = connect(paths.database)
+            try:
+                with writer_lock(paths.import_lock):
+                    if pick is None:
+                        return "match cleared" if clear_match(conn, game_id) else "no match to clear"
+                    choose_match(conn, sources, game_id, pick[0], pick[1])
+                    return f"matched to {pick[0]}: {pick[1].title}"
+            finally:
+                conn.close()
+
+        def done(message: str | None, error: str | None) -> None:
+            if error is not None:
+                self.notify(f"match: {error}", True)
+                return
+            self.notify(message or "")
+            self._details_tried.add(game_id)  # do not match it again by itself this run
+            self._cover_tried.discard(game_id)
+            self.reload()
+            self.openGame(game_id, quiet=True)
+            self.requestCover(game_id)
+
+        run_async(work, done)
 
     @Slot()
     def closeGame(self) -> None:
