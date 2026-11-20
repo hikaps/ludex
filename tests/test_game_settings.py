@@ -96,3 +96,14 @@ def test_prefix_root_setting_roundtrip_and_validation(conn, tmp_path):
     assert get_prefix_root(conn, default) == tmp_path / "mine"
     set_prefix_root(conn, None)
     assert get_prefix_root(conn, default) == default
+
+
+def test_arguments_and_environment_text_round_trip_and_reject_bad_input():
+    from ludex.game_settings import format_arguments, format_environment, parse_arguments, parse_environment
+
+    assert parse_arguments(format_arguments(("--x", "a b", "it's"))) == ["--x", "a b", "it's"]
+    assert parse_environment(format_environment({"A": "1", "B": "x=y"})) == {"A": "1", "B": "x=y"}
+    for bad in (lambda: parse_arguments("'open"), lambda: parse_environment("NOEQUALS")):
+        with pytest.raises(LudexError) as caught:
+            bad()
+        assert caught.value.code == "invalid_setting"

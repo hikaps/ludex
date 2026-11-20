@@ -16,7 +16,11 @@ from ludex.acquire import download_game
 from ludex.artwork import cached_cover, fetch_cover
 from ludex.errors import LudexError
 from ludex.find import find_games, owned_keys
-from ludex.game_settings import default_download_dir, get_download_dir, get_prefix_root, set_download_dir
+from ludex.executables import find_executables
+from ludex.game_settings import (
+    default_download_dir, format_arguments, format_environment, get_download_dir, get_prefix_root, get_settings, parse_arguments,
+    parse_environment, set_download_dir, update_settings,
+)
 from ludex.jobs import Job, list_jobs, progress_line, stop_job
 from ludex.launch import install_game, launch_game, open_url
 from ludex.library import get_game, list_games
@@ -26,6 +30,7 @@ from ludex.playtime import Played, describe_played, epoch
 from ludex.plugin_views import list_views
 from ludex.plugins import Provider
 from ludex.refresh import get_auto_refresh, refresh_all
+from ludex.runners import find_runners
 from ludex.storage import connect, writer_lock
 
 from .settings import SettingsController
@@ -346,6 +351,59 @@ class Backend(QObject):
             self.requestCover(game_id)
             if found is None:
                 self._fetch_details(game_id)
+
+    def _settings_copy(self, game_id: int) -> tuple[str, str, str, str]:
+        """(store, store_id, account, title) of the copy whose launch settings apply: one a provider keeps in a folder."""
+        game = get_game(self._conn, game_id)
+        copies = sorted(
+            (o["store"], str(o["store_id"]), str(o["account"])) for o in game["ownership"]
+            if not o["removed"] and getattr(self._sources.get(o["store"]), "game_folder", None)
+        )
+        if not copies:
+            raise LudexError("not_applicable", "launch options apply to games a plugin keeps in a folder (for example local games)")
+        return (*copies[0], game["title"])
+
+    @Slot(int, result="QVariantMap")
+    def gameSettings(self, game_id: int) -> dict[str, Any]:
+        """What the launch options form shows: the saved values, the Proton builds and the executables found in the folder."""
+        try:
+            store, store_id, account, title = self._settings_copy(game_id)
+        except LudexError as exc:
+            return {"available": False, "reason": exc.message}
+        folder: Path | None = None
+        try:
+            folder = Path(self._sources[store].game_folder(self._config_for(store, account), store_id))
+        except Exception:  # the folder only feeds the executable suggestions
+            pass
+        current = get_settings(self._conn, store, store_id)
+        runners = [r.name for r in find_runners()]
+        if current.runner and current.runner not in runners:
+            runners.append(current.runner)
+        return {
+            "available": True, "title": title, "runner": current.runner or "", "runners": runners,
+            "prefix": current.prefix or "", "defaultPrefix": str(self._prefix_root),
+            "executable": current.executable or "", "candidates": [str(p) for p in find_executables(folder, title)] if folder is not None and folder.is_dir() else [],
+            "args": format_arguments(current.args), "env": format_environment(current.env),
+        }
+
+    @Slot(int, "QVariantMap")
+    def saveGameSettings(self, game_id: int, values: dict[str, Any]) -> None:
+        """Replace the game's launch options with the form's; a blank value is unset."""
+        try:
+            store, store_id, _, title = self._settings_copy(game_id)
+            with writer_lock(self._paths.import_lock):
+                update_settings(
+                    self._conn, store, store_id, clear=True,
+                    runner=str(values.get("runner", "")).strip() or None,
+                    prefix=str(values.get("prefix", "")).strip() or None,
+                    executable=str(values.get("executable", "")).strip() or None,
+                    args=parse_arguments(str(values.get("args", ""))),
+                    env=parse_environment(str(values.get("env", ""))),
+                )
+        except LudexError as exc:
+            self.notify(exc.message, True)
+            return
+        self.notify(f"saved launch options for {title}")
 
     @Slot()
     def closeGame(self) -> None:
