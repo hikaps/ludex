@@ -130,14 +130,14 @@ def test_steam_cover_prefers_portrait_art_then_the_banner_and_bounds_the_downloa
         seen.append(request.url.path)
         if request.url.path.endswith("library_600x900.jpg"):
             return httpx.Response(404)
-        return httpx.Response(200, content=JPEG)
+        return httpx.Response(200, stream=httpx.ByteStream(JPEG))
 
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         assert steam.cover("10", client=client) == JPEG
         assert steam.cover("../x", client=client) is None
     assert seen == ["/steam/apps/10/library_600x900.jpg", "/steam/apps/10/header.jpg"]
 
-    with httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, content=b"\0" * (MAX_COVER_BYTES + 1)))) as client:
+    with httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, stream=httpx.ByteStream(b"\0" * (MAX_COVER_BYTES + 1))))) as client:
         with pytest.raises(SourceError) as caught:
             steam.cover("10", client=client)
         assert caught.value.code == "steam_bad_response"
@@ -156,7 +156,7 @@ def test_rawg_cover_follows_only_https_image_links_and_never_shows_the_key():
             assert request.url.params["key"] == key
             return httpx.Response(200, json={"background_image": "https://media.rawg.io/h.jpg"})
         assert request.url.params.get("key") is None
-        return httpx.Response(200, content=PNG)
+        return httpx.Response(200, stream=httpx.ByteStream(PNG))
 
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         assert rawg.cover("7", settings={"api_key": key}, client=client) == PNG
@@ -172,3 +172,10 @@ def test_rawg_cover_follows_only_https_image_links_and_never_shows_the_key():
         with pytest.raises(SourceError) as caught:
             rawg.cover("7", settings={"api_key": key}, client=client)
         assert key not in caught.value.message
+
+
+def test_a_compressed_cover_response_is_refused_before_it_can_inflate():
+    gzip = httpx.Response(200, headers={"content-encoding": "gzip"}, stream=httpx.ByteStream(b"x"))
+    with httpx.Client(transport=httpx.MockTransport(lambda r: gzip)) as client:
+        with pytest.raises(SourceError):
+            steam.cover("570", base_url="https://x", client=client)

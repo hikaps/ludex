@@ -6,11 +6,30 @@ import QtQuick.Layouts
 Item {
     id: page
     property var pathTarget: null
+    // Unsaved edits, kept here so that saving one section (or a background refresh) never clears another's.
+    property var drafts: ({})
+    function draftOf(section, name, fallback) {
+        var key = section + "/" + name
+        return key in drafts ? drafts[key] : fallback
+    }
+    function setDraft(section, name, value) {
+        drafts[section + "/" + name] = value
+    }
+    function clearDrafts(section) {
+        for (var key in drafts) {
+            if (key.indexOf(section + "/") === 0) {
+                delete drafts[key]
+            }
+        }
+    }
 
     FolderDialog {
         id: folderDialog
         title: "Choose a folder"
-        onAccepted: if (page.pathTarget) page.pathTarget.text = selectedFolder.toString().replace(/^file:\/\//, "")
+        onAccepted: if (page.pathTarget) {
+            page.pathTarget.text = backend.localPath(selectedFolder.toString())
+            page.pathTarget.textEdited()
+        }
     }
 
     Flickable {
@@ -33,7 +52,6 @@ Item {
                 delegate: Rectangle {
                     id: section
                     required property var modelData
-                    property var edits: ({})
                     Layout.fillWidth: true
                     implicitHeight: body.implicitHeight + 32
                     radius: Theme.radius
@@ -45,14 +63,12 @@ Item {
                         var out = {}
                         for (var i = 0; i < modelData.fields.length; i++) {
                             var f = modelData.fields[i]
-                            out[f.name] = f.name in edits ? edits[f.name] : f.value
+                            out[f.name] = page.draftOf(modelData.id, f.name, f.value)
                         }
                         return out
                     }
                     function edit(name, value) {
-                        var e = edits
-                        e[name] = value
-                        edits = e
+                        page.setDraft(modelData.id, name, value)
                     }
 
                     ColumnLayout {
@@ -75,7 +91,7 @@ Item {
                                 Switch {
                                     id: toggle
                                     visible: row.toggle
-                                    checked: row.modelData.value === "yes"
+                                    checked: (section.modelData.instant ? row.modelData.value : page.draftOf(section.modelData.id, row.modelData.name, row.modelData.value)) === "yes"
                                     onToggled: {
                                         var value = checked ? "yes" : "no"
                                         if (section.modelData.instant) {
@@ -99,7 +115,7 @@ Item {
                                     visible: row.modelData.kind === "choice"
                                     Layout.fillWidth: true
                                     model: row.modelData.optional ? [""].concat(row.modelData.choices) : row.modelData.choices
-                                    currentIndex: Math.max(0, model.indexOf(row.modelData.value))
+                                    currentIndex: Math.max(0, model.indexOf(page.draftOf(section.modelData.id, row.modelData.name, row.modelData.value)))
                                     font.family: Theme.family
                                     onActivated: section.edit(row.modelData.name, currentText)
                                 }
@@ -107,7 +123,7 @@ Item {
                                     id: input
                                     visible: !row.toggle && row.modelData.kind !== "choice"
                                     Layout.fillWidth: true
-                                    text: row.modelData.value
+                                    text: page.draftOf(section.modelData.id, row.modelData.name, row.modelData.value)
                                     echoMode: row.modelData.kind === "secret" ? TextInput.Password : TextInput.Normal
                                     placeholderText: row.modelData.kind === "secret" && row.modelData.hasValue ? "(set; type to replace)" : ""
                                     placeholderTextColor: Theme.muted
@@ -116,7 +132,6 @@ Item {
                                     selectByMouse: true
                                     background: Rectangle { radius: 6; color: Theme.surface2; border.width: input.activeFocus ? 2 : 1; border.color: input.activeFocus ? Theme.accent : Theme.border }
                                     onTextEdited: section.edit(row.modelData.name, text)
-                                    onTextChanged: if (row.modelData.kind === "path") section.edit(row.modelData.name, text)
                                 }
                                 Btn {
                                     visible: row.modelData.kind === "path"
@@ -130,7 +145,11 @@ Item {
                             primary: true
                             text: "Save"
                             Layout.alignment: Qt.AlignRight
-                            onClicked: backend.settingsController.save(section.modelData.id, section.collect())
+                            onClicked: {
+                                const values = section.collect()
+                                page.clearDrafts(section.modelData.id)
+                                backend.settingsController.save(section.modelData.id, values)
+                            }
                         }
                     }
                 }

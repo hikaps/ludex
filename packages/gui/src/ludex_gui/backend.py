@@ -282,6 +282,10 @@ class Backend(QObject):
             self.currentChanged.emit()
 
     def _pump_covers(self) -> None:
+        if self._cover_queue and not get_auto_details(self._conn):  # consent withdrawn: ask nothing more
+            for game_id in self._cover_queue:
+                self._cover_tried.discard(game_id)
+            self._cover_queue.clear()
         while self._cover_queue and self._cover_running < COVERS_AT_A_TIME:
             game_id = self._cover_queue.pop(0)
             self._cover_running += 1
@@ -366,8 +370,11 @@ class Backend(QObject):
         def done(found: object, error: str | None) -> None:
             if error is not None:
                 self.notify(f"details: {error}", True)
-            elif found and self._current.get("gameId") == game_id:
-                self.openGame(game_id, quiet=True)
+            elif found:
+                self._cover_tried.discard(game_id)  # a title match may have made a cover findable
+                self.requestCover(game_id)
+                if self._current.get("gameId") == game_id:
+                    self.openGame(game_id, quiet=True)
 
         run_async(work, done)
 
@@ -509,6 +516,16 @@ class Backend(QObject):
     @Slot(result=str)
     def downloadFolder(self) -> str:
         return str(get_download_dir(self._conn, default_download_dir()))
+
+    @Slot(str, result=str)
+    def folderUrl(self, path: str) -> str:
+        """A folder path as a file URL (escaped), for a folder dialog."""
+        return QUrl.fromLocalFile(path).toString()
+
+    @Slot(str, result=str)
+    def localPath(self, url: str) -> str:
+        """The folder path of a file URL a folder dialog returned."""
+        return QUrl(url).toLocalFile()
 
     @Slot(str, str)
     def installHit(self, key: str, folder: str = "") -> None:

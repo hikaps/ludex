@@ -347,6 +347,9 @@ COVER_BASE_URL = "https://cdn.cloudflare.steamstatic.com/steam/apps"
 _COVER_FILES = ("library_600x900.jpg", "header.jpg")  # portrait art, else the store banner
 
 
+_RAW = {"Accept-Encoding": "identity"}  # an image is already compressed; never let a response inflate past the cap
+
+
 def cover(store_id: str, *, base_url: str = COVER_BASE_URL, client: httpx.Client | None = None) -> bytes | None:
     """Steam's public library art for one app (no key); ``None`` when Steam has no image for it."""
     if not store_id.isascii() or not store_id.isdigit():
@@ -355,13 +358,15 @@ def cover(store_id: str, *, base_url: str = COVER_BASE_URL, client: httpx.Client
     client = client or httpx.Client(timeout=10.0, headers={"User-Agent": f"ludex/{__version__}"})
     try:
         for name in _COVER_FILES:
-            with client.stream("GET", f"{base_url}/{store_id}/{name}") as response:
+            with client.stream("GET", f"{base_url}/{store_id}/{name}", headers=_RAW) as response:
                 if response.status_code in (403, 404):
                     continue
                 if response.status_code != 200:
                     raise SourceError("steam_unavailable", "Steam is unavailable")
                 body = bytearray()
-                for chunk in response.iter_bytes():
+                if response.headers.get("content-encoding", "identity").lower() != "identity":
+                    raise _bad_response()
+                for chunk in response.iter_raw():
                     body += chunk
                     if len(body) > MAX_COVER_BYTES:
                         raise _bad_response()

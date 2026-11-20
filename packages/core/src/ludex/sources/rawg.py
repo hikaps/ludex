@@ -107,6 +107,9 @@ def metadata(store_id: str, *, settings: Mapping[str, str], client: httpx.Client
     )
 
 
+_RAW = {"Accept-Encoding": "identity"}  # an image is already compressed; never let a response inflate past the cap
+
+
 def cover(store_id: str, *, settings: Mapping[str, str], client: httpx.Client | None = None, base_url: str = BASE_URL) -> bytes | None:
     """The RAWG image of one game id (landscape); ``None`` when RAWG has no image for it."""
     if not store_id.isascii() or not store_id.isdigit():
@@ -120,13 +123,15 @@ def cover(store_id: str, *, settings: Mapping[str, str], client: httpx.Client | 
     own = client is None
     client = client or httpx.Client(timeout=10.0, headers={"User-Agent": f"ludex/{__version__}"})
     try:
-        with client.stream("GET", url) as response:
+        with client.stream("GET", url, headers=_RAW) as response:
             if response.status_code in (403, 404):
                 return None
             if response.status_code != 200:
                 raise SourceError("rawg_unavailable", "RAWG is unavailable")
             body = bytearray()
-            for chunk in response.iter_bytes():
+            if response.headers.get("content-encoding", "identity").lower() != "identity":
+                raise _bad_response()
+            for chunk in response.iter_raw():
                 body += chunk
                 if len(body) > MAX_COVER_BYTES:
                     raise _bad_response()

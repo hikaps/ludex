@@ -9,6 +9,8 @@ Item {
     readonly property bool installed: game.installed === true
     readonly property bool running: (game.running || "") !== ""
     signal back()
+    focus: visible
+    onVisibleChanged: if (visible) backButton.forceActiveFocus()
 
     Rectangle { anchors.fill: parent; color: Theme.bg }
     Image {

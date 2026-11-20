@@ -238,6 +238,14 @@ def test_a_failing_cover_provider_does_not_break_the_grid(qapp, tmp_path):
     launcher.backend.closeDown()
 
 
+def test_folders_round_trip_through_file_urls_even_with_url_characters(qapp, tmp_path):
+    launcher = _launcher(_paths(tmp_path), {})
+    backend = launcher.backend
+    folder = "/tmp/Games#1 100%"
+    assert backend.localPath(backend.folderUrl(folder)) == folder
+    backend.closeDown()
+
+
 def test_no_screen_renders_text_as_markup():
     import re
 

@@ -29,6 +29,14 @@ ApplicationWindow {
         return 4 + parseInt(name.split(":")[1])
     }
 
+    onGameOpenChanged: {
+        if (gameOpen) {
+            gamePage.forceActiveFocus()
+        } else {
+            library.focusGrid()
+        }
+    }
+
     Shortcut { sequence: "Ctrl+1"; onActivated: win.go("library") }
     Shortcut { sequence: "Ctrl+2"; onActivated: win.go("installed") }
     Shortcut { sequence: "Ctrl+3"; onActivated: win.go("search") }
@@ -87,29 +95,41 @@ ApplicationWindow {
                 }
                 NavItem { objectName: "nav-settings"; Layout.fillWidth: true; label: "Settings"; glyph: "⚙"; current: win.section === "settings"; onActivated: win.go("settings") }
 
-                Txt {
-                    visible: backend.views.length > 0
-                    text: "PLUGINS"
-                    font.pixelSize: 11
-                    font.bold: true
-                    color: Theme.muted
-                    Layout.topMargin: 18
-                    Layout.leftMargin: 8
-                }
-                Repeater {
-                    model: backend.views
-                    delegate: NavItem {
-                        required property var modelData
-                        required property int index
-                        objectName: "nav-view-" + index
-                        Layout.fillWidth: true
-                        label: modelData.title
-                        glyph: "◈"
-                        current: win.section === "view:" + index
-                        onActivated: win.go("view:" + index)
+                Flickable {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.topMargin: 14
+                    contentHeight: plugins.implicitHeight
+                    clip: true
+                    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                    Column {
+                        id: plugins
+                        width: parent.width
+                        spacing: 4
+                        Txt {
+                            visible: backend.views.length > 0
+                            text: "PLUGINS"
+                            font.pixelSize: 11
+                            font.bold: true
+                            color: Theme.muted
+                            leftPadding: 8
+                            bottomPadding: 4
+                        }
+                        Repeater {
+                            model: backend.views
+                            delegate: NavItem {
+                                required property var modelData
+                                required property int index
+                                objectName: "nav-view-" + index
+                                width: plugins.width
+                                label: modelData.title
+                                glyph: "◈"
+                                current: win.section === "view:" + index
+                                onActivated: win.go("view:" + index)
+                            }
+                        }
                     }
                 }
-                Item { Layout.fillHeight: true }
             }
         }
 
@@ -125,6 +145,7 @@ ApplicationWindow {
                 StackLayout {
                     id: stack
                     anchors.fill: parent
+                    enabled: !win.gameOpen
                     currentIndex: win.pageIndex(win.section)
 
                     LibraryPage { id: library; installedOnly: win.section === "installed" }
@@ -137,6 +158,7 @@ ApplicationWindow {
                     }
                 }
                 GamePage {
+                    id: gamePage
                     objectName: "gamePage"
                     anchors.fill: parent
                     visible: win.gameOpen

@@ -11,6 +11,9 @@ Item {
     function apply() {
         backend.setFilter(search.text, page.store, page.installedOnly, sortKeys[sortBox.currentIndex])
     }
+    function focusGrid() {
+        grid.forceActiveFocus()
+    }
     function focusSearch() {
         search.forceActiveFocus()
         search.selectAll()
@@ -39,10 +42,12 @@ Item {
                 font.bold: true
             }
             Txt { text: backend.count + (backend.count === 1 ? " game" : " games"); color: Theme.muted; Layout.alignment: Qt.AlignBottom; Layout.bottomMargin: 4 }
-            Item { Layout.fillWidth: true }
+            Item { Layout.fillWidth: true; Layout.minimumWidth: 0 }
             TextField {
                 id: search
-                Layout.preferredWidth: 280
+                Layout.fillWidth: true
+                Layout.maximumWidth: 280
+                Layout.minimumWidth: 120
                 placeholderText: "Search your library   ( / )"
                 color: Theme.text
                 placeholderTextColor: Theme.muted
@@ -63,7 +68,8 @@ Item {
             }
             ComboBox {
                 id: sortBox
-                Layout.preferredWidth: 180
+                Layout.preferredWidth: 170
+                Layout.minimumWidth: 120
                 model: ["Title", "Recently played", "Play time", "Installed first"]
                 font.family: Theme.family
                 onActivated: page.apply()
@@ -106,7 +112,7 @@ Item {
             focus: true
             keyNavigationEnabled: true
             highlightFollowsCurrentItem: true
-            cacheBuffer: 240
+            cacheBuffer: 0  // only cards on screen exist, so only they ask for covers
             model: backend.gameModel
             ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
             delegate: GameCard {

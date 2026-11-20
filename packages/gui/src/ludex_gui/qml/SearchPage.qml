@@ -15,7 +15,7 @@ Item {
     FolderDialog {
         id: folderDialog
         title: "Download to"
-        onAccepted: backend.installHit(page.pendingKey, selectedFolder.toString())
+        onAccepted: backend.installHit(page.pendingKey, backend.localPath(selectedFolder.toString()))
     }
 
     ColumnLayout {
@@ -85,7 +85,7 @@ Item {
                         onClicked: {
                             if (backend.hitNeedsFolder(hit.modelData.key)) {
                                 page.pendingKey = hit.modelData.key
-                                folderDialog.currentFolder = "file://" + backend.downloadFolder()
+                                folderDialog.currentFolder = backend.folderUrl(backend.downloadFolder())
                                 folderDialog.open()
                             } else {
                                 backend.installHit(hit.modelData.key, "")
