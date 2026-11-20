@@ -6,6 +6,7 @@ Like the TUI it only collects input, calls the core and shows results. Blocking 
 from __future__ import annotations
 
 import sqlite3
+import threading
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,7 @@ from PySide6.QtCore import Property, QAbstractListModel, QModelIndex, QObject, Q
 from ludex.acquire import download_game
 from ludex.artwork import cached_cover, fetch_cover
 from ludex.errors import LudexError
+from ludex.details import fetch_missing_details, games_without_details
 from ludex.find import find_games, owned_keys
 from ludex.executables import find_executables
 from ludex.game_settings import (
@@ -23,7 +25,7 @@ from ludex.game_settings import (
 )
 from ludex.jobs import Job, list_jobs, progress_line, stop_job
 from ludex.launch import install_game, launch_game, open_url
-from ludex.library import get_game, list_games
+from ludex.library import get_game, list_games, list_genres
 from ludex.metadata import (
     cached_match, cached_metadata, choose_match, clear_match, default_query, game_metadata, get_auto_details, get_auto_match,
     match_candidates,
@@ -92,6 +94,7 @@ class Backend(QObject):
     jobsChanged = Signal()
     busyChanged = Signal()
     matchesChanged = Signal()
+    detailsChanged = Signal()
 
     def __init__(
         self,
@@ -109,9 +112,14 @@ class Backend(QObject):
         self._conn = connect(paths.database)
         self._keys: set[tuple[str, str]] = set()
         self._played: Mapping[int, Played] = {}
-        self._filter = ("", "", False, "title")
+        self._filter = ("", "", False, "title", "")
         self._status, self._status_error = "", False
         self._stores: list[str] = []
+        self._genres: list[dict[str, Any]] = []
+        self._missing = 0
+        self._fetching = False
+        self._fetch_progress = (0, 0)
+        self._fetch_stop = threading.Event()
         self._count = 0
         self._current: dict[str, Any] = {}
         self._hits: dict[str, dict[str, Any]] = {}
@@ -152,6 +160,16 @@ class Backend(QObject):
 
     def _get_stores(self) -> list[str]:
         return self._stores
+
+    def _get_genres(self) -> list[dict[str, Any]]:
+        return self._genres
+
+    def _get_missing(self) -> int:
+        return self._missing
+
+    def _get_fetching(self) -> str:
+        done, total = self._fetch_progress
+        return f"Fetching details {done}/{total}" if self._fetching else ""
 
     def _get_count(self) -> int:
         return self._count
@@ -196,6 +214,9 @@ class Backend(QObject):
     statusError = Property(bool, _get_status_error, notify=statusChanged)
     stores = Property("QVariantList", _get_stores, notify=libraryChanged)
     count = Property(int, _get_count, notify=libraryChanged)
+    genres = Property("QVariantList", _get_genres, notify=libraryChanged)
+    missingDetails = Property(int, _get_missing, notify=detailsChanged)
+    fetchingDetails = Property(str, _get_fetching, notify=detailsChanged)
     current = Property("QVariantMap", _get_current, notify=currentChanged)
     hits = Property("QVariantList", _get_hits, notify=hitsChanged)
     jobs = Property("QVariantList", _get_jobs, notify=jobsChanged)
@@ -231,13 +252,13 @@ class Backend(QObject):
         self._played = self._played_of(self._conn)
         self._apply()
 
-    @Slot(str, str, bool, str)
-    def setFilter(self, query: str, store: str, installed_only: bool, sort: str) -> None:
-        self._filter = (query, store, installed_only, sort if sort in SORTS else "title")
+    @Slot(str, str, bool, str, str)
+    def setFilter(self, query: str, store: str, installed_only: bool, sort: str, genre: str) -> None:
+        self._filter = (query, store, installed_only, sort if sort in SORTS else "title", genre)
         self._apply()
 
     def _apply(self) -> None:
-        query, store, installed_only, sort = self._filter
+        query, store, installed_only, sort, genre = self._filter
         everything = self._list()
         stores = sorted({s for g in everything for s in g["stores"]})
         installed = {g["id"] for g in self._list(only=self._keys)}
@@ -251,6 +272,8 @@ class Backend(QObject):
             kw.update(query=query.strip(), fuzzy=True)
         if store:
             kw["store"] = store
+        if genre:
+            kw["genre"] = genre
         games = self._list(**kw) if kw or installed_only else everything
         if installed_only:
             games = [g for g in games if g["id"] in installed]
@@ -266,7 +289,10 @@ class Backend(QObject):
         ]
         self.games.set_rows(rows)
         self._stores, self._count = stores, len(rows)
+        self._genres = [{"genre": name, "games": count} for name, count in list_genres(self._conn)]
+        self._missing = len(games_without_details(self._conn))
         self.libraryChanged.emit()
+        self.detailsChanged.emit()
         if self._current:
             self.openGame(int(self._current["gameId"]), quiet=True)
 
@@ -619,6 +645,46 @@ class Backend(QObject):
 
         run_async(work, done)
 
+    # --- details for every game -----------------------------------------------------------------------------
+
+    @Slot()
+    def fetchAllDetails(self) -> None:
+        """Ask the stores and database plugins for the details of every game that has none (the user clicked for it)."""
+        if self._fetching:
+            return
+        self._fetching, self._fetch_progress = True, (0, self._missing)
+        self._fetch_stop.clear()
+        self.detailsChanged.emit()
+        paths, sources, match = self._paths, self._sources, get_auto_match(self._conn)
+
+        def report(done: int, total: int) -> None:
+            self._fetch_progress = (done, total)  # read by pollJobs on the UI thread
+
+        def work() -> Any:
+            conn = connect(paths.database)
+            try:
+                return fetch_missing_details(paths, conn, sources, match=match, report=report, should_stop=self._fetch_stop.is_set)
+            finally:
+                conn.close()
+
+        def done(summary: Any, error: str | None) -> None:
+            self._fetching = False
+            self.reload()
+            self.detailsChanged.emit()
+            if error is not None:
+                self.notify(f"details: {error}", True)
+                return
+            self.notify(
+                f"details: {summary.fetched} games now have them, {summary.unavailable} have none to give, {summary.failed} failed"
+                + ("; stopped" if summary.stopped else ""), summary.failed > 0,
+            )
+
+        run_async(work, done)
+
+    @Slot()
+    def stopFetchingDetails(self) -> None:
+        self._fetch_stop.set()
+
     # --- search ---------------------------------------------------------------------------------------------
 
     @Slot(str)
@@ -703,6 +769,8 @@ class Backend(QObject):
 
     @Slot()
     def pollJobs(self) -> None:
+        if self._fetching:
+            self.detailsChanged.emit()  # the worker thread only stores its progress
         jobs = sorted(list_jobs(self._conn, limit=50), key=lambda j: (j.state != "running", -j.id))
         changed = False
         for job in jobs:

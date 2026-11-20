@@ -6,10 +6,12 @@ Item {
     id: page
     property bool installedOnly: false
     property string store: ""
+    property string genre: ""
+    readonly property var genreNames: backend.genres.map(g => g.genre)
     readonly property var sortKeys: ["title", "recent", "playtime", "installed"]
 
     function apply() {
-        backend.setFilter(search.text, page.store, page.installedOnly, sortKeys[sortBox.currentIndex])
+        backend.setFilter(search.text, page.store, page.installedOnly, sortKeys[sortBox.currentIndex], page.genre)
     }
     function focusGrid() {
         grid.forceActiveFocus()
@@ -21,6 +23,7 @@ Item {
 
     onInstalledOnlyChanged: apply()
     onStoreChanged: apply()
+    onGenreChanged: apply()
     onVisibleChanged: if (visible) {
         apply()
         grid.forceActiveFocus()
@@ -81,14 +84,36 @@ Item {
             }
         }
 
-        Flow {
+        RowLayout {
             Layout.fillWidth: true
-            spacing: 8
-            visible: backend.stores.length > 1
-            Chip { text: "All stores"; checked: page.store === ""; onClicked: page.store = "" }
-            Repeater {
-                model: backend.stores
-                delegate: Chip { required property string modelData; text: modelData; checked: page.store === modelData; onClicked: page.store = modelData }
+            spacing: 12
+            visible: backend.stores.length > 1 || backend.genres.length > 0 || backend.missingDetails > 0
+            Flow {
+                Layout.fillWidth: true
+                spacing: 8
+                visible: backend.stores.length > 1
+                Chip { text: "All stores"; checked: page.store === ""; onClicked: page.store = "" }
+                Repeater {
+                    model: backend.stores
+                    delegate: Chip { required property string modelData; text: modelData; checked: page.store === modelData; onClicked: page.store = modelData }
+                }
+            }
+            Item { Layout.fillWidth: true; visible: backend.stores.length <= 1 }
+            Combo {
+                id: genreBox
+                objectName: "genreBox"
+                visible: backend.genres.length > 0
+                Layout.preferredWidth: 220
+                model: ["All genres"].concat(backend.genres.map(g => g.genre + " (" + g.games + ")"))
+                currentIndex: page.genreNames.indexOf(page.genre) + 1
+                onActivated: page.genre = currentIndex > 0 ? page.genreNames[currentIndex - 1] : ""
+            }
+            Btn {
+                visible: backend.missingDetails > 0 || backend.fetchingDetails !== ""
+                text: backend.fetchingDetails !== "" ? backend.fetchingDetails + "  (stop)" : "Fetch details (" + backend.missingDetails + ")"
+                ToolTip.visible: hovered
+                ToolTip.text: "Ask the stores for the genres and descriptions of games that have none. They see the game ids."
+                onClicked: backend.fetchingDetails !== "" ? backend.stopFetchingDetails() : backend.fetchAllDetails()
             }
         }
 
