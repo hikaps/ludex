@@ -21,7 +21,7 @@ uv sync --locked --all-packages --extra test
 .venv/bin/ludex --version
 ```
 
-The repository is a uv workspace of four distributions with lockstep versions: `ludex-core` (`packages/core`, import `ludex`: library, plugin API, bundled providers), `ludex-cli` (`packages/cli`, `ludex_cli`), `ludex-tui` (`packages/tui`, `ludex_tui`) and `ludex-gui` (`packages/gui`, `ludex_gui`, Qt); the root `ludex-games` bundles core, cli and tui (not the GUI) and keeps the `ludex` command. `.github/scripts/build_distributions.py` and `smoke_distributions.py` build and install-test them; after changing a dependency or version run `uv lock`. GUI tests run offscreen (`QT_QPA_PLATFORM=offscreen`).
+The repository is a uv workspace of four distributions with lockstep versions: `ludex-core` (`packages/core`, import `ludex`: library, plugin API, bundled providers), `ludex-cli` (`packages/cli`, `ludex_cli`), `ludex-tui` (`packages/tui`, `ludex_tui`) and `ludex-gui` (`packages/gui`, `ludex_gui`, Qt Quick/QML launcher); the root `ludex-games` bundles core, cli and tui (not the GUI) and keeps the `ludex` command. `.github/scripts/build_distributions.py` and `smoke_distributions.py` build and install-test them; after changing a dependency or version run `uv lock`. GUI tests run offscreen (`QT_QPA_PLATFORM=offscreen`, `QT_QUICK_BACKEND=software`).
 
 `LUDEX_HOME` points ludex at a scratch state directory for manual runs.
 

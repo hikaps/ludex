@@ -5,25 +5,30 @@ import threading
 import time
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("QT_QUICK_BACKEND", "software")
 
 import pytest
-from PySide6.QtWidgets import QApplication, QLineEdit, QPushButton
+from PySide6.QtCore import QObject
+from PySide6.QtGui import QGuiApplication
 
+from ludex import artwork
 from ludex import launch as launch_mod
 from ludex.errors import LudexError
 from ludex.library import import_account
+from ludex.metadata import set_auto_details
 from ludex.paths import StatePaths
 from ludex.plugins import Command, CommandResult, ConfigField, OwnedGame, Provider, SearchHit, View, ViewAction, ViewDetail, ViewRow, ViewTable
 from ludex.provider_settings import get_values
 from ludex.sources import steam
 from ludex.storage import connect
-from ludex_gui.app import MainWindow
-from ludex_gui.views import ViewPage
+from ludex_gui.app import QML_DIR, Launcher, build_engine
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 64
 
 
 @pytest.fixture(scope="session")
 def qapp():
-    return QApplication.instance() or QApplication([])
+    return QGuiApplication.instance() or QGuiApplication([])
 
 
 def _until(qapp, check, seconds: float = 10.0) -> None:
@@ -42,31 +47,42 @@ def _paths(tmp_path) -> StatePaths:
     return StatePaths(root, root / "library.sqlite3", root / "accounts.json", root / "import.lock")
 
 
-def _window(paths, sources, installed=frozenset()) -> MainWindow:
-    return MainWindow(paths, sources, lambda: set(installed), lambda store, account: {}, lambda conn: {}, paths.root / "prefixes", auto_refresh=False)
+def _launcher(paths, sources, installed=frozenset()) -> Launcher:
+    return build_engine(paths, sources, lambda: set(installed), lambda store, account: {}, lambda conn: {}, paths.root / "prefixes")
 
 
-def _row(window: MainWindow, label: str) -> None:
-    window.drawer.setCurrentRow(next(i for i in range(window.drawer.count()) if window.drawer.item(i).text() == label))
+def test_the_window_loads_without_warnings_and_lists_the_sidebar_pages(qapp, tmp_path):
+    paths = _paths(tmp_path)
+    launcher = _launcher(paths, {})
+    assert launcher.warnings == [] and launcher.window is not None
+    for name in ("library", "installed", "search", "jobs", "settings"):
+        assert launcher.window.findChild(QObject, f"nav-{name}") is not None
+    launcher.backend.closeDown()
 
 
-def test_library_filters_launches_the_selected_installed_game(qapp, tmp_path, monkeypatch):
+def test_library_filters_sorts_and_launches_an_installed_game(qapp, tmp_path, monkeypatch):
     paths = _paths(tmp_path)
     conn = connect(paths.database)
     import_account(conn, "m", [OwnedGame("steam", "1", "Hades"), OwnedGame("steam", "2", "Doom")], store="steam")
     conn.close()
     opened = []
     monkeypatch.setattr(launch_mod.subprocess, "run", lambda argv, **kw: opened.append(argv[1]))
-    window = _window(paths, {"steam": steam.PLUGIN}, {("steam", "2")})
-    assert window.owned_table.rowCount() == 2 and window.installed_table.rowCount() == 1
-    _row(window, "Installed")
-    window.installed_table.selectRow(0)
-    assert "Doom" in window.detail.toPlainText() and "installed" in window.detail.toPlainText()
-    window._filters[window.owned].setText("had")
-    assert window.owned_table.rowCount() == 1 and window.installed_table.rowCount() == 1
-    window._launch()
+    launcher = _launcher(paths, {"steam": steam.PLUGIN}, {("steam", "2")})
+    backend = launcher.backend
+    assert backend.count == 2
+    backend.setFilter("", "", True, "title")
+    assert backend.count == 1
+    backend.setFilter("had", "", False, "title")
+    assert backend.count == 1
+    backend.setFilter("", "", True, "title")
+    row = backend.gameModel.index(0, 0)
+    ident = next(k for k, v in backend.gameModel.roleNames().items() if v == b"gameId")
+    backend.openGame(backend.gameModel.data(row, ident))
+    assert backend.current["title"] == "Doom" and backend.current["installed"] is True
+    backend.launch(backend.current["gameId"])
+    _until(qapp, lambda: opened)
     assert opened == ["steam://rungameid/2"]
-    window.close()
+    backend.closeDown()
 
 
 def test_search_marks_what_you_own(qapp, tmp_path):
@@ -75,15 +91,11 @@ def test_search_marks_what_you_own(qapp, tmp_path):
     import_account(conn, "m", [OwnedGame("store", "1", "Hades")], store="store")
     conn.close()
     store = Provider("store", "s", (), search=lambda q: [SearchHit("store", "1", "Hades", "https://x/1", "9 USD"), SearchHit("store", "2", "Doom", "https://x/2")])
-    window = _window(paths, {"store": store})
-    _row(window, "Search")
-    window.query_box.setText("ha")
-    window._search()
-    _until(qapp, lambda: window.hits_table.rowCount() == 2)
-    assert [window.hits_table.item(r, 3).text() for r in range(2)] == ["yes", ""]
-    window.hits_table.selectRow(0)
-    assert "you own this" in window.detail.toPlainText()
-    window.close()
+    launcher = _launcher(paths, {"store": store})
+    launcher.backend.search("ha")
+    _until(qapp, lambda: len(launcher.backend.hits) == 2)
+    assert [h["owned"] for h in launcher.backend.hits] == [True, False]
+    launcher.backend.closeDown()
 
 
 def _view_world(tmp_path):
@@ -112,68 +124,126 @@ def _view_world(tmp_path):
     return paths, marker, fetched, gate, provider
 
 
-def test_plugin_views_are_drawer_entries_and_an_action_runs_only_after_confirmation(qapp, tmp_path, monkeypatch):
+def test_plugin_views_are_pages_and_an_action_runs_only_after_confirmation(qapp, tmp_path):
     paths, marker, fetched, _, provider = _view_world(tmp_path)
-    window = _window(paths, {"demo": provider})
-    labels = [window.drawer.item(i).text() for i in range(window.drawer.count())]
-    assert labels[:5] == ["Owned", "Installed", "Search", "Jobs", "Settings"] and labels[-3:] == ["People <b>", "Status", "Flaky"]
-    assert fetched["people"] == 0  # nothing is fetched until the entry is opened
-    window.show()
-    _row(window, "People <b>")
-    page = window.view_pages[("demo", "people")]
-    _until(qapp, lambda: page.table.rowCount() == 1)
-    assert [page.table.item(0, c).text() for c in range(2)] == ["Alice", "online"] and fetched["people"] == 1
-    assert not page.actions_button.isEnabled()  # no row selected yet
-    page.table.selectRow(0)
-    assert page.actions_button.isEnabled()
-
-    answers = [False, True]
-    monkeypatch.setattr(ViewPage, "_confirmed", lambda self, row, action: answers.pop(0))
-    for _ in range(2):  # the user picks the entry twice: declined, then confirmed
-        page._choose_action()
-        page.menu.actions()[0].trigger()
-        if answers:
-            assert not marker.exists()
-    _until(qapp, lambda: page.table.rowCount() == 1 and page.table.item(0, 1).text() == "away")
+    launcher = _launcher(paths, {"demo": provider})
+    views = launcher.backend.views
+    assert [v.title for v in views] == ["People <b>", "Status", "Flaky"]
+    assert fetched["people"] == 0  # nothing is fetched until the page is opened
+    people = views[0]
+    people.ensureLoaded()
+    _until(qapp, lambda: len(people.rows) == 1)
+    assert people.rows[0]["cells"] == ["Alice", "online"] and fetched["people"] == 1
+    text = people.confirmText(0, 0)
+    assert "Mark away" in text and not marker.exists()  # asking changes nothing
+    generation = people.generation
+    assert people.runAction(generation - 1, 0, 0) is False and not marker.exists()  # a stale snapshot is refused
+    assert people.runAction(generation, 0, 0) is True
+    _until(qapp, lambda: len(people.rows) == 1 and people.rows[0]["cells"][1] == "away")
     assert marker.read_text() == "alice away" and fetched["people"] == 2
-    assert window.status.text().startswith("marked") and "\x1b" not in window.status.text()  # control characters are not shown
-    window.close()
+    assert "\x1b" not in launcher.backend.status  # control characters are not shown
+    launcher.backend.closeDown()
 
 
 def test_a_slow_failure_lands_on_its_own_page_and_refresh_retries(qapp, tmp_path):
-    paths, _, fetched, gate, provider = _view_world(tmp_path)
-    window = _window(paths, {"demo": provider})
-    window.show()
-    _row(window, "Flaky")
-    flaky = window.view_pages[("demo", "flaky")]
-    assert flaky.status.text() == "Loading…" and not flaky.refresh_button.isEnabled()
-    _row(window, "Status")  # leave while it is still fetching
-    status = window.view_pages[("demo", "status")]
-    _until(qapp, lambda: status.table.rowCount() == 1)
+    paths, _, _, gate, provider = _view_world(tmp_path)
+    launcher = _launcher(paths, {"demo": provider})
+    _, status, flaky = launcher.backend.views
+    flaky.ensureLoaded()
+    assert flaky.busy
+    status.ensureLoaded()  # leave while it is still fetching
+    _until(qapp, lambda: len(status.rows) == 1)
     gate.set()
-    _until(qapp, lambda: flaky.error is not None)
-    assert flaky.status.text() == "try later. Press Refresh to retry."
-    assert [status.table.item(0, c).text() for c in range(2)] == ["State", "Ready"] and status.error is None
-    window.close()
+    _until(qapp, lambda: flaky.error != "")
+    assert flaky.error == "try later" and status.rows[0]["cells"] == ["State", "Ready"] and status.error == ""
+    launcher.backend.closeDown()
 
 
-def test_plugin_settings_save_without_showing_a_secret(qapp, tmp_path):
+def test_plugin_settings_save_without_exposing_a_secret(qapp, tmp_path):
     paths = _paths(tmp_path)
     provider = Provider(
         "keyed", "K", (),
         settings=(ConfigField("token", "api key", secret=True, optional=True), ConfigField("mode", "mode", optional=True, kind="choice", choices=("a", "b"))),
         commands=(Command("noop", "n", lambda c, a: CommandResult(None, "ok")),),
     )
-    window = _window(paths, {"keyed": provider})
-    token = next(w for w in window.settings.findChildren(QLineEdit) if w.echoMode() == QLineEdit.EchoMode.Password)
-    save = next(b for b in window.settings.findChildren(QPushButton) if b.text() == "Save" and b.parent().title() == "keyed settings")
-    token.setText("s3cret")
-    save.click()
+    launcher = _launcher(paths, {"keyed": provider})
+    settings = launcher.backend.settingsController
+    section = next(s for s in settings.sections if s["id"] == "plugin:keyed")
+    settings.save("plugin:keyed", {"token": "s3cret", "mode": ""})
     assert get_values(paths, "keyed") == {"token": "s3cret"}
-    assert token.text() == "" and token.placeholderText() == "(set; type to replace)"  # the secret is not shown again
-    save.click()  # nothing edited: nothing changes
-    assert get_values(paths, "keyed") == {"token": "s3cret"} and "s3cret" not in window.status.text()
-    window.close()
+    assert "s3cret" not in repr(settings.sections)  # the secret is never handed to the UI again
+    field = next(f for s in settings.sections if s["id"] == "plugin:keyed" for f in s["fields"] if f["name"] == "token")
+    assert field["value"] == "" and field["hasValue"] is True and section["fields"][0]["name"] == "token"
+    settings.save("plugin:keyed", {"token": "", "mode": ""})  # a blank secret keeps the saved one
+    assert get_values(paths, "keyed") == {"token": "s3cret"} and "s3cret" not in launcher.backend.status
+    launcher.backend.closeDown()
+
+
+def _cover_world(tmp_path, calls):
+    paths = _paths(tmp_path)
+    conn = connect(paths.database)
+    import_account(conn, "m", [OwnedGame("shop", "1", "Hades")], store="shop")
+    conn.close()
+
+    def cover(store_id):
+        calls.append((store_id, threading.current_thread() is threading.main_thread()))
+        return PNG
+
+    return paths, {"shop": Provider("shop", "s", (), cover=cover)}
+
+
+def _cover_url(launcher: Launcher) -> str:
+    model = launcher.backend.gameModel
+    role = next(k for k, v in model.roleNames().items() if v == b"coverUrl")
+    return model.data(model.index(0, 0), role)
+
+
+def test_a_cover_is_fetched_off_the_ui_thread_only_with_details_on_and_then_cached(qapp, tmp_path):
+    calls: list = []
+    paths, sources = _cover_world(tmp_path, calls)
+    conn = connect(paths.database)
+    set_auto_details(conn, False)
+    conn.close()
+    launcher = _launcher(paths, sources)
+    game_id = 1
+    launcher.backend.requestCover(game_id)
+    qapp.processEvents()
+    assert calls == [] and _cover_url(launcher) == ""  # auto_details is off: nothing is fetched
+    conn = connect(paths.database)
+    set_auto_details(conn, True)
+    conn.close()
+    launcher.backend.requestCover(game_id)
+    _until(qapp, lambda: _cover_url(launcher) != "")
+    assert calls == [("1", False)] and _cover_url(launcher).startswith("file://")
+    launcher.backend.requestCover(game_id)  # now it is on disk
+    qapp.processEvents()
+    assert len(calls) == 1
+    launcher.backend.closeDown()
+
+
+def test_a_failing_cover_provider_does_not_break_the_grid(qapp, tmp_path):
+    paths = _paths(tmp_path)
+    conn = connect(paths.database)
+    import_account(conn, "m", [OwnedGame("shop", "1", "Hades")], store="shop")
+    set_auto_details(conn, True)
+    conn.close()
+
+    def cover(store_id):
+        raise LudexError("cover_failed", "no luck")
+
+    launcher = _launcher(paths, {"shop": Provider("shop", "s", (), cover=cover)})
+    launcher.backend.requestCover(1)
+    _until(qapp, lambda: launcher.backend.status == "covers: no luck")
+    assert launcher.backend.count == 1 and _cover_url(launcher) == ""
+    launcher.backend.closeDown()
+
+
+def test_no_screen_renders_text_as_markup():
+    import re
+
+    for path in QML_DIR.glob("*.qml"):
+        if path.name != "Txt.qml":
+            assert not re.search(r"\b(Text|Label)\s*\{", path.read_text()), path.name
 
 
 def test_the_gui_command_explains_a_missing_ludex_gui(monkeypatch, capsys, tmp_path):
@@ -182,6 +252,7 @@ def test_the_gui_command_explains_a_missing_ludex_gui(monkeypatch, capsys, tmp_p
     from ludex_cli.cli import main
 
     monkeypatch.setenv("LUDEX_HOME", str(_paths(tmp_path).root))
+
     class Gone:  # as if the package were not installed
         @staticmethod
         def find_spec(name, path=None, target=None):
