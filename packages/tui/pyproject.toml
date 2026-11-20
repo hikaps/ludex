@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ludex-tui"
-version = "0.61.0"
+version = "0.62.0"
 description = "Terminal UI frontend of ludex"
 readme = { text = "The Textual terminal UI of [ludex](https://github.com/hikaps/ludex). Install `ludex-games` for the `ludex` command plus the UI.", content-type = "text/markdown" }
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
-dependencies = ["ludex-core==0.61.0", "rich>=14.2.0", "textual==8.2.8"]
+dependencies = ["ludex-core==0.62.0", "rich>=14.2.0", "textual==8.2.8"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",

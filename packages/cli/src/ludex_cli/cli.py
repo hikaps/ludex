@@ -177,6 +177,7 @@ def _parser() -> argparse.ArgumentParser:
     game_set.add_argument("--clear", action="store_true", help="reset all settings first")
 
     commands.add_parser("tui", help="browse, search and launch games in the terminal")
+    commands.add_parser("gui", help="open the desktop window (needs ludex-gui)")
 
     review = commands.add_parser("review", help="list title matches that need a decision")
     review.add_argument("--dismiss", type=int, metavar="ID", help="keep this item's game separate and drop it from the list")
@@ -893,6 +894,17 @@ def _cmd_tui(args: argparse.Namespace) -> tuple[object, str]:
     return {}, ""
 
 
+def _cmd_gui(args: argparse.Namespace) -> tuple[object, str]:
+    try:
+        from ludex_gui.app import main as run_gui
+    except ModuleNotFoundError as exc:
+        if exc.name != "ludex_gui":
+            raise
+        raise LudexError("gui_missing", "install ludex-gui (it is not part of ludex-games; it brings Qt)") from None
+    run_gui()
+    return {}, ""
+
+
 def _cmd_review(args: argparse.Namespace) -> tuple[object, str]:
     paths = state_paths()
     with writer_lock(paths.import_lock):
@@ -976,6 +988,7 @@ _HANDLERS = {
     ("game", "set"): _cmd_game_set,
     ("launch", None): _cmd_launch,
     ("tui", None): _cmd_tui,
+    ("gui", None): _cmd_gui,
 }
 
 

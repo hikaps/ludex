@@ -4,6 +4,18 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.62.0] - 2026-11-20
+
+Also includes 0.61.0 below, which was never published to PyPI.
+
+### Added
+
+- **gui:** `ludex-gui` is a new distribution with a Qt desktop window (`ludex gui`, or the `ludex-gui` command on its own). A drawer lists Owned, Installed, Search, Jobs and Settings, then one entry per plugin view; it launches and installs games, searches and downloads, shows job progress, and edits the same settings as the TUI. A plugin view's row actions run only after a separate confirmation. It uses only the core API (`ludex.plugin_views` for plugin entries) and is not part of `ludex-games`, because it brings Qt (PySide6): install it next to `ludex-games`. Without it `ludex gui` reports `gui_missing`
+
+### Changed
+
+- **packaging:** the workspace has a fifth member, `ludex-gui`, versioned in lockstep and published last by `pypi.yml` from the new `pypi-gui` environment, so a missing PyPI publisher cannot hold back the tag or the other projects. Beta builds and the `ludex-games` bundle do not include it
+
 ## [0.61.0] - 2026-11-19
 
 ### Added

@@ -1,4 +1,4 @@
-"""Build the four ludex distributions (core, cli, tui and the ludex-games bundle) with one consistent version.
+"""Build the four ludex distributions (core, cli, tui and the ludex-games bundle) plus ludex-gui with one consistent version.
 
     python .github/scripts/build_distributions.py --outdir dist
     python .github/scripts/build_distributions.py --outdir dist --beta-run-number 7 --asset-base https://github.com/OWNER/ludex/releases/download/beta
@@ -26,6 +26,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 BUNDLE = "ludex-games"
 MEMBERS = {"ludex-core": "packages/core", "ludex-cli": "packages/cli", "ludex-tui": "packages/tui"}
+GUI = ("ludex-gui", "packages/gui")  # lockstep and published, but not in the ludex-games bundle (it brings Qt) nor in beta builds
 VERSION = re.compile(r"\d+\.\d+\.\d+")
 LOOPBACK = re.compile(r"http://127\.0\.0\.1:\d+")
 _IGNORE = shutil.ignore_patterns("build", "dist", "*.egg-info", "__pycache__", "*.pyc", ".pytest_cache")
@@ -37,7 +38,7 @@ def _project(root: Path, relative: str) -> dict:
 
 def check_tree(root: Path) -> str:
     """Validate names, versions and exact internal pins of the source tree; return its base version."""
-    projects = {BUNDLE: _project(root, ".")} | {name: _project(root, path) for name, path in MEMBERS.items()}
+    projects = {BUNDLE: _project(root, "."), GUI[0]: _project(root, GUI[1])} | {name: _project(root, path) for name, path in MEMBERS.items()}
     for name, project in projects.items():
         if project["name"] != name:
             raise SystemExit(f"expected project {name}, found {project['name']!r}")
@@ -49,7 +50,7 @@ def check_tree(root: Path) -> str:
     if re.findall(r'^__version__ = "([^"]+)"$', init, re.MULTILINE) != [base]:
         raise SystemExit(f"__version__ disagrees with project version {base!r}")
     pins = {f"{name}=={base}" for name in MEMBERS}
-    for name in (BUNDLE, "ludex-cli", "ludex-tui"):
+    for name in (BUNDLE, "ludex-cli", "ludex-tui", GUI[0]):
         wanted = pins if name == BUNDLE else {f"ludex-core=={base}"}
         found = {d for d in projects[name]["dependencies"] if d.split("==")[0] in MEMBERS}
         if found != wanted:
@@ -84,13 +85,13 @@ def _sdist_has_license(path: Path) -> bool:
         return any(m.isfile() and m.name.count("/") == 1 and m.name.endswith("/LICENSE") for m in archive.getmembers())
 
 
-_OWNS = {"ludex-core": "ludex/", "ludex-cli": "ludex_cli/", "ludex-tui": "ludex_tui/", BUNDLE: None}
+_OWNS = {"ludex-core": "ludex/", "ludex-cli": "ludex_cli/", "ludex-tui": "ludex_tui/", GUI[0]: "ludex_gui/", BUNDLE: None}
 
 
 def verify(outdir: Path, version: str, expected_requires: dict[str, set[str]], *, sdists: bool) -> list[Path]:
     """Check every artifact: name, version, dependencies, owned top-level package, no stray direct URL (unless expected)."""
     wheels = []
-    for name, owns in _OWNS.items():
+    for name, owns in ((n, o) for n, o in _OWNS.items() if n in expected_requires):
         stem = name.replace("-", "_")
         found = sorted(outdir.glob(f"{stem}-{version}*.whl"))
         if len(found) != 1:
@@ -117,10 +118,10 @@ def verify(outdir: Path, version: str, expected_requires: dict[str, set[str]], *
 
 def build_stable(outdir: Path) -> None:
     base = check_tree(ROOT)
-    for path in MEMBERS.values():
+    for path in (*MEMBERS.values(), GUI[1]):
         _build(ROOT / path, outdir, sdist=True, wheel=True)
     _build(ROOT, outdir, sdist=True, wheel=True)
-    expected = {BUNDLE: {f"{name}=={base}" for name in MEMBERS}} | {"ludex-core": set(), "ludex-cli": {f"ludex-core=={base}"}, "ludex-tui": {f"ludex-core=={base}"}}
+    expected = {BUNDLE: {f"{name}=={base}" for name in MEMBERS}} | {"ludex-core": set(), "ludex-cli": {f"ludex-core=={base}"}, "ludex-tui": {f"ludex-core=={base}"}, GUI[0]: {f"ludex-core=={base}"}}
     verify(outdir, base, expected, sdists=True)
 
 

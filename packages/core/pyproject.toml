@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ludex-core"
-version = "0.61.0"
+version = "0.62.0"
 description = "Library core of ludex: games, stores, plugins and jobs, with no frontend"
 readme = { text = "The headless core of [ludex](https://github.com/hikaps/ludex): library, providers and plugin API. Install `ludex-games` for the `ludex` command.", content-type = "text/markdown" }
 license = "GPL-3.0-or-later"
