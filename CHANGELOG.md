@@ -4,6 +4,10 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+### Added
+
+- **genres:** filter and browse by genre from the kept details of your games. `ludex ls --genre`, `ludex genres`, and `ludex metadata --all` (asks for the details of every game that has none, one request each) in the CLI; `f` cycles the genre filter and `d` fetches missing details in the TUI; a genre box and a Fetch details button in the GUI library. Core: `list_games(genre=)`, `ludex.library.list_genres`, and `ludex.details` (`fetch_missing_details`, `games_without_details`). Games a plugin has no details for are asked again on the next run.
+
 ## [0.62.0] - 2026-11-20
 
 Also includes 0.61.0 below, which was never published to PyPI.

@@ -28,7 +28,8 @@ from ludex.acquire import acquire_game, download_game, format_acquired, job_repo
 from ludex.jobs import Job, eta_seconds, list_jobs, progress, progress_line, stop_job
 from ludex.playtime import Played, describe_played, epoch, play_stats
 from ludex.launch import install_game, launch_game, prepare_install, prepare_launch
-from ludex.library import resolve_game, export_games, dismiss_review, get_game, list_games, list_review, merge_games, run_import
+from ludex.details import fetch_missing_details, games_without_details
+from ludex.library import resolve_game, export_games, dismiss_review, get_game, list_games, list_genres, list_review, merge_games, run_import
 from ludex.loader import load_providers
 from ludex.plugin_commands import run_command
 from ludex.plugin_views import fetch_view, get_view, list_views
@@ -95,10 +96,13 @@ def _parser() -> argparse.ArgumentParser:
     listing.add_argument("--store")
     listing.add_argument("--account")
     listing.add_argument("--removed", action="store_true", help="include removed games")
+    listing.add_argument("--genre", help="only games whose kept details name this genre (see 'ludex genres')")
     listing.add_argument("--installed", action="store_true", help="only games installed on this machine")
     listing.add_argument("--sort", choices=("title", "recent", "played"), default="title", help="title (default), most recently played first, or most played first; the last two show play time")
     listing.add_argument("--limit", type=int, default=50)
     listing.add_argument("--offset", type=int, default=0)
+
+    commands.add_parser("genres", help="list the genres in the kept details of your games, with how many games each has")
 
     show = commands.add_parser("show", help="show one game")
     show.add_argument("game", help="game id or title")
@@ -121,7 +125,8 @@ def _parser() -> argparse.ArgumentParser:
     install.add_argument("--stop", action="store_true", help="stop the game's running install")
 
     meta = commands.add_parser("metadata", help="show a game's description, genres and developer (asks the store's plugin once, then keeps the answer)")
-    meta.add_argument("game", help="game id or title")
+    meta.add_argument("game", nargs="?", help="game id or title")
+    meta.add_argument("--all", action="store_true", help="ask for the details of every game that has none yet (one request each, can take minutes; the plugins see each game's id or title)")
     meta.add_argument("--refresh", action="store_true", help="ask the plugin again instead of using the kept answer")
     meta.add_argument("--match", action="store_true", help="for a game no store describes, look it up by name in a game database plugin (also on with 'ludex config auto_match yes')")
 
@@ -420,6 +425,7 @@ def _cmd_ls(args: argparse.Namespace) -> tuple[object, str]:
             query=args.query,
             store=args.store,
             account=args.account,
+            genre=args.genre,
             include_removed=args.removed,
             limit=args.limit,
             offset=args.offset,
@@ -559,7 +565,40 @@ def _cmd_match(args: argparse.Namespace) -> tuple[object, str]:
     return {"id": game_id, "matched": {"plugin": plugin, "id": hit.store_id, "title": hit.title, "url": hit.url}}, f"matched to {plugin}: {hit.title} ({hit.url})"
 
 
+def _cmd_genres(args: argparse.Namespace) -> tuple[object, str]:
+    conn = connect(state_paths().database)
+    try:
+        genres = [{"genre": genre, "games": games} for genre, games in list_genres(conn)]
+        missing = len(games_without_details(conn))
+    finally:
+        conn.close()
+    lines = [f"{g['games']:>5}  {g['genre']}" for g in genres]
+    if missing:
+        lines.append(f"{missing} games have no details yet; run: ludex metadata --all")
+    return {"genres": genres, "games_without_details": missing}, "\n".join(lines) if lines else "no genres yet; run: ludex metadata --all"
+
+
+def _cmd_metadata_all(args: argparse.Namespace) -> tuple[object, str]:
+    providers, _ = load_providers()
+    paths = state_paths()
+    conn = connect(paths.database)
+    try:
+        summary = fetch_missing_details(
+            paths, conn, providers, match=args.match or get_auto_match(conn),
+            report=lambda done, total: print(f"details: {done}/{total}", end="\r" if done < total else "\n", file=sys.stderr, flush=True),
+        )
+    finally:
+        conn.close()
+    return summary.as_dict(), f"{summary.fetched} games now have details, {summary.unavailable} have none to give, {summary.failed} failed"
+
+
 def _cmd_metadata(args: argparse.Namespace) -> tuple[object, str]:
+    if args.all:
+        if args.game or args.refresh:
+            raise LudexError("invalid_arguments", "--all takes no game and no --refresh")
+        return _cmd_metadata_all(args)
+    if not args.game:
+        raise LudexError("invalid_arguments", "give a game, or --all")
     providers, _ = load_providers()
     conn = connect(state_paths().database)
     try:
@@ -957,6 +996,7 @@ _HANDLERS = {
     ("update", None): _cmd_update,
     ("import", None): _cmd_import,
     ("ls", None): _cmd_ls,
+    ("genres", None): _cmd_genres,
     ("show", None): _cmd_show,
     ("find", None): _cmd_find,
     ("install", None): _cmd_install,

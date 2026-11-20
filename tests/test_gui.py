@@ -70,11 +70,11 @@ def test_library_filters_sorts_and_launches_an_installed_game(qapp, tmp_path, mo
     launcher = _launcher(paths, {"steam": steam.PLUGIN}, {("steam", "2")})
     backend = launcher.backend
     assert backend.count == 2
-    backend.setFilter("", "", True, "title")
+    backend.setFilter("", "", True, "title", "")
     assert backend.count == 1
-    backend.setFilter("had", "", False, "title")
+    backend.setFilter("had", "", False, "title", "")
     assert backend.count == 1
-    backend.setFilter("", "", True, "title")
+    backend.setFilter("", "", True, "title", "")
     row = backend.gameModel.index(0, 0)
     ident = next(k for k, v in backend.gameModel.roleNames().items() if v == b"gameId")
     backend.openGame(backend.gameModel.data(row, ident))
@@ -334,6 +334,28 @@ def test_a_match_is_chosen_off_the_ui_thread_then_cleared(qapp, tmp_path):
     backend.chooseMatch(1, -1)
     _until(qapp, lambda: not backend.current.get("matched"))
     assert backend.current["title"] == "hades_v1.2"
+
+
+def test_genres_filter_the_grid_and_details_are_fetched_for_every_game_on_request(qapp, tmp_path):
+    from ludex.plugins import Metadata
+
+    paths = _paths(tmp_path)
+    conn = connect(paths.database)
+    import_account(conn, "m", [OwnedGame("shop", "1", "Hades"), OwnedGame("shop", "2", "Portal")], store="shop")
+    conn.close()
+    genres = {"1": ("Action",), "2": ("Puzzle",)}
+    shop = Provider("shop", "s", (), metadata=lambda store_id: Metadata("d", genres[store_id]))
+    launcher = _launcher(paths, {"shop": shop})
+    backend = launcher.backend
+    assert backend.genres == [] and backend.missingDetails == 2 and backend.fetchingDetails == ""
+    backend.fetchAllDetails()
+    assert backend.fetchingDetails != ""
+    _until(qapp, lambda: backend.fetchingDetails == "")
+    assert backend.missingDetails == 0 and [(g["genre"], g["games"]) for g in backend.genres] == [("Action", 1), ("Puzzle", 1)]
+    backend.setFilter("", "", False, "title", "puzzle")
+    assert backend.count == 1 and backend.gameModel.row(0)["title"] == "Portal"
+    backend.setFilter("", "", False, "title", "")
+    assert backend.count == 2
     backend.closeDown()
 
 

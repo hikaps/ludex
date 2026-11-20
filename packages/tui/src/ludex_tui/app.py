@@ -34,7 +34,8 @@ from ludex.metadata import cached_match, cached_metadata, choose_match, clear_ma
 from ludex.jobs import Job, eta_seconds, format_eta, get_job, list_jobs, progress, progress_line, stop_job
 from ludex.launch import install_game, launch_game, open_url
 from ludex.find import find_games, owned_keys
-from ludex.library import get_game, list_games
+from ludex.details import fetch_missing_details
+from ludex.library import get_game, list_games, list_genres
 from ludex.paths import StatePaths, state_paths
 from ludex.refresh import Refreshed, get_auto_refresh, refresh_all, set_auto_refresh
 from ludex.playtime import Played, describe_played, epoch, play_stats
@@ -147,6 +148,8 @@ class LudexApp(App[None]):
         Binding("i", "install", "Install"),
         Binding("x", "stop_job", "Stop"),
         Binding("o", "order", "Order"),
+        Binding("f", "genre", "Genre"),
+        Binding("d", "details", "Fetch details"),
         Binding("s", "settings", "Settings"),
         Binding("r", "reload", "Reload"),
         Binding("q", "quit", "Quit"),
@@ -167,6 +170,8 @@ class LudexApp(App[None]):
         self._play_stats = played
         self._played: Mapping[int, Played] = {}
         self._sort = "title"  # title, recent or played; the o key cycles
+        self._genre: str | None = None  # the f key cycles through the genres kept details name
+        self._fetching = False
         self._database = database
         self._sources = sources
         self._installed = installed
@@ -368,7 +373,7 @@ class LudexApp(App[None]):
         if self._sort != "title":
             order = {g: p.minutes if self._sort == "played" else epoch(p.last_played) if p.last_played else -1 for g, p in self._played.items()}
         for name, only in (("installed", self._keys), ("owned", None)):
-            games = list_games(self._conn, query=query, only=only, limit=500, fuzzy=True, order=order)
+            games = list_games(self._conn, query=query, only=only, limit=500, fuzzy=True, order=order, genre=self._genre)
             table = self.query_one(f"#{name}-table", DataTable)
             table.clear()
             if name == "installed":
@@ -377,7 +382,7 @@ class LudexApp(App[None]):
                 mark = Text("●", style="#9ece6a") if game["id"] in installed_ids else Text(" ")
                 table.add_row(mark, game["title"], _stores_text(game["stores"]), key=str(game["id"]))
             counts.append(f"{len(games)}{'+' if len(games) == 500 else ''} {name}")
-        self._status(", ".join(reversed(counts)) + ("" if self._sort == "title" else f", by {self._sort}"))
+        self._status(", ".join(reversed(counts)) + ("" if self._sort == "title" else f", by {self._sort}") + (f", genre {self._genre}" if self._genre else ""))
         self._show_hint()
 
     def _show_hint(self) -> None:
@@ -611,6 +616,47 @@ class LudexApp(App[None]):
 
     def action_order(self) -> None:
         self._sort = {"title": "recent", "recent": "played", "played": "title"}[self._sort]
+        self._reload()
+
+    def action_genre(self) -> None:
+        names = [genre for genre, _ in list_genres(self._conn)]
+        if not names:
+            self.notify("no genres yet: press d to fetch the details of your games first", severity="warning")
+            return
+        following = names.index(self._genre) + 1 if self._genre in names else 0
+        self._genre = names[following] if following < len(names) else None
+        self._reload()
+
+    def action_details(self) -> None:
+        """Fetch the details of every game that has none (each store or database plugin sees the game's id or title)."""
+        if self._paths is None or self._fetching:
+            return
+        self._fetching = True
+        paths, database, sources, match = self._paths, self._database, self._sources, self._match
+        self.notify("fetching details for games that have none...")
+
+        def work() -> None:
+            conn = connect(database)
+            summary = error = None
+            try:
+                summary = fetch_missing_details(
+                    paths, conn, sources, match=match,
+                    report=lambda done, total: self.call_from_thread(self._status, f"details {done}/{total}"),
+                )
+            except Exception as exc:  # fixed message only
+                error = getattr(exc, "message", f"failed ({type(exc).__name__})")
+            finally:
+                conn.close()
+            self.call_from_thread(self._details_done, summary, error)
+
+        self.run_worker(work, thread=True, group="details")
+
+    def _details_done(self, summary, error: str | None) -> None:
+        self._fetching = False
+        if error:
+            self.notify(error, severity="error")
+        else:
+            self.notify(f"{summary.fetched} games now have details, {summary.unavailable} have none to give, {summary.failed} failed")
         self._reload()
 
     def _prefix(self) -> Path | None:

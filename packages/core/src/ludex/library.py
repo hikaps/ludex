@@ -200,8 +200,11 @@ def list_games(
     offset: int = 0,
     fuzzy: bool = False,
     order: Mapping[int, int] | None = None,
+    genre: str | None = None,
 ) -> list[dict[str, Any]]:
-    """``only``: restrict to games owning one of these (store, store_id) pairs.
+    """``genre``: only games whose cached details (from a store or database plugin) name this genre, ignoring case.
+
+    ``only``: restrict to games owning one of these (store, store_id) pairs.
 
     ``order`` maps game id to a number: larger comes first, games it lacks come last, ties keep title order (with
     ``fuzzy``, a better match still comes before any of that).
@@ -229,6 +232,12 @@ def list_games(
         own_clauses.append(f"(o.store || char(31) || o.store_id) IN ({','.join('?' * len(only)) or 'NULL'})")
         params.extend(f"{store}\x1f{store_id}" for store, store_id in only)
     where = [f"EXISTS (SELECT 1 FROM ownership o WHERE {' AND '.join(own_clauses)})"]
+    if genre is not None:
+        where.append(
+            "EXISTS (SELECT 1 FROM ownership og JOIN game_metadata m ON m.store = og.store AND m.store_id = og.store_id, "
+            "json_each(m.data, '$.genres') j WHERE og.game_id = g.id AND og.removed = 0 AND lower(j.value) = lower(?))"
+        )
+        params.append(genre)
     if query is not None and not fuzzy:
         where.append("g.normalized_title LIKE ? ESCAPE '\\'")
         params.append(f"%{_escape_like(normalize_title(query))}%")
@@ -265,6 +274,16 @@ def list_games(
             }
         )
     return result
+
+
+def list_genres(conn: sqlite3.Connection) -> list[tuple[str, int]]:
+    """Every genre named by the cached details of an owned game, as ``(genre, games)``: most games first."""
+    rows = conn.execute(
+        "SELECT min(j.value) AS genre, count(DISTINCT o.game_id) AS games FROM ownership o "
+        "JOIN game_metadata m ON m.store = o.store AND m.store_id = o.store_id, json_each(m.data, '$.genres') j "
+        "WHERE o.removed = 0 AND j.type = 'text' GROUP BY lower(j.value) ORDER BY games DESC, lower(j.value)"
+    ).fetchall()
+    return [(row["genre"], row["games"]) for row in rows]
 
 
 def get_game(conn: sqlite3.Connection, game_id: int) -> dict[str, Any]:
