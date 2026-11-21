@@ -185,6 +185,8 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("tui", help="browse, search and launch games in the terminal")
     gui = commands.add_parser("gui", help="open the desktop window (needs ludex-gui)")
     gui.add_argument("--console", action="store_true", help="fullscreen and larger, for a controller on a TV or a handheld")
+    gui.add_argument("--install-desktop", action="store_true", help="add Ludex and Ludex Console to the application menu instead of opening the window")
+    gui.add_argument("--uninstall-desktop", action="store_true", help="remove them from the application menu again")
 
     review = commands.add_parser("review", help="list title matches that need a decision")
     review.add_argument("--dismiss", type=int, metavar="ID", help="keep this item's game separate and drop it from the list")
@@ -924,6 +926,12 @@ def _cmd_gui(args: argparse.Namespace) -> tuple[object, str]:
         if exc.name != "ludex_gui":
             raise
         raise LudexError("gui_missing", "install ludex-gui (it is not part of ludex-games; it brings Qt)") from None
+    if args.install_desktop or args.uninstall_desktop:
+        from ludex_gui.desktop import manage
+
+        files = [str(path) for path in manage(args.install_desktop, os.environ, Path.home())]
+        verb = "wrote" if args.install_desktop else "removed"
+        return {"files": files}, "\n".join(f"{verb} {path}" for path in files) or "nothing to remove"
     run_gui(["--console"] if args.console else [])
     return {}, ""
 
