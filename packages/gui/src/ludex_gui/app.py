@@ -11,11 +11,12 @@ import os
 import sys
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
+from importlib import resources
 from pathlib import Path
 import sqlite3
 
 from PySide6.QtCore import QObject, QUrl
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtGui import QGuiApplication, QIcon
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuickControls2 import QQuickStyle
 
@@ -26,6 +27,7 @@ from ludex.paths import StatePaths, state_paths
 from ludex.playtime import Played, play_stats
 from ludex.plugins import Provider
 
+from . import desktop
 from .backend import Backend
 from .gamepad import Gamepad, open_sdl_source
 
@@ -83,7 +85,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     """
     parser = argparse.ArgumentParser(prog="ludex-gui", description="the ludex desktop launcher")
     parser.add_argument("--console", action="store_true", help="fullscreen and larger, for a controller on a TV or a handheld")
+    parser.add_argument("--install-desktop", action="store_true", help="add Ludex and Ludex Console to the application menu, then exit")
+    parser.add_argument("--uninstall-desktop", action="store_true", help="remove them from the application menu again, then exit")
     args = parser.parse_args(argv)
+    if args.install_desktop or args.uninstall_desktop:
+        files = desktop.manage(args.install_desktop, os.environ, Path.home())
+        print("\n".join(f"{'wrote' if args.install_desktop else 'removed'} {path}" for path in files))
+        return 0
     if args.console:
         console_environment(os.environ)
     sources, _ = load_providers()
@@ -92,6 +100,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         app = QGuiApplication.instance() or QGuiApplication(sys.argv[:1])
         app.setApplicationName("ludex")
+        app.setDesktopFileName(desktop.ICON)
+        app.setWindowIcon(QIcon(str(resources.files("ludex_gui") / "assets" / "ludex.svg")))
         launcher = build_engine(
             paths, sources, lambda: installed_keys(paths, sources)[0],
             lambda store, account: get_account(paths, f"{store}:{account}").config,

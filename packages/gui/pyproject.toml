@@ -41,7 +41,7 @@ where = ["src"]
 include = ["ludex_gui*"]
 
 [tool.setuptools.package-data]
-ludex_gui = ["qml/*"]
+ludex_gui = ["qml/*", "assets/*"]
 
 [tool.uv.sources]
 ludex-core = { workspace = true }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import sys
 import threading
 import time
@@ -586,3 +587,52 @@ def test_console_mode_scales_the_ui_unless_the_user_chose_a_scale():
     env = {"QT_SCALE_FACTOR": "2"}
     console_environment(env)
     assert env == {"QT_SCALE_FACTOR": "2"}
+
+
+def test_menu_entries_are_written_quoted_and_removed_again(tmp_path):
+    from ludex_gui import desktop
+
+    launcher = tmp_path / "my tools" / "ludex-gui"
+    first = desktop.install(tmp_path / "data", launcher)
+    assert desktop.install(tmp_path / "data", launcher) == first
+    plain = (tmp_path / "data" / "applications" / "ludex.desktop").read_text()
+    console = (tmp_path / "data" / "applications" / "ludex-console.desktop").read_text()
+    assert f'Exec="{launcher}"\n' in plain
+    assert f'Exec="{launcher}" --console\n' in console
+    assert "Icon=ludex\n" in plain and "Categories=Game;" in plain
+    assert (tmp_path / "data" / "icons" / "hicolor" / "scalable" / "apps" / "ludex.svg").read_text().startswith("<svg")
+    assert not list((tmp_path / "data").rglob("*.tmp"))
+    assert sorted(desktop.uninstall(tmp_path / "data")) == sorted(first)
+    assert desktop.uninstall(tmp_path / "data") == []
+
+
+def test_the_data_directory_follows_xdg_only_for_an_absolute_path(tmp_path):
+    from ludex_gui import desktop
+
+    assert desktop.data_home({"XDG_DATA_HOME": "/srv/data"}, tmp_path) == Path("/srv/data")
+    assert desktop.data_home({"XDG_DATA_HOME": "data"}, tmp_path) == tmp_path / ".local" / "share"
+    assert desktop.data_home({}, tmp_path) == tmp_path / ".local" / "share"
+
+
+def test_the_window_icon_renders(qapp):
+    from importlib import resources
+
+    from PySide6.QtGui import QIcon
+
+    icon = QIcon(str(resources.files("ludex_gui") / "assets" / "ludex.svg"))
+    assert not icon.pixmap(64, 64).isNull()
+
+
+def test_ludex_gui_install_desktop_reports_the_files_it_wrote(monkeypatch, capsys, tmp_path):
+    import json
+
+    from ludex_cli.cli import main
+
+    monkeypatch.setenv("LUDEX_HOME", str(_paths(tmp_path).root))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    assert main(["--json", "gui", "--install-desktop"]) == 0
+    files = json.loads(capsys.readouterr().out)["data"]["files"]
+    assert str(tmp_path / "xdg" / "applications" / "ludex.desktop") in files
+    assert (tmp_path / "xdg" / "applications" / "ludex-console.desktop").is_file()
+    assert main(["--json", "gui", "--uninstall-desktop"]) == 0
+    assert not (tmp_path / "xdg" / "applications" / "ludex.desktop").exists()
