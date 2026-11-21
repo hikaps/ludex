@@ -5,8 +5,9 @@
 
 Stable mode builds an sdist and a wheel of each (eight files). Beta mode stamps ``<base>.dev<N>`` into a private copy of
 the tree, builds the three member wheels and the bundle's wheel and sdist (renamed ``ludex.tar.gz``), and points the
-bundle's requirements at the member wheels under ``--asset-base`` by direct URL with their SHA-256; it also writes
-``SHA256SUMS``. The beta URLs exist only in the generated artifacts, never in the source tree.
+bundle's requirements at the member wheels under ``--asset-base`` by direct URL with their SHA-256. It also builds
+``ludex-gui`` (kept out of the bundle) as ``ludex-gui.tar.gz``, an sdist whose core requirement is the same URL, so
+``--with`` that archive adds the GUI to a beta install. It also writes ``SHA256SUMS``. The beta URLs exist only in the generated artifacts, never in the source tree.
 """
 from __future__ import annotations
 
@@ -26,7 +27,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 BUNDLE = "ludex-games"
 BUNDLED = {"ludex-core": "packages/core", "ludex-cli": "packages/cli", "ludex-tui": "packages/tui"}  # what ludex-games depends on; all beta builds
-STANDALONE = {"ludex-gui": "packages/gui"}  # same version, own PyPI project; kept out of the bundle (it brings Qt) and of beta builds
+STANDALONE = {"ludex-gui": "packages/gui"}  # same version, own PyPI project; kept out of the bundle (it brings Qt); beta builds only its sdist
 PROJECTS = BUNDLED | STANDALONE
 VERSION = re.compile(r"\d+\.\d+\.\d+")
 LOOPBACK = re.compile(r"http://127\.0\.0\.1:\d+")
@@ -138,7 +139,7 @@ def build_beta(outdir: Path, run_number: str, asset_base: str) -> None:
         for name in ("pyproject.toml", "README.md", "LICENSE"):
             shutil.copy2(ROOT / name, work / name)
         shutil.copytree(ROOT / "packages", work / "packages", symlinks=True, ignore=_IGNORE)
-        files = [work / "pyproject.toml", *(work / p / "pyproject.toml" for p in BUNDLED.values()), work / BUNDLED["ludex-core"] / "src/ludex/__init__.py"]
+        files = [work / "pyproject.toml", *(work / p / "pyproject.toml" for p in PROJECTS.values()), work / BUNDLED["ludex-core"] / "src/ludex/__init__.py"]
         for file in files:
             text = file.read_text()
             stamped = re.sub(rf'(?m)^(version|__version__) = "{re.escape(base)}"$', rf'\1 = "{version}"', text)
@@ -156,6 +157,21 @@ def build_beta(outdir: Path, run_number: str, asset_base: str) -> None:
             text = text.replace(f'"{name}=={version}"', f'"{name} @ {asset_base}/{wheel_name}#sha256={digest}"')
         pyproject.write_text(text)
         _build(work, outdir, sdist=True, wheel=True)
+        gui = work / STANDALONE["ludex-gui"] / "pyproject.toml"
+        gui_text = gui.read_text()
+        core_name, core_digest = digests["ludex-core"]
+        core_pin = f"ludex-core @ {asset_base}/{core_name}#sha256={core_digest}"
+        if f'"ludex-core=={version}"' not in gui_text:
+            raise SystemExit("ludex-gui does not pin ludex-core to the beta version")
+        gui.write_text(gui_text.replace(f'"ludex-core=={version}"', f'"{core_pin}"'))
+        with tempfile.TemporaryDirectory(prefix="ludex-gui-sdist-") as gui_out:
+            _build(gui.parent, Path(gui_out), sdist=True, wheel=False)
+            gui_sdist = next(Path(gui_out).glob(f"ludex_gui-{version}.tar.gz"))
+            gmeta = metadata_of(gui_sdist)
+            gui_requires = {r.partition(";")[0].strip() for r in (gmeta.get_all("Requires-Dist") or [])}
+            if gmeta["Name"] != "ludex-gui" or gmeta["Version"] != version or core_pin not in gui_requires:
+                raise SystemExit(f"unexpected ludex-gui sdist metadata {gmeta['Name']!r} {gmeta['Version']!r} {sorted(gui_requires)}")
+            shutil.copy2(gui_sdist, outdir / "ludex-gui.tar.gz")
     expected = {BUNDLE: {f"{name} @ {asset_base}/{wheel}#sha256={digest}" for name, (wheel, digest) in digests.items()},
                 "ludex-core": set(), "ludex-cli": {f"ludex-core=={version}"}, "ludex-tui": {f"ludex-core=={version}"}}
     wheels = verify(outdir, version, expected, sdists=False)
@@ -166,7 +182,7 @@ def build_beta(outdir: Path, run_number: str, asset_base: str) -> None:
     archive = outdir / "ludex.tar.gz"
     sdist.rename(archive)
     (outdir / "SHA256SUMS").write_text("".join(
-        f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n" for p in [*wheels, archive]
+        f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n" for p in [*wheels, archive, outdir / "ludex-gui.tar.gz"]
     ))
 
 
