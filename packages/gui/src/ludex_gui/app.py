@@ -6,9 +6,10 @@ the screens are the files under ``qml/``.
 """
 from __future__ import annotations
 
+import argparse
 import os
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 import sqlite3
@@ -52,21 +53,39 @@ def build_engine(
     config_for: Callable[[str, str], Mapping[str, str]],
     played: Callable[[sqlite3.Connection], Mapping[int, Played]],
     prefix_root: Path,
+    console: bool = False,
 ) -> Launcher:
-    """Build the backend and load the window without running the event loop."""
+    """Build the backend and load the window without running the event loop; ``console`` opens it fullscreen with controller hints."""
     QQuickStyle.setStyle("Basic")
     backend = Backend(paths, sources, installed, config_for, played, prefix_root)
     engine = QQmlApplicationEngine()
     warnings: list[str] = []
     engine.warnings.connect(lambda found: warnings.extend(w.toString() for w in found))
     engine.rootContext().setContextProperty("backend", backend)
+    engine.rootContext().setContextProperty("consoleMode", console)
     engine.load(QUrl.fromLocalFile(str(QML_DIR / "Main.qml")))
     backend.reload()
     return Launcher(engine, backend, warnings)
 
 
-def main() -> int:
-    """Run the launcher on the user's library; ``ludex gui`` and the ``ludex-gui`` script land here."""
+CONSOLE_SCALE = "1.25"
+
+
+def console_environment(env: MutableMapping[str, str]) -> None:
+    """Make everything a little larger for a couch distance, unless the user set a scale."""
+    env.setdefault("QT_SCALE_FACTOR", CONSOLE_SCALE)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Run the launcher on the user's library; ``ludex gui`` and the ``ludex-gui`` script land here.
+
+    ``--console`` opens it fullscreen and larger, for a controller on a TV or a handheld.
+    """
+    parser = argparse.ArgumentParser(prog="ludex-gui", description="the ludex desktop launcher")
+    parser.add_argument("--console", action="store_true", help="fullscreen and larger, for a controller on a TV or a handheld")
+    args = parser.parse_args(argv)
+    if args.console:
+        console_environment(os.environ)
     sources, _ = load_providers()
     paths = state_paths()
     previous_umask = os.umask(0o077)
@@ -77,7 +96,7 @@ def main() -> int:
             paths, sources, lambda: installed_keys(paths, sources)[0],
             lambda store, account: get_account(paths, f"{store}:{account}").config,
             lambda conn: play_stats(paths, sources, conn)[0],
-            paths.root / "prefixes",
+            paths.root / "prefixes", args.console,
         )
         if launcher.window is None:
             return 1

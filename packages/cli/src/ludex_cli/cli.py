@@ -183,7 +183,8 @@ def _parser() -> argparse.ArgumentParser:
     game_set.add_argument("--clear", action="store_true", help="reset all settings first")
 
     commands.add_parser("tui", help="browse, search and launch games in the terminal")
-    commands.add_parser("gui", help="open the desktop window (needs ludex-gui)")
+    gui = commands.add_parser("gui", help="open the desktop window (needs ludex-gui)")
+    gui.add_argument("--console", action="store_true", help="fullscreen and larger, for a controller on a TV or a handheld")
 
     review = commands.add_parser("review", help="list title matches that need a decision")
     review.add_argument("--dismiss", type=int, metavar="ID", help="keep this item's game separate and drop it from the list")
@@ -923,7 +924,7 @@ def _cmd_gui(args: argparse.Namespace) -> tuple[object, str]:
         if exc.name != "ludex_gui":
             raise
         raise LudexError("gui_missing", "install ludex-gui (it is not part of ludex-games; it brings Qt)") from None
-    run_gui()
+    run_gui(["--console"] if args.console else [])
     return {}, ""
 
 

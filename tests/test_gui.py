@@ -10,7 +10,7 @@ os.environ.setdefault("QT_QUICK_BACKEND", "software")
 
 import pytest
 from PySide6.QtCore import QObject, Qt
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtGui import QGuiApplication, QWindow
 
 from ludex import artwork
 from ludex import launch as launch_mod
@@ -23,7 +23,7 @@ from ludex.provider_settings import get_values
 from ludex.sources import steam
 from ludex.storage import connect
 from ludex_gui import gamepad as gamepad_mod
-from ludex_gui.app import QML_DIR, Launcher, build_engine
+from ludex_gui.app import QML_DIR, Launcher, build_engine, console_environment
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 64
 
@@ -49,8 +49,8 @@ def _paths(tmp_path) -> StatePaths:
     return StatePaths(root, root / "library.sqlite3", root / "accounts.json", root / "import.lock")
 
 
-def _launcher(paths, sources, installed=frozenset()) -> Launcher:
-    return build_engine(paths, sources, lambda: set(installed), lambda store, account: {}, lambda conn: {}, paths.root / "prefixes")
+def _launcher(paths, sources, installed=frozenset(), console=False) -> Launcher:
+    return build_engine(paths, sources, lambda: set(installed), lambda store, account: {}, lambda conn: {}, paths.root / "prefixes", console)
 
 
 def test_the_window_loads_without_warnings_and_lists_the_sidebar_pages(qapp, tmp_path):
@@ -438,12 +438,12 @@ class _FakeSource:
         self.closed = True
 
 
-def _padded(qapp, tmp_path, monkeypatch, installed=frozenset(), focused=True):
+def _padded(qapp, tmp_path, monkeypatch, installed=frozenset(), focused=True, console=False):
     paths = _paths(tmp_path)
     conn = connect(paths.database)
     import_account(conn, "m", [OwnedGame("steam", "1", "Hades"), OwnedGame("steam", "2", "Doom")], store="steam")
     conn.close()
-    launcher = _launcher(paths, {"steam": steam.PLUGIN}, installed)
+    launcher = _launcher(paths, {"steam": steam.PLUGIN}, installed, console)
     window = launcher.window
     monkeypatch.setattr(gamepad_mod.QGuiApplication, "focusWindow", staticmethod(lambda: window if focused else None))
     pad = gamepad_mod.Gamepad(window, _FakeSource())
@@ -553,3 +553,36 @@ def test_a_stick_held_right_survives_the_other_pad_centering_and_releases_when_p
     out.clear()
     source._axis(1, 0, -12000, out)
     assert out == [("dpright", False)]
+
+
+def test_y_jumps_to_the_search_field_and_start_opens_the_menu_with_a_working_quit(qapp, tmp_path, monkeypatch):
+    launcher, window, pad = _padded(qapp, tmp_path, monkeypatch)
+    pad.press("y")
+    _until(qapp, lambda: window.activeFocusItem() is not None and window.activeFocusItem().property("cursorPosition") is not None)
+    pad.release("y")
+    window.findChild(QObject, "grid").forceActiveFocus()
+    qapp.processEvents()
+    pad.press("start")
+    menu = window.findChild(QObject, "menu")
+    _until(qapp, lambda: menu.property("visible"))
+    pad.press("start")  # a second press under the open menu changes nothing
+    assert menu.property("visible")
+    pad.press("b")
+    _until(qapp, lambda: not menu.property("visible"))
+    launcher.backend.closeDown()
+
+
+def test_console_mode_goes_fullscreen_and_shows_the_controller_hints(qapp, tmp_path, monkeypatch):
+    launcher, window, pad = _padded(qapp, tmp_path, monkeypatch, console=True)
+    assert window.visibility() == QWindow.Visibility.FullScreen
+    assert window.findChild(QObject, "hints").property("visible")
+    launcher.backend.closeDown()
+
+
+def test_console_mode_scales_the_ui_unless_the_user_chose_a_scale():
+    env: dict[str, str] = {}
+    console_environment(env)
+    assert env == {"QT_SCALE_FACTOR": "1.25"}
+    env = {"QT_SCALE_FACTOR": "2"}
+    console_environment(env)
+    assert env == {"QT_SCALE_FACTOR": "2"}

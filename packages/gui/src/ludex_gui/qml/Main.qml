@@ -10,6 +10,7 @@ ApplicationWindow {
     minimumWidth: 900
     minimumHeight: 600
     visible: true
+    visibility: consoleMode ? Window.FullScreen : Window.Windowed
     title: "ludex"
     color: Theme.bg
     font.family: Theme.family
@@ -20,6 +21,20 @@ ApplicationWindow {
     function go(name) {
         backend.closeGame()
         section = name
+    }
+    // Y on the controller and "/" on the keyboard: jump to the search field of the current page.
+    function focusSearch() {
+        if (inPopup(activeFocusItem)) return
+        if (section === "search") {
+            search.focusSearch()
+        } else if (section === "library" || section === "installed") {
+            go(section)
+            library.focusSearch()
+        }
+    }
+    // Start on the controller: resume or quit.
+    function openMenu() {
+        if (!inPopup(activeFocusItem)) menu.open()
     }
     readonly property var sections: ["library", "installed", "search", "jobs", "settings"].concat(backend.views.map((v, i) => "view:" + i))
 
@@ -92,14 +107,22 @@ ApplicationWindow {
     Shortcut {
         sequence: "/"
         enabled: !(win.activeFocusItem && win.activeFocusItem.hasOwnProperty("cursorPosition"))
-        onActivated: {
-            if (win.section === "search") {
-                search.focusSearch()
-            } else if (win.section === "library" || win.section === "installed") {
-                win.go(win.section)
-                library.focusSearch()
-            }
+        onActivated: win.focusSearch()
+    }
+    Dialog {
+        id: menu
+        objectName: "menu"
+        modal: true
+        anchors.centerIn: Overlay.overlay
+        padding: 20
+        background: Rectangle { radius: Theme.radius; color: Theme.surface2; border.width: 1; border.color: Theme.border }
+        header: Txt { text: "ludex"; font.bold: true; font.pixelSize: 18; padding: 20; bottomPadding: 0 }
+        contentItem: Column {
+            spacing: 8
+            Btn { id: resume; width: 240; text: "Resume"; onClicked: menu.close() }
+            Btn { width: 240; text: "Quit ludex"; onClicked: Qt.quit() }
         }
+        onOpened: resume.forceActiveFocus(Qt.TabFocusReason)
     }
 
     RowLayout {
@@ -213,10 +236,22 @@ ApplicationWindow {
                 Layout.preferredHeight: 30
                 color: Theme.surface
                 Txt {
+                    id: hints
+                    visible: consoleMode
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.right: parent.right
+                    anchors.rightMargin: 16
+                    objectName: "hints"
+                    text: "A Select    B Back    X Play    Y Search    LB RB Pages    Start Menu"
+                    font.pixelSize: Theme.small
+                    color: Theme.muted
+                }
+                Txt {
                     anchors.verticalCenter: parent.verticalCenter
                     anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.margins: 16
+                    anchors.right: consoleMode ? hints.left : parent.right
+                    anchors.leftMargin: 16
+                    anchors.rightMargin: 16
                     objectName: "status"
                     text: backend.status
                     elide: Text.ElideRight
