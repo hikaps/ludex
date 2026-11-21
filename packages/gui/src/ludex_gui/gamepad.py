@@ -25,6 +25,8 @@ KEYS: dict[str, tuple[Qt.Key, Qt.KeyboardModifier]] = {
 # Controls that call a function of the window: shortcuts only fire for real key input, not synthetic events.
 ACTIONS: dict[str, tuple[str, int | None]] = {
     "x": ("playCurrent", None),
+    "y": ("focusSearch", None),
+    "start": ("openMenu", None),
     "leftshoulder": ("cycle", -1),
     "rightshoulder": ("cycle", 1),
 }

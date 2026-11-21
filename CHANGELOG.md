@@ -7,6 +7,7 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 ### Added
 
 - **gui:** a game controller drives the launcher when `ludex-gui[gamepad]` is installed (SDL2 through PySDL2): D-pad or left stick move focus, A selects, B goes back, X plays or installs, LB and RB switch between pages; `Ctrl+P`, `Ctrl+PgUp` and `Ctrl+PgDown` do the same on a keyboard. It acts only while the launcher window has focus, so a running game's input never reaches ludex. Every control can now be reached and activated from the keyboard (Return on buttons, chips and toggles, lists of matches, search results and plugin view rows, with a visible focus ring), and the page scrolls to the focused control.
+- **gui:** `ludex gui --console` (and `ludex-gui --console`) opens the launcher fullscreen and 25% larger (unless `QT_SCALE_FACTOR` is set) with the controller buttons listed in the status bar; on the controller Y jumps to the search field and Start opens a menu to resume or quit.
 - **gui:** Settings can update a managed plugin (reinstalled from the source it was added with, after a trust confirmation) and remove one (after a confirmation). Both take effect after a restart.
 
 ### Fixed
