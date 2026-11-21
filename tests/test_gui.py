@@ -10,7 +10,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
 
 import pytest
-from PySide6.QtCore import QObject, Qt
+from PySide6.QtCore import QMetaObject, QObject, Qt
 from PySide6.QtGui import QGuiApplication, QWindow
 
 from ludex import artwork
@@ -636,3 +636,60 @@ def test_ludex_gui_install_desktop_reports_the_files_it_wrote(monkeypatch, capsy
     assert (tmp_path / "xdg" / "applications" / "ludex-console.desktop").is_file()
     assert main(["--json", "gui", "--uninstall-desktop"]) == 0
     assert not (tmp_path / "xdg" / "applications" / "ludex.desktop").exists()
+
+
+def _find_item(item, name):
+    if item.objectName() == name:
+        return item
+    for child in item.childItems():
+        found = _find_item(child, name)
+        if found is not None:
+            return found
+    return None
+
+
+def _click(window, name):
+    button = _find_item(window.contentItem(), name)
+    assert button is not None, name
+    QMetaObject.invokeMethod(button, "click", Qt.ConnectionType.DirectConnection)
+
+
+def test_a_on_a_text_field_types_with_the_on_screen_keyboard(qapp, tmp_path, monkeypatch):
+    launcher, window, pad = _padded(qapp, tmp_path, monkeypatch)
+    keyboard = window.findChild(QObject, "keyboard")
+    pad.press("y")
+    pad.release("y")
+    field = window.activeFocusItem()
+    pad.press("a")
+    _until(qapp, lambda: keyboard.property("visible"))
+    assert window.activeFocusItem() is not field  # the focus is on a key, not on the field
+    _click(window, "key-h")
+    _click(window, "shift")
+    _click(window, "key-i")
+    _click(window, "symbols")
+    _click(window, "key-!")
+    assert window.findChild(QObject, "keyboardPreview").property("text") == "hI!"
+    _click(window, "delete")
+    _click(window, "left")
+    _click(window, "key-/")
+    assert field.property("text") == "h/I"
+    _click(window, "done")
+    _until(qapp, lambda: not keyboard.property("visible"))
+    assert window.activeFocusItem() is field
+    launcher.backend.closeDown()
+
+
+def test_b_closes_the_keyboard_and_keeps_what_was_typed(qapp, tmp_path, monkeypatch):
+    launcher, window, pad = _padded(qapp, tmp_path, monkeypatch)
+    keyboard = window.findChild(QObject, "keyboard")
+    pad.press("y")
+    pad.release("y")
+    field = window.activeFocusItem()
+    pad.press("a")
+    _until(qapp, lambda: keyboard.property("visible"))
+    _click(window, "key-d")
+    pad.press("b")
+    _until(qapp, lambda: not keyboard.property("visible"))
+    assert field.property("text") == "d"
+    assert window.activeFocusItem() is field
+    launcher.backend.closeDown()

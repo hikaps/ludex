@@ -16,3 +16,4 @@ LaunchOptions LaunchOptions.qml
 MatchDialog MatchDialog.qml
 AddAccount AddAccount.qml
 Toggle Toggle.qml
+OnScreenKeyboard OnScreenKeyboard.qml

@@ -36,6 +36,11 @@ ApplicationWindow {
     function openMenu() {
         if (!inPopup(activeFocusItem)) menu.open()
     }
+    // A on a text field: type with the on-screen keyboard.
+    function openKeyboard() {
+        var item = activeFocusItem
+        if (item && item.hasOwnProperty("cursorPosition")) keyboard.openFor(item)
+    }
     readonly property var sections: ["library", "installed", "search", "jobs", "settings"].concat(backend.views.map((v, i) => "view:" + i))
 
     // The functions below are what the keyboard shortcuts and the controller (gamepad.py) call.
@@ -124,6 +129,7 @@ ApplicationWindow {
         }
         onOpened: resume.forceActiveFocus(Qt.TabFocusReason)
     }
+    OnScreenKeyboard { id: keyboard }
 
     RowLayout {
         anchors.fill: parent

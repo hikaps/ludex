@@ -152,6 +152,9 @@ class Gamepad(QObject):
             self._repeat.stop()
             self._held = None
             return
+        if control == "a" and self._editing():
+            QMetaObject.invokeMethod(self._window, "openKeyboard", Qt.ConnectionType.DirectConnection)
+            return
         if control in ACTIONS:
             name, step = ACTIONS[control]
             args = [] if step is None else [Q_ARG("QVariant", step)]
@@ -162,6 +165,11 @@ class Gamepad(QObject):
         if control in DIRECTIONS:
             self._held = control
             self._repeat.start(REPEAT_DELAY_MS)
+
+    def _editing(self) -> bool:
+        """True while a writable text field has focus: A then opens the on-screen keyboard instead of pressing Return."""
+        item = self._window.activeFocusItem()
+        return item is not None and item.property("cursorPosition") is not None and not item.property("readOnly")
 
     def release(self, control: str) -> None:
         if control == self._held:
