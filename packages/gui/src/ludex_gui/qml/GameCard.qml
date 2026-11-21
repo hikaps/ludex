@@ -56,6 +56,7 @@ Item {
         }
         Btn {
             id: play
+            focusPolicy: Qt.NoFocus
             primary: true
             text: card.installed ? "Play" : "Install"
             anchors.horizontalCenter: art.horizontalCenter

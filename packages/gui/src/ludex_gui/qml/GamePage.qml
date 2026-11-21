@@ -11,6 +11,9 @@ Item {
     signal back()
     focus: visible
     onVisibleChanged: if (visible) backButton.forceActiveFocus()
+    function playOrInstall() {
+        installed ? backend.launch(game.gameId) : backend.install(game.gameId)
+    }
 
     Rectangle { anchors.fill: parent; color: Theme.bg }
     Image {
@@ -89,7 +92,7 @@ Item {
                         implicitHeight: 52
                         implicitWidth: 200
                         text: page.installed ? "▶  Play" : "⇩  Install"
-                        onClicked: page.installed ? backend.launch(game.gameId) : backend.install(game.gameId)
+                        onClicked: page.playOrInstall()
                     }
                     Btn {
                         implicitHeight: 52

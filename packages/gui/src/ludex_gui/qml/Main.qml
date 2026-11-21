@@ -21,6 +21,45 @@ ApplicationWindow {
         backend.closeGame()
         section = name
     }
+    readonly property var sections: ["library", "installed", "search", "jobs", "settings"].concat(backend.views.map((v, i) => "view:" + i))
+
+    // The functions below are what the keyboard shortcuts and the controller (gamepad.py) call.
+    function cycle(step) {
+        if (inPopup(activeFocusItem)) return
+        go(sections[(sections.indexOf(section) + step + sections.length) % sections.length])
+    }
+    function goBack() {
+        if (gameOpen) backend.closeGame()
+    }
+    function playCurrent() {
+        if (inPopup(activeFocusItem)) return
+        if (gameOpen) {
+            gamePage.playOrInstall()
+        } else if (section === "library" || section === "installed") {
+            library.playCurrent()
+        }
+    }
+    // True while the focus sits inside a dialog or popup, which owns Escape and page keys.
+    function inPopup(item) {
+        for (var p = item; p; p = p.parent) {
+            if (p === Overlay.overlay) return true
+        }
+        return false
+    }
+    // Scrolls the nearest Flickable so the focused control stays on screen.
+    function ensureVisible(item) {
+        if (!item || inPopup(item)) return
+        var p = item.parent
+        while (p && !(p instanceof Flickable)) p = p.parent
+        if (!p || p.contentHeight <= p.height) return
+        var y = item.mapToItem(p.contentItem, 0, 0).y
+        if (y < p.contentY) {
+            p.contentY = Math.max(p.originY, y - 16)
+        } else if (y + item.height > p.contentY + p.height) {
+            p.contentY = Math.min(p.originY + p.contentHeight - p.height, y + item.height - p.height + 16)
+        }
+    }
+    onActiveFocusItemChanged: ensureVisible(activeFocusItem)
     function pageIndex(name) {
         if (name === "library" || name === "installed") return 0
         if (name === "search") return 1
@@ -44,9 +83,12 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+5"; onActivated: win.go("settings") }
     Shortcut {
         sequence: "Escape"
-        enabled: win.gameOpen
-        onActivated: backend.closeGame()
+        enabled: !win.inPopup(win.activeFocusItem)
+        onActivated: win.goBack()
     }
+    Shortcut { sequence: "Ctrl+PgDown"; onActivated: win.cycle(1) }
+    Shortcut { sequence: "Ctrl+PgUp"; onActivated: win.cycle(-1) }
+    Shortcut { sequence: "Ctrl+P"; onActivated: win.playCurrent() }
     Shortcut {
         sequence: "/"
         enabled: !(win.activeFocusItem && win.activeFocusItem.hasOwnProperty("cursorPosition"))

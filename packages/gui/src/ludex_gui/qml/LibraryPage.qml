@@ -13,6 +13,10 @@ Item {
     function apply() {
         backend.setFilter(search.text, page.store, page.installedOnly, sortKeys[sortBox.currentIndex], page.genre)
     }
+    function playCurrent() {
+        var card = grid.currentItem
+        if (card) card.installed ? backend.launch(card.gameId) : backend.install(card.gameId)
+    }
     function focusGrid() {
         grid.forceActiveFocus()
     }
@@ -119,6 +123,7 @@ Item {
 
         GridView {
             id: grid
+            objectName: "grid"
             Layout.fillWidth: true
             Layout.fillHeight: true
             readonly property int columns: Math.max(2, Math.floor(width / 190))

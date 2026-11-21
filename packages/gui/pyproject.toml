@@ -24,6 +24,9 @@ classifiers = [
     "Topic :: Games/Entertainment",
 ]
 
+[project.optional-dependencies]
+gamepad = ["PySDL2==0.9.17", "pysdl2-dll==2.32.10"]
+
 [project.urls]
 Homepage = "https://hikaps.github.io/ludex/"
 Repository = "https://github.com/hikaps/ludex"

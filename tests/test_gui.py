@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import threading
 import time
 
@@ -8,7 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
 
 import pytest
-from PySide6.QtCore import QObject
+from PySide6.QtCore import QObject, Qt
 from PySide6.QtGui import QGuiApplication
 
 from ludex import artwork
@@ -21,6 +22,7 @@ from ludex.plugins import Command, CommandResult, ConfigField, FetchResult, Meta
 from ludex.provider_settings import get_values
 from ludex.sources import steam
 from ludex.storage import connect
+from ludex_gui import gamepad as gamepad_mod
 from ludex_gui.app import QML_DIR, Launcher, build_engine
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 64
@@ -385,3 +387,99 @@ def test_the_gui_command_explains_a_missing_ludex_gui(monkeypatch, capsys, tmp_p
     monkeypatch.setattr(sys, "meta_path", [Gone, *sys.meta_path])
     assert main(["--json", "gui"]) == 1
     assert '"gui_missing"' in capsys.readouterr().err
+
+
+class _FakeSource:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, bool]] = []
+        self.closed = False
+
+    def poll(self):
+        out, self.events = self.events, []
+        return out
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _padded(qapp, tmp_path, monkeypatch, installed=frozenset(), focused=True):
+    paths = _paths(tmp_path)
+    conn = connect(paths.database)
+    import_account(conn, "m", [OwnedGame("steam", "1", "Hades"), OwnedGame("steam", "2", "Doom")], store="steam")
+    conn.close()
+    launcher = _launcher(paths, {"steam": steam.PLUGIN}, installed)
+    window = launcher.window
+    monkeypatch.setattr(gamepad_mod.QGuiApplication, "focusWindow", staticmethod(lambda: window if focused else None))
+    pad = gamepad_mod.Gamepad(window, _FakeSource())
+    grid = window.findChild(QObject, "grid")
+    _until(qapp, lambda: grid.property("count") == 2)
+    grid.forceActiveFocus()
+    grid.setProperty("currentIndex", 0)
+    qapp.processEvents()
+    return launcher, window, pad
+
+
+def test_the_pad_moves_through_the_grid_and_opens_and_closes_a_game(qapp, tmp_path, monkeypatch):
+    launcher, window, pad = _padded(qapp, tmp_path, monkeypatch)
+    grid = window.findChild(QObject, "grid")
+    assert grid.property("currentIndex") == 0
+    pad.press("dpright")
+    pad.release("dpright")
+    assert grid.property("currentIndex") == 1
+    pad.press("a")
+    _until(qapp, lambda: launcher.backend.current.get("gameId") is not None)
+    pad.press("b")
+    _until(qapp, lambda: launcher.backend.current.get("gameId") is None)
+    pad.close()
+    launcher.backend.closeDown()
+
+
+def test_an_arrow_nothing_uses_moves_focus_to_the_next_control(qapp, tmp_path, monkeypatch):
+    launcher, window, pad = _padded(qapp, tmp_path, monkeypatch)
+    refresh = next(b for b in window.findChildren(QObject) if b.property("text") == "Refresh" and b.property("visible"))
+    refresh.forceActiveFocus()
+    qapp.processEvents()
+    assert window.activeFocusItem() is refresh
+    gamepad_mod.send_key(window, Qt.Key.Key_Right, Qt.KeyboardModifier.NoModifier)
+    assert window.activeFocusItem() is not refresh
+    gamepad_mod.send_key(window, Qt.Key.Key_Left, Qt.KeyboardModifier.NoModifier)
+    assert window.activeFocusItem() is refresh
+    launcher.backend.closeDown()
+
+
+def test_the_bumpers_change_page_but_not_under_a_dialog(qapp, tmp_path, monkeypatch):
+    launcher, window, pad = _padded(qapp, tmp_path, monkeypatch)
+    assert window.property("section") == "library"
+    pad.press("rightshoulder")
+    assert window.property("section") == "installed"
+    pad.press("leftshoulder")
+    pad.press("leftshoulder")
+    assert window.property("section") == "settings"
+    dialog = window.findChild(QObject, "trust")
+    dialog.open()
+    _until(qapp, lambda: dialog.property("visible"))
+    dialog.property("contentItem").forceActiveFocus()
+    pad.press("rightshoulder")
+    assert window.property("section") == "settings"
+    launcher.backend.closeDown()
+
+
+def test_x_plays_the_current_installed_game(qapp, tmp_path, monkeypatch):
+    opened = []
+    monkeypatch.setattr(launch_mod.subprocess, "run", lambda argv, **kw: opened.append(argv[1]))
+    launcher, window, pad = _padded(qapp, tmp_path, monkeypatch, {("steam", "1"), ("steam", "2")})
+    pad.press("x")
+    _until(qapp, lambda: opened)
+    launcher.backend.closeDown()
+
+
+def test_the_pad_does_nothing_while_the_window_is_not_focused(qapp, tmp_path, monkeypatch):
+    launcher, window, pad = _padded(qapp, tmp_path, monkeypatch, focused=False)
+    pad.press("dpright")
+    assert window.findChild(QObject, "grid").property("currentIndex") == 0
+    launcher.backend.closeDown()
+
+
+def test_without_the_gamepad_extra_there_is_no_source(monkeypatch):
+    monkeypatch.setitem(sys.modules, "sdl2", None)
+    assert gamepad_mod.open_sdl_source() is None
