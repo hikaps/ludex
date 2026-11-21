@@ -8,9 +8,9 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from PySide6.QtCore import Q_ARG, QEvent, QMetaObject, QObject, Qt, QTimer
+from PySide6.QtCore import Q_ARG, QEvent, QMetaObject, QObject, QPointF, QRectF, QSizeF, Qt, QTimer
 from PySide6.QtGui import QGuiApplication, QKeyEvent
-from PySide6.QtQuick import QQuickWindow
+from PySide6.QtQuick import QQuickItem, QQuickWindow
 
 _NONE = Qt.KeyboardModifier.NoModifier
 
@@ -45,10 +45,70 @@ class Source(Protocol):
     def close(self) -> None: ...
 
 
-def send_key(window: QQuickWindow, key: Qt.Key, modifiers: Qt.KeyboardModifier) -> bool:
-    """Deliver a key press and release to the window; True when an item used it or focus moved.
+def _focusables(root: QQuickItem, found: list[QQuickItem]) -> list[QQuickItem]:
+    for child in root.childItems():
+        if not child.isVisible():
+            continue
+        if child.property("activeFocusOnTab") and child.isEnabled() and child.width() > 0:
+            found.append(child)
+        _focusables(child, found)
+    return found
 
-    An arrow no item uses moves focus to the next or previous control.
+
+def _scene_rect(item: QQuickItem) -> QRectF:
+    return QRectF(item.mapToScene(QPointF(0, 0)), QSizeF(item.width(), item.height()))
+
+
+def _gap(lo_a: float, hi_a: float, lo_b: float, hi_b: float) -> float:
+    return max(lo_a - hi_b, lo_b - hi_a, 0.0)
+
+
+def _scope(item: QQuickItem, content: QQuickItem) -> QQuickItem:
+    """The popup the focus is in (its direct child of the overlay), else the whole window."""
+    node = item
+    while node is not None and node.parentItem() is not None:
+        if node.parentItem().metaObject().className().startswith("QQuickOverlay"):
+            return node
+        node = node.parentItem()
+    return content
+
+
+def move_focus(window: QQuickWindow, key: Qt.Key) -> bool:
+    """Focus the nearest control in the pressed direction; False when there is none."""
+    current = window.activeFocusItem()
+    content = window.contentItem()
+    if current is None:
+        return False
+    here = _scene_rect(current)
+    best: tuple[float, QQuickItem] | None = None
+    for item in _focusables(_scope(current, content), []):
+        if item is current:
+            continue
+        there = _scene_rect(item)
+        if key == Qt.Key.Key_Right:
+            along, across = there.left() - here.right(), _gap(here.top(), here.bottom(), there.top(), there.bottom())
+        elif key == Qt.Key.Key_Left:
+            along, across = here.left() - there.right(), _gap(here.top(), here.bottom(), there.top(), there.bottom())
+        elif key == Qt.Key.Key_Down:
+            along, across = there.top() - here.bottom(), _gap(here.left(), here.right(), there.left(), there.right())
+        else:
+            along, across = here.top() - there.bottom(), _gap(here.left(), here.right(), there.left(), there.right())
+        if along < -1:
+            continue
+        score = max(along, 0.0) + 3 * across
+        if best is None or score < best[0]:
+            best = (score, item)
+    if best is None:
+        return False
+    forward = key in _FORWARD
+    best[1].forceActiveFocus(Qt.FocusReason.TabFocusReason if forward else Qt.FocusReason.BacktabFocusReason)
+    return True
+
+
+def send_key(window: QQuickWindow, key: Qt.Key, modifiers: Qt.KeyboardModifier) -> bool:
+    """Deliver a key press and release to the window; True when something used it.
+
+    An arrow no item uses moves focus to the nearest control in that direction.
     """
     text = "\r" if key == Qt.Key.Key_Return else ""
     press = QKeyEvent(QEvent.Type.KeyPress, key, modifiers, text)
@@ -56,13 +116,7 @@ def send_key(window: QQuickWindow, key: Qt.Key, modifiers: Qt.KeyboardModifier) 
     QGuiApplication.sendEvent(window, press)
     QGuiApplication.sendEvent(window, QKeyEvent(QEvent.Type.KeyRelease, key, modifiers, text))
     if key in _ARROWS and not press.isAccepted():
-        forward = key in _FORWARD
-        item = window.activeFocusItem() or window.contentItem()
-        target = item.nextItemInFocusChain(forward)
-        if target is not None and target is not item:
-            reason = Qt.FocusReason.TabFocusReason if forward else Qt.FocusReason.BacktabFocusReason
-            target.forceActiveFocus(reason)
-            return True
+        return move_focus(window, key)
     return press.isAccepted()
 
 

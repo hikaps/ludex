@@ -434,15 +434,18 @@ def test_the_pad_moves_through_the_grid_and_opens_and_closes_a_game(qapp, tmp_pa
     launcher.backend.closeDown()
 
 
-def test_an_arrow_nothing_uses_moves_focus_to_the_next_control(qapp, tmp_path, monkeypatch):
+def test_an_arrow_nothing_uses_moves_focus_to_the_nearest_control_that_way(qapp, tmp_path, monkeypatch):
     launcher, window, pad = _padded(qapp, tmp_path, monkeypatch)
     refresh = next(b for b in window.findChildren(QObject) if b.property("text") == "Refresh" and b.property("visible"))
     refresh.forceActiveFocus()
     qapp.processEvents()
     assert window.activeFocusItem() is refresh
-    gamepad_mod.send_key(window, Qt.Key.Key_Right, Qt.KeyboardModifier.NoModifier)
-    assert window.activeFocusItem() is not refresh
-    gamepad_mod.send_key(window, Qt.Key.Key_Left, Qt.KeyboardModifier.NoModifier)
+    assert gamepad_mod.send_key(window, Qt.Key.Key_Left, Qt.KeyboardModifier.NoModifier)
+    neighbour = window.activeFocusItem()
+    assert neighbour is not refresh and neighbour.x() < refresh.x() + 1
+    assert gamepad_mod.send_key(window, Qt.Key.Key_Right, Qt.KeyboardModifier.NoModifier)
+    assert window.activeFocusItem() is refresh
+    assert not gamepad_mod.send_key(window, Qt.Key.Key_Right, Qt.KeyboardModifier.NoModifier)
     assert window.activeFocusItem() is refresh
     launcher.backend.closeDown()
 

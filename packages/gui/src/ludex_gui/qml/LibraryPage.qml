@@ -124,6 +124,7 @@ Item {
         GridView {
             id: grid
             objectName: "grid"
+            activeFocusOnTab: true
             Layout.fillWidth: true
             Layout.fillHeight: true
             readonly property int columns: Math.max(2, Math.floor(width / 190))
