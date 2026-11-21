@@ -265,6 +265,42 @@ def test_a_plugin_is_added_in_the_background_and_reported(qapp, tmp_path, monkey
     launcher.backend.closeDown()
 
 
+def test_a_plugin_is_updated_in_the_background_and_a_failure_is_reported(qapp, tmp_path, monkeypatch):
+    import ludex_gui.settings as settings_mod
+
+    results = [[{"name": "demo", "ok": True, "from": "1.0", "to": "1.1"}], [{"name": "demo", "ok": False, "error": {"code": "install_failed", "message": "network down"}}]]
+    seen: list = []
+    monkeypatch.setattr(settings_mod, "update_plugins", lambda name: seen.append((name, threading.current_thread() is threading.main_thread())) or results.pop(0))
+    launcher = _launcher(_paths(tmp_path), {})
+    controller = launcher.backend.settingsController
+    notes: list = []
+    controller.notice.connect(lambda text, bad: notes.append((text, bad)))
+    for expected in (("updated plugin demo to 1.1; restart ludex to load it", False), ("plugin: network down", True)):
+        controller.updatePlugin("demo")
+        assert controller.installing
+        _until(qapp, lambda: not controller.installing)
+        assert notes[-1] == expected
+    assert seen == [("demo", False), ("demo", False)]
+    launcher.backend.closeDown()
+
+
+def test_removing_a_plugin_reports_it_and_an_unknown_one_is_refused(qapp, tmp_path, monkeypatch):
+    import ludex_gui.settings as settings_mod
+
+    gone: list = []
+    monkeypatch.setattr(settings_mod, "remove_plugin", lambda name: gone.append(name) or {"name": name, "providers": []})
+    launcher = _launcher(_paths(tmp_path), {})
+    controller = launcher.backend.settingsController
+    notes: list = []
+    controller.notice.connect(lambda text, bad: notes.append((text, bad)))
+    controller.removePlugin("demo")
+    assert gone == ["demo"] and notes[-1] == ("removed plugin demo; restart ludex to unload it", False)
+    monkeypatch.undo()
+    controller.removePlugin("nope")
+    assert notes[-1][1] is True and "no managed plugin named nope" in notes[-1][0]
+    launcher.backend.closeDown()
+
+
 def test_launch_options_round_trip_and_reject_a_bad_environment_line(qapp, tmp_path):
     from ludex.game_settings import get_settings
 

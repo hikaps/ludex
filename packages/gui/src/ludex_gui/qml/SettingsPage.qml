@@ -7,6 +7,7 @@ Item {
     id: page
     property var pathTarget: null
     property string pendingSpec: ""
+    property string pendingUpdate: ""
     // Unsaved edits, kept here so that saving one section (or a background refresh) never clears another's.
     property var drafts: ({})
     function draftOf(section, name, fallback) {
@@ -80,6 +81,47 @@ Item {
         }
         onOpened: standardButton(Dialog.Cancel).forceActiveFocus()
         onAccepted: backend.settingsController.addPlugin(page.pendingSpec)
+    }
+
+    Dialog {
+        id: refresh
+        objectName: "updatePlugin"
+        modal: true
+        anchors.centerIn: Overlay.overlay
+        padding: 20
+        background: Rectangle { radius: Theme.radius; color: Theme.surface2; border.width: 1; border.color: Theme.border }
+        header: Txt { text: "Update plugin"; font.bold: true; font.pixelSize: 16; padding: 20; bottomPadding: 0 }
+        contentItem: Txt { width: 420; wrapMode: Text.Wrap; lineHeight: 1.2; text: "A plugin runs with your permissions. Install only code you trust.\n\nReinstall " + page.pendingUpdate + " from the source it was added with?" }
+        footer: DialogButtonBox {
+            padding: 16
+            spacing: 8
+            background: Item { }
+            delegate: Btn { }
+            standardButtons: Dialog.Yes | Dialog.Cancel
+        }
+        onOpened: standardButton(Dialog.Cancel).forceActiveFocus()
+        onAccepted: backend.settingsController.updatePlugin(page.pendingUpdate)
+    }
+
+    Dialog {
+        id: discard
+        objectName: "removePlugin"
+        property string name: ""
+        modal: true
+        anchors.centerIn: Overlay.overlay
+        padding: 20
+        background: Rectangle { radius: Theme.radius; color: Theme.surface2; border.width: 1; border.color: Theme.border }
+        header: Txt { text: "Remove plugin"; font.bold: true; font.pixelSize: 16; padding: 20; bottomPadding: 0 }
+        contentItem: Txt { width: 420; wrapMode: Text.Wrap; lineHeight: 1.2; text: "Remove plugin " + discard.name + "? Its accounts and games stay until you remove the account." }
+        footer: DialogButtonBox {
+            padding: 16
+            spacing: 8
+            background: Item { }
+            delegate: Btn { }
+            standardButtons: Dialog.Yes | Dialog.Cancel
+        }
+        onOpened: standardButton(Dialog.Cancel).forceActiveFocus()
+        onAccepted: backend.settingsController.removePlugin(discard.name)
     }
 
     Flickable {
@@ -213,6 +255,18 @@ Item {
                                 enabled: !backend.settingsController.installing && spec.text.trim() !== ""
                                 onClicked: if (enabled) { page.pendingSpec = spec.text.trim(); trust.open() }
                             }
+                        }
+                        RowLayout {
+                            visible: section.modelData.id === "plugins" && section.modelData.installed.length > 0
+                            Layout.fillWidth: true
+                            spacing: 10
+                            Combo { id: pluginPick; Layout.fillWidth: true; model: section.modelData.installed }
+                            Btn {
+                                text: "Update"
+                                enabled: !backend.settingsController.installing
+                                onClicked: { page.pendingUpdate = pluginPick.currentText; refresh.open() }
+                            }
+                            Btn { text: "Remove"; onClicked: { discard.name = pluginPick.currentText; discard.open() } }
                         }
                         RowLayout {
                             visible: section.modelData.id === "accounts" && section.modelData.sources.length > 0
