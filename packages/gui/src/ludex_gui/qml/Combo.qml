@@ -8,8 +8,19 @@ ComboBox {
     // Closed, the arrows move focus like on every other control; Return opens the list.
     Keys.onUpPressed: (event) => step(event, false)
     Keys.onDownPressed: (event) => step(event, true)
-    Keys.onReturnPressed: (event) => { if (!popup.visible) { popup.open(); event.accepted = true } else event.accepted = false }
-    Keys.onEnterPressed: (event) => { if (!popup.visible) { popup.open(); event.accepted = true } else event.accepted = false }
+    // The release of the key that opened the list must not reach ComboBox, which would close it again.
+    property bool opening: false
+    Keys.onReturnPressed: (event) => openList(event)
+    Keys.onEnterPressed: (event) => openList(event)
+    Keys.onReleased: (event) => {
+        if (opening && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)) { opening = false; event.accepted = true }
+    }
+    function openList(event) {
+        if (popup.visible) { event.accepted = false; return }
+        opening = true
+        popup.open()
+        event.accepted = true
+    }
     function step(event, forward) {
         if (popup.visible) { event.accepted = false; return }
         var next = nextItemInFocusChain(forward)

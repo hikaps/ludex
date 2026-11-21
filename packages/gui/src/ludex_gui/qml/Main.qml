@@ -83,7 +83,7 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+5"; onActivated: win.go("settings") }
     Shortcut {
         sequence: "Escape"
-        enabled: !win.inPopup(win.activeFocusItem)
+        enabled: win.gameOpen && !win.inPopup(win.activeFocusItem)
         onActivated: win.goBack()
     }
     Shortcut { sequence: "Ctrl+PgDown"; onActivated: win.cycle(1) }

@@ -187,7 +187,7 @@ class _SdlSource:
         self._sdl = sdl2
         self._ctypes = ctypes
         self._pads: dict[int, object] = {}
-        self._stick: dict[int, str | None] = {}
+        self._stick: dict[tuple[int, int], str | None] = {}
         self._event = sdl2.SDL_Event()
 
     def poll(self) -> list[tuple[str, bool]]:
@@ -208,10 +208,10 @@ class _SdlSource:
                 name = sdl.SDL_GameControllerGetStringForButton(ev.cbutton.button)
                 out.append((name.decode(), kind == sdl.SDL_CONTROLLERBUTTONDOWN))
             elif kind == sdl.SDL_CONTROLLERAXISMOTION:
-                self._axis(ev.caxis.axis, ev.caxis.value, out)
+                self._axis(ev.caxis.which, ev.caxis.axis, ev.caxis.value, out)
         return out
 
-    def _axis(self, axis: int, value: int, out: list[tuple[str, bool]]) -> None:
+    def _axis(self, which: int, axis: int, value: int, out: list[tuple[str, bool]]) -> None:
         sdl = self._sdl
         names = {
             sdl.SDL_CONTROLLER_AXIS_LEFTX: ("dpleft", "dpright"),
@@ -219,21 +219,23 @@ class _SdlSource:
         }.get(axis)
         if names is None:
             return
-        current = self._stick.get(axis)
+        key = (which, axis)
+        current = self._stick.get(key)
+        new = current
         if value <= -_STICK_PRESS:
             new = names[0]
         elif value >= _STICK_PRESS:
             new = names[1]
-        elif abs(value) < _STICK_RELEASE:
+        elif current == names[0] and value > -_STICK_RELEASE:
             new = None
-        else:
-            return
+        elif current == names[1] and value < _STICK_RELEASE:
+            new = None
         if new != current:
             if current is not None:
                 out.append((current, False))
             if new is not None:
                 out.append((new, True))
-            self._stick[axis] = new
+            self._stick[key] = new
 
     def close(self) -> None:
         for pad in self._pads.values():

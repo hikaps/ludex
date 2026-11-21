@@ -471,8 +471,11 @@ def test_x_plays_the_current_installed_game(qapp, tmp_path, monkeypatch):
     opened = []
     monkeypatch.setattr(launch_mod.subprocess, "run", lambda argv, **kw: opened.append(argv[1]))
     launcher, window, pad = _padded(qapp, tmp_path, monkeypatch, {("steam", "1"), ("steam", "2")})
+    pad.press("dpright")
+    pad.release("dpright")
     pad.press("x")
     _until(qapp, lambda: opened)
+    assert opened == ["steam://rungameid/1"]
     launcher.backend.closeDown()
 
 
@@ -486,3 +489,31 @@ def test_the_pad_does_nothing_while_the_window_is_not_focused(qapp, tmp_path, mo
 def test_without_the_gamepad_extra_there_is_no_source(monkeypatch):
     monkeypatch.setitem(sys.modules, "sdl2", None)
     assert gamepad_mod.open_sdl_source() is None
+
+
+def test_return_opens_a_combo_and_the_list_stays_open_after_the_key_is_released(qapp, tmp_path, monkeypatch):
+    launcher, window, pad = _padded(qapp, tmp_path, monkeypatch)
+    box = window.findChild(QObject, "sortBox")
+    box.forceActiveFocus()
+    qapp.processEvents()
+    pad.press("a")
+    qapp.processEvents()
+    assert box.property("down")
+    launcher.backend.closeDown()
+
+
+def test_a_stick_held_right_survives_the_other_pad_centering_and_releases_when_pushed_back():
+    class _Sdl:
+        SDL_CONTROLLER_AXIS_LEFTX, SDL_CONTROLLER_AXIS_LEFTY = 0, 1
+
+        def SDL_Event(self):
+            return None
+
+    source = gamepad_mod._SdlSource(_Sdl())
+    out: list[tuple[str, bool]] = []
+    source._axis(1, 0, 20000, out)
+    source._axis(2, 0, 0, out)
+    assert out == [("dpright", True)]
+    out.clear()
+    source._axis(1, 0, -12000, out)
+    assert out == [("dpright", False)]

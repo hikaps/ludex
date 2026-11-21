@@ -76,6 +76,7 @@ Item {
             }
             Combo {
                 id: sortBox
+                objectName: "sortBox"
                 Layout.preferredWidth: 170
                 Layout.minimumWidth: 120
                 model: ["Title", "Recently played", "Play time", "Installed first"]
