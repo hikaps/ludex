@@ -11,6 +11,15 @@ Item {
         query.selectAll()
     }
     onVisibleChanged: if (visible) query.forceActiveFocus()
+    function installHit(key) {
+        if (backend.hitNeedsFolder(key)) {
+            pendingKey = key
+            folderDialog.currentFolder = backend.folderUrl(backend.downloadFolder())
+            folderDialog.open()
+        } else {
+            backend.installHit(key, "")
+        }
+    }
 
     FolderDialog {
         id: folderDialog
@@ -58,6 +67,8 @@ Item {
             spacing: 8
             model: backend.hits
             keyNavigationEnabled: true
+            activeFocusOnTab: true
+            Keys.onReturnPressed: if (currentItem) page.installHit(currentItem.modelData.key)
             ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
             delegate: Rectangle {
                 id: hit
@@ -83,15 +94,7 @@ Item {
                     Chip { visible: hit.modelData.owned; text: "You own this"; checked: true; interactive: false }
                     Btn {
                         text: backend.hitNeedsFolder(hit.modelData.key) ? "Download" : "Install"
-                        onClicked: {
-                            if (backend.hitNeedsFolder(hit.modelData.key)) {
-                                page.pendingKey = hit.modelData.key
-                                folderDialog.currentFolder = backend.folderUrl(backend.downloadFolder())
-                                folderDialog.open()
-                            } else {
-                                backend.installHit(hit.modelData.key, "")
-                            }
-                        }
+                        onClicked: page.installHit(hit.modelData.key)
                     }
                 }
             }

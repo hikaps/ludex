@@ -4,6 +4,8 @@ import QtQuick.Controls.Basic
 Button {
     id: control
     property bool primary: false
+    Keys.onReturnPressed: if (enabled) clicked()
+    Keys.onEnterPressed: if (enabled) clicked()
     property int fontSize: Theme.body
 
     implicitHeight: 36

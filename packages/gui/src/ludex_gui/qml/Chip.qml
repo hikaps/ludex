@@ -6,6 +6,11 @@ Rectangle {
     property bool checked: false
     property bool interactive: true
     signal clicked()
+    activeFocusOnTab: interactive
+    Keys.onReturnPressed: if (interactive) clicked()
+    Keys.onSpacePressed: if (interactive) clicked()
+    border.width: activeFocus ? 2 : 0
+    border.color: Theme.text
 
     implicitWidth: label.implicitWidth + 24
     implicitHeight: 28

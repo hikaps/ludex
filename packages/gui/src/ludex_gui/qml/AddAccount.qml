@@ -64,7 +64,7 @@ Dialog {
                 Layout.fillWidth: true
                 spacing: 4
                 Txt { text: row.modelData.label + (row.modelData.help ? "  -  " + row.modelData.help : ""); color: Theme.muted; font.pixelSize: Theme.small; Layout.topMargin: 6; Layout.fillWidth: true; wrapMode: Text.Wrap }
-                Switch {
+                Toggle {
                     visible: row.modelData.kind === "yes_no"
                     padding: 0
                     onToggled: dialog.values[row.modelData.name] = checked ? "yes" : "no"

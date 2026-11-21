@@ -4,6 +4,10 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+### Added
+
+- **gui:** a game controller drives the launcher when `ludex-gui[gamepad]` is installed (SDL2 through PySDL2): D-pad or left stick move focus, A selects, B goes back, X plays or installs, LB and RB switch between pages; `Ctrl+P`, `Ctrl+PgUp` and `Ctrl+PgDown` do the same on a keyboard. It acts only while the launcher window has focus, so a running game's input never reaches ludex. Every control can now be reached and activated from the keyboard (Return on buttons, chips and toggles, lists of matches, search results and plugin view rows, with a visible focus ring), and the page scrolls to the focused control.
+
 ### Fixed
 
 - **update:** `ludex update` no longer removes `ludex-gui` (or other `--with` extras it knew of): it reinstalls the GUI next to ludex-games. The rolling beta release now carries `ludex-gui.tar.gz` for this (and for `uv tool install <beta>/ludex.tar.gz --with <beta>/ludex-gui.tar.gz`). The stable channel reinstalls from PyPI (the old `stable` release URL did not exist), and any version without `.dev` counts as stable. The JSON result now lists `commands` instead of `command`.

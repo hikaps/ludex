@@ -15,3 +15,4 @@ Combo Combo.qml
 LaunchOptions LaunchOptions.qml
 MatchDialog MatchDialog.qml
 AddAccount AddAccount.qml
+Toggle Toggle.qml

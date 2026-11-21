@@ -56,6 +56,7 @@ Item {
         }
         Btn {
             id: play
+            focusPolicy: Qt.NoFocus
             primary: true
             text: card.installed ? "Play" : "Install"
             anchors.horizontalCenter: art.horizontalCenter
@@ -77,8 +78,15 @@ Item {
             Txt { width: parent.width; text: card.played !== "" && card.played !== "never" ? card.stores + " · " + card.played : card.stores
                   font.pixelSize: Theme.small; color: Theme.muted; elide: Text.ElideRight }
         }
-        border.width: card.current ? 2 : 0
-        border.color: Theme.accent
+        // Drawn as a child so it paints over the cover; a Rectangle's own border sits under its children.
+        Rectangle {
+            anchors.fill: parent
+            z: 10
+            color: "transparent"
+            radius: parent.radius
+            border.width: card.current ? 3 : 0
+            border.color: Theme.accent
+        }
     }
     MouseArea {
         id: mouse

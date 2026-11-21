@@ -148,7 +148,7 @@ Item {
                                     ToolTip.text: row.modelData.help
                                     HoverHandler { id: hover }
                                 }
-                                Switch {
+                                Toggle {
                                     id: toggle
                                     padding: 0
                                     visible: row.toggle

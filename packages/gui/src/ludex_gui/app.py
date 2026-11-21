@@ -26,6 +26,7 @@ from ludex.playtime import Played, play_stats
 from ludex.plugins import Provider
 
 from .backend import Backend
+from .gamepad import Gamepad, open_sdl_source
 
 QML_DIR = Path(__file__).with_name("qml")
 
@@ -80,8 +81,14 @@ def main() -> int:
         )
         if launcher.window is None:
             return 1
+        source = open_sdl_source()
+        gamepad = Gamepad(launcher.window, source) if source is not None else None
+        if gamepad is not None:
+            gamepad.start()
         launcher.backend.autoRefresh()
         code = app.exec()
+        if gamepad is not None:
+            gamepad.close()
         launcher.backend.closeDown()
     finally:
         os.umask(previous_umask)
