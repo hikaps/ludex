@@ -18,7 +18,7 @@ from ludex.errors import LudexError
 from ludex.game_settings import get_prefix_root, set_prefix_root
 from ludex.metadata import get_auto_details, get_auto_match, set_auto_details, set_auto_match
 from ludex.paths import StatePaths
-from ludex.plugin_manager import add_plugin, list_plugins, set_plugin_enabled
+from ludex.plugin_manager import add_plugin, list_plugins, remove_plugin, set_plugin_enabled, update_plugins
 from ludex.plugins import ConfigField, Provider
 from ludex.provider_settings import get_values, set_value
 from ludex.refresh import get_auto_refresh, set_auto_refresh
@@ -96,6 +96,38 @@ class SettingsController(QObject):
 
         run_async(lambda: add_plugin(spec), done)
 
+    @Slot(str)
+    def updatePlugin(self, name: str) -> None:
+        """Reinstall a managed plugin from the spec it was added with, in the background; the user confirmed first."""
+        if self._installing:
+            return
+        self._installing = True
+        self.installingChanged.emit()
+        self.notice.emit(f"updating plugin {name}…", False)
+
+        def done(results: Any, error: str | None) -> None:
+            self._installing = False
+            self.installingChanged.emit()
+            failure = error or next((r["error"]["message"] for r in results or [] if not r["ok"]), None)
+            if failure is not None:
+                self.notice.emit(f"plugin: {failure}", True)
+            else:
+                self.notice.emit(f"updated plugin {name} to {results[0]['to']}; restart ludex to load it", False)
+            self.reload()
+
+        run_async(lambda: update_plugins(name), done)
+
+    @Slot(str)
+    def removePlugin(self, name: str) -> None:
+        """Delete a managed plugin's folder (its accounts and games stay); it unloads on the next start."""
+        try:
+            remove_plugin(name)
+        except LudexError as exc:
+            self.notice.emit(exc.message, True)
+            return
+        self.notice.emit(f"removed plugin {name}; restart ludex to unload it", False)
+        self.reload()
+
     @Slot(str, result="QVariantMap")
     def accountForm(self, source: str) -> dict[str, Any]:
         """The fields to ask for a new account of ``source`` and a free default name; empty when it has no accounts."""
@@ -163,6 +195,7 @@ class SettingsController(QObject):
             "hint": "Enabling or disabling applies the next time ludex starts. Add one below." if plugins
             else "No plugins installed. Add one below.",
             "fields": [_field(p["name"], f"{p['name']} {p['version']}  ({', '.join(p['providers'])})", _flag(p["enabled"])) for p in plugins],
+            "installed": [p["name"] for p in plugins],
         })
         for provider in sorted(self._sources.values(), key=lambda p: p.name):
             if provider.settings:
