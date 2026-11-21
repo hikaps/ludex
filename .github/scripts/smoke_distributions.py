@@ -82,7 +82,7 @@ def check(condition: bool, message: str) -> None:
 
 
 def installed_versions(python: Path, env) -> dict[str, str]:
-    code = "import importlib.metadata as m\nfor n in ('ludex-core','ludex-cli','ludex-tui','ludex-games'):\n    try: print(n, m.version(n))\n    except m.PackageNotFoundError: pass\n"
+    code = "import importlib.metadata as m\nfor n in ('ludex-core','ludex-cli','ludex-tui','ludex-games','ludex-gui'):\n    try: print(n, m.version(n))\n    except m.PackageNotFoundError: pass\n"
     return dict(line.split() for line in run([python, "-I", "-c", code], env=env).stdout.splitlines())
 
 
@@ -307,7 +307,7 @@ def read_sums(path: Path) -> dict[str, str]:
 def verify_production(dist: Path, repository: str) -> str:
     sums = read_sums(dist / "SHA256SUMS")
     names = {p.name for p in dist.iterdir()} - {"SHA256SUMS"}
-    check(set(sums) == names and len(names) == 5 and "ludex.tar.gz" in names, f"unexpected artifact set {sorted(names)}")
+    check(set(sums) == names and len(names) == 6 and {"ludex.tar.gz", "ludex-gui.tar.gz"} <= names, f"unexpected artifact set {sorted(names)}")
     for name, digest in sums.items():
         check(hashlib.sha256((dist / name).read_bytes()).hexdigest() == digest, f"checksum mismatch: {name}")
     meta = metadata_of(dist / "ludex.tar.gz")
@@ -320,6 +320,10 @@ def verify_production(dist: Path, repository: str) -> str:
         url, _, fragment = target.partition("#sha256=")
         wheel = f"{name.replace('-', '_')}-{version}-py3-none-any.whl"
         check(url == f"{base}/{wheel}" and fragment == sums.get(wheel) and fragment, f"{name}: URL/hash identity {target}")
+    gui = metadata_of(dist / "ludex-gui.tar.gz")
+    core = requires["ludex-core"]
+    check(gui["Name"] == "ludex-gui" and gui["Version"] == version, f"gui sdist metadata {gui['Name']} {gui['Version']}")
+    check(f"ludex-core @ {core}" in {r.partition(";")[0].strip() for r in gui.get_all("Requires-Dist") or []}, "gui sdist must pin core by the bundle's URL")
     return version
 
 
@@ -350,12 +354,13 @@ def check_beta(dist: Path, repository: str) -> None:
                 module = [sys.executable, "-m", "pipx"]
             for step, install in enumerate(installs):
                 say(f"{tool} {'fresh install' if step == 0 else 'force reinstall'}")
-                run([*module, *install, "--python", sys.executable, url], env=env)
+                with_gui = ["--with", f"{base}/ludex-gui.tar.gz"] if tool == "uv" else []
+                run([*module, *install, "--python", sys.executable, *with_gui, url], env=env)
                 binary = bin_dir / "ludex"
                 check([p.name for p in bin_dir.iterdir()] == ["ludex"], f"{tool}: unexpected commands")
                 check(run([binary, "--version"], env=env).stdout.strip() == expected, f"{tool} version")
                 versions = installed_versions(tool_python, env)
-                check(set(versions.values()) == {version} and len(versions) == 4, f"{tool} versions {versions}")
+                check(set(versions.values()) == {version} and len(versions) == (5 if tool == "uv" else 4), f"{tool} versions {versions}")
                 names, problems = providers_of(binary, scratch.fresh_state(f"{tool}{step}"))
                 check(names == BUILTINS and not problems, f"{tool} providers {names} {problems}")
             tui_in_terminal(bin_dir / "ludex", ["tui"], scratch.fresh_state(f"{tool}-tui"))

@@ -79,7 +79,7 @@ def _parser() -> argparse.ArgumentParser:
     plugin_view.add_argument("provider", nargs="?", help="a provider (default: all)")
     plugin_view.add_argument("view", nargs="?", help="print this view's table or details")
 
-    update = commands.add_parser("update", help="update ludex itself from its release channel")
+    update = commands.add_parser("update", help="update ludex itself (stable: PyPI; beta: the rolling release), keeping ludex-gui")
     update.add_argument("--channel", choices=CHANNELS, help="default: the channel this install came from")
     update.add_argument("--dry-run", action="store_true", help="show the command without running it")
 
@@ -719,7 +719,7 @@ def _cmd_plugin_update(args: argparse.Namespace) -> tuple[object, str, int]:
 def _cmd_update(args: argparse.Namespace) -> tuple[object, str]:
     result = update_core(args.channel, args.dry_run)
     if args.dry_run:
-        return result, f"would run: {shlex.join(result['command'])}"
+        return result, "\n".join(f"would run: {shlex.join(command)}" for command in result["commands"])
     return result, f"updated ludex {result['from']} -> {result['to'] or 'unknown'} ({result['channel']})"
 
 

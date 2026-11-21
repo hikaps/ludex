@@ -35,8 +35,9 @@ _DISABLED = ".disabled"
 _NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,63}\Z")
 _REPO_LINK = re.compile(r"https://(?:www\.)?(?:github|gitlab)\.com/[\w.-]+/[\w.-]+?(?:\.git)?/?\Z")
 _CREDENTIALS = re.compile(r"://[^/@\s]*:[^/@\s]*@")
-_RELEASES = "https://github.com/hikaps/ludex/releases/download/{channel}/ludex.tar.gz"
+_BETA = "https://github.com/hikaps/ludex/releases/download/beta/"
 _DIST = "ludex-games"
+_GUI = "ludex-gui"
 CHANNELS = ("stable", "beta")
 
 
@@ -222,8 +223,16 @@ def _is_editable() -> bool:
         return False
 
 
+def _gui_installed() -> bool:
+    try:
+        version(_GUI)
+    except PackageNotFoundError:
+        return False
+    return True
+
+
 def update_core(channel: str | None, dry_run: bool) -> dict[str, Any]:
-    """Reinstall ludex from the rolling release for ``channel`` (default: the channel installed)."""
+    """Reinstall ludex-games from PyPI (``stable``) or the rolling beta release, keeping ludex-gui if it is installed."""
     try:
         current = version(_DIST)
     except PackageNotFoundError:
@@ -231,21 +240,23 @@ def update_core(channel: str | None, dry_run: bool) -> dict[str, Any]:
     if _is_editable():
         raise LudexError("development_install", "this is a development install; update it with git instead")
     if channel is None:
-        channel = "beta" if ".dev" in current else "stable" if ".post" in current else None
-        if channel is None:
-            raise LudexError("unknown_channel", "cannot tell which channel this install came from; pass --channel stable|beta")
-    url = _RELEASES.format(channel=channel)
+        channel = "beta" if ".dev" in current else "stable"
+    core, gui = (_BETA + "ludex.tar.gz", _BETA + "ludex-gui.tar.gz") if channel == "beta" else (_DIST, _GUI)
+    with_gui = _gui_installed()
     prefix = Path(sys.prefix).as_posix()
     if "/uv/tools/" in prefix and shutil.which("uv"):
-        command = [shutil.which("uv") or "uv", "tool", "install", "--force", "--reinstall", url]
+        uv = shutil.which("uv") or "uv"
+        commands = [[uv, "tool", "install", "--force", "--reinstall", *(["--with", gui] if with_gui else []), core]]
     elif "/pipx/venvs/" in prefix and shutil.which("pipx"):
-        command = [shutil.which("pipx") or "pipx", "install", "--force", url]
+        pipx = shutil.which("pipx") or "pipx"
+        commands = [[pipx, "install", "--force", core], *([[pipx, "inject", "--force", _DIST, gui]] if with_gui else [])]
     else:
-        command = [*_tool_for_core(), "install", "--upgrade", "--force-reinstall", "--no-input", url]
-    result: dict[str, Any] = {"channel": channel, "from": current, "command": command}
+        commands = [[*_tool_for_core(), "install", "--upgrade", "--force-reinstall", "--no-input", core, *([gui] if with_gui else [])]]
+    result: dict[str, Any] = {"channel": channel, "from": current, "commands": commands}
     if dry_run:
         return result | {"dry_run": True}
-    _run(command)
+    for command in commands:
+        _run(command)
     try:
         done = subprocess.run(
             [sys.executable, "-c", f"import importlib.metadata as m; print(m.version({_DIST!r}))"],
