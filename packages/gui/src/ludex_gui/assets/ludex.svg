@@ -7,9 +7,9 @@
 <rect x="95" y="65" width="66" height="110" rx="7" fill="url(#cv)"/>
 <path d="M108 106c-8 0-13 9-14 20-1 9 2 14 7 14 5 0 8-5 11-8h32c3 3 6 8 11 8 5 0 8-5 7-14-1-11-6-20-14-20z" fill="#fff" transform="translate(128 122) scale(.7 .85) translate(-128 -122)"/>
   <g fill="#8e75ff">
-    <rect x="111.6" y="114.5" width="16" height="5" rx="2.5"/>
-    <rect x="117.1" y="109" width="5" height="16" rx="2.5"/>
-    <circle cx="138" cy="114.5" r="3.6"/>
-    <circle cx="145" cy="121" r="3.6"/>
+    <rect x="113.1" y="115.3" width="13" height="3.4" rx="1.7"/>
+    <rect x="117.9" y="110.5" width="3.4" height="13" rx="1.7"/>
+    <circle cx="138" cy="114.5" r="2.6"/>
+    <circle cx="145" cy="121" r="2.6"/>
   </g>
 </svg>
