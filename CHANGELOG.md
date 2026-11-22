@@ -4,10 +4,6 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
-### Fixed
-
-- **gui:** the Play button on a game card no longer flickers while the pointer is on it (the hover moved from under the button to the button and back). The card and the game page now follow the game's job: Play shows "Running…" or "Installing…" and is disabled while it runs (and "Starting…" for a few seconds when a store client was asked to start it), so a click, the controller or `Ctrl+P` no longer starts the game two or three times.
-
 ## [0.63.0] - 2026-11-21
 
 ### Added
@@ -21,6 +17,7 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ### Fixed
 
+- **gui:** the Play button on a game card no longer flickers while the pointer is on it (the hover moved from under the button to the button and back). The card and the game page now follow the game's job: Play shows "Running…" or "Installing…" and is disabled while it runs (and "Starting…" for a few seconds when a store client was asked to start it), so a click, the controller or `Ctrl+P` no longer starts the game two or three times.
 - **gui:** the Search and Settings labels in the sidebar sit centred in their rows like the others; their glyphs come from a taller fallback font, which pushed the label to the top.
 - **update:** `ludex update` no longer removes `ludex-gui` (or other `--with` extras it knew of): it reinstalls the GUI next to ludex-games. The rolling beta release now carries `ludex-gui.tar.gz` for this (and for `uv tool install <beta>/ludex.tar.gz --with <beta>/ludex-gui.tar.gz`). The stable channel reinstalls from PyPI (the old `stable` release URL did not exist), and any version without `.dev` counts as stable. The JSON result now lists `commands` instead of `command`.
 
