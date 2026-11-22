@@ -100,6 +100,7 @@ ApplicationWindow {
         }
     }
 
+    Shortcut { sequence: "F11"; onActivated: backend.switchMode(!consoleMode) }
     Shortcut { sequence: "Ctrl+1"; onActivated: win.go("library") }
     Shortcut { sequence: "Ctrl+2"; onActivated: win.go("installed") }
     Shortcut { sequence: "Ctrl+3"; onActivated: win.go("search") }
@@ -129,6 +130,12 @@ ApplicationWindow {
         contentItem: Column {
             spacing: 8
             Btn { id: resume; width: 240; text: "Resume"; onClicked: menu.close() }
+            Btn {
+                objectName: "switchMode"
+                width: 240
+                text: consoleMode ? "Switch to desktop mode" : "Switch to console mode"
+                onClicked: backend.switchMode(!consoleMode)
+            }
             Btn { width: 240; text: "Quit ludex"; onClicked: Qt.quit() }
         }
         onOpened: resume.forceActiveFocus(Qt.TabFocusReason)
@@ -206,6 +213,7 @@ ApplicationWindow {
                         }
                     }
                 }
+                NavItem { objectName: "nav-console"; Layout.fillWidth: true; label: "Console mode"; glyph: "▣"; onActivated: backend.switchMode(true) }
             }
         }
 
