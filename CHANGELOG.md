@@ -4,6 +4,11 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+### Added
+
+- **gui:** a game owned in several stores shows a store chooser next to Play (or Install) on its page; without a choice a click uses the store with an installed copy, else the first alphabetically. "Review matches" on the library page settles the title matches an import was not sure about (join the game to a candidate, or keep them apart), as `ludex review` and `ludex merge` do.
+- **core:** `ludex.launch.usable_stores(conn, sources, game_id, verb)` lists the stores a game can be launched or installed from.
+
 ## [0.63.0] - 2026-11-21
 
 ### Added

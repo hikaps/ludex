@@ -28,9 +28,21 @@ def open_url(url: str, what: str) -> None:
         raise LudexError("launch_failed", f"the system could not open {what}") from None
 
 
-def _pick(conn, sources: Mapping[str, Provider], game_id: int, store: str | None, usable, verb: str) -> dict:
+_USABLE = {
+    "launch": lambda p: p is not None and (p.launch_url or p.launch_command or p.game_folder),
+    "install": lambda p: p is not None and (p.install_url or p.install_command),
+}
+
+
+def usable_stores(conn, sources: Mapping[str, Provider], game_id: int, verb: str) -> list[str]:
+    """The stores, alphabetically, of the game's owned copies that can be started (``verb`` ``launch``) or installed (``install``)."""
     game = get_game(conn, game_id)
-    candidates = [o for o in game["ownership"] if not o["removed"] and usable(sources.get(o["store"]))]
+    return sorted({o["store"] for o in game["ownership"] if not o["removed"] and _USABLE[verb](sources.get(o["store"]))})
+
+
+def _pick(conn, sources: Mapping[str, Provider], game_id: int, store: str | None, verb: str) -> dict:
+    game = get_game(conn, game_id)
+    candidates = [o for o in game["ownership"] if not o["removed"] and _USABLE[verb](sources.get(o["store"]))]
     if store is not None:
         candidates = [o for o in candidates if o["store"] == store]
     stores = sorted({o["store"] for o in candidates})
@@ -83,10 +95,7 @@ def prepare_launch(
     prefix_root: Path | None = None,
 ) -> LaunchPlan:
     """Decide how to start a game without starting it. ``config_for(store, account)`` gives the account configuration and ``prefix_root`` the folder for default Wine prefixes."""
-    record = _pick(
-        conn, sources, game_id, store,
-        lambda p: p is not None and (p.launch_url or p.launch_command or p.game_folder), "launch",
-    )
+    record = _pick(conn, sources, game_id, store, "launch")
     target = f"{record['store']}:{record['store_id']}"
     provider = sources[record["store"]]
     if provider.launch_url:
@@ -153,7 +162,7 @@ def launch_game(
 def prepare_install(
     conn, sources: Mapping[str, Provider], game_id: int, store: str | None = None, config_for: Callable[[str, str], Mapping[str, str]] | None = None
 ) -> LaunchPlan:
-    record = _pick(conn, sources, game_id, store, lambda p: p is not None and (p.install_url or p.install_command), "install")
+    record = _pick(conn, sources, game_id, store, "install")
     target = f"{record['store']}:{record['store_id']}"
     provider = sources[record["store"]]
     if provider.install_url:
