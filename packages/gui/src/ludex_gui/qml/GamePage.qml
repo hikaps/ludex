@@ -10,7 +10,11 @@ Item {
     readonly property bool running: (game.running || "") !== ""
     signal back()
     focus: visible
-    onVisibleChanged: if (visible) backButton.forceActiveFocus()
+    function focusDefault() {
+        if (!page.visible) return
+        (consoleMode ? playButton : backButton).forceActiveFocus(Qt.TabFocusReason)
+    }
+    onVisibleChanged: if (visible) Qt.callLater(focusDefault)
     function playOrInstall() {
         installed ? backend.launch(game.gameId) : backend.install(game.gameId)
     }
@@ -87,6 +91,7 @@ Item {
                 RowLayout {
                     spacing: 12
                     Btn {
+                        id: playButton
                         primary: true
                         fontSize: 18
                         implicitHeight: 52
