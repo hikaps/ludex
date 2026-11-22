@@ -128,6 +128,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 1
         source = open_sdl_source()
         gamepad = Gamepad(launcher.window, source) if source is not None else None
+        if source is None and args.console:
+            launcher.backend.notify('no controller support: install it with  uv tool install ludex-games --with "ludex-gui[gamepad]"', True)
         if gamepad is not None:
             gamepad.start()
         launcher.backend.autoRefresh()
