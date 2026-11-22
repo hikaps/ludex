@@ -6,7 +6,7 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ### Changed
 
-- **docs:** the README has a Launcher (GUI) section (controller, console mode, store chooser, match review) instead of one long bullet; the introduction and docs home mention the GUI.
+- **docs, packaging:** the tagline is now "Every game you own, in one local library" (README, docs home, site description, PyPI summaries and keywords). The README has a Launcher (GUI) section (controller, console mode, store chooser, match review) instead of one long bullet; the introduction and docs home mention the GUI.
 
 ### Added
 

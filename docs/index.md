@@ -1,4 +1,4 @@
-# ludex: a scriptable library of the games you own, across stores
+# ludex: every game you own, in one local library
 
 ludex is a headless, scriptable catalog of the games you own on Steam, Epic/Heroic and in local folders, for Linux. It stores everything in a local SQLite database, has a plugin API for stores and metadata, sends no telemetry and has no hosted component. The core never provides or endorses content; store access lives in plugins.
 
