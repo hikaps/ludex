@@ -36,6 +36,8 @@ _FORWARD = frozenset({Qt.Key.Key_Down, Qt.Key.Key_Right})
 _ARROW_CLASSES = frozenset({
     "QQuickItemView", "QQuickTextInput", "QQuickTextEdit", "QQuickComboBox", "QQuickSlider", "QQuickSpinBox", "QQuickTumbler",
 })
+_SIDEWAYS_ONLY = frozenset({"QQuickTextInput"})  # a one-line field moves its cursor with Left and Right, not Up and Down
+_VERTICAL = frozenset({Qt.Key.Key_Up, Qt.Key.Key_Down})
 REPEAT_DELAY_MS = 400
 REPEAT_INTERVAL_MS = 90
 POLL_MS = 16
@@ -85,12 +87,15 @@ def move_focus(window: QQuickWindow, key: Qt.Key) -> bool:
     if current is None:
         return False
     here = _scene_rect(current)
+    scope = _scope(current, content)
     best: tuple[float, QQuickItem] | None = None
-    for item in _focusables(_scope(current, content), []):
+    for item in _focusables(scope, []):
         if item is current:
             continue
         there = _scene_rect(item)
-        if key == Qt.Key.Key_Right:
+        if current is scope:  # a dialog that has no control focused yet: start at its top left
+            along, across = there.top() - here.top(), there.left() - here.left()
+        elif key == Qt.Key.Key_Right:
             along, across = there.left() - here.right(), _gap(here.top(), here.bottom(), there.top(), there.bottom())
         elif key == Qt.Key.Key_Left:
             along, across = here.left() - there.right(), _gap(here.top(), here.bottom(), there.top(), there.bottom())
@@ -110,7 +115,7 @@ def move_focus(window: QQuickWindow, key: Qt.Key) -> bool:
     return True
 
 
-def _handles_arrows(item: QQuickItem | None) -> bool:
+def _handles_arrows(item: QQuickItem | None, key: Qt.Key) -> bool:
     """True when the focused item, or a list or grid around it, moves something with the arrows itself.
 
     A modal popup accepts every key that reaches it, so acceptance alone cannot tell a control from a popup.
@@ -118,7 +123,8 @@ def _handles_arrows(item: QQuickItem | None) -> bool:
     while item is not None:
         meta = item.metaObject()
         while meta is not None:
-            if meta.className() in _ARROW_CLASSES:
+            name = meta.className()
+            if name in _ARROW_CLASSES and not (name in _SIDEWAYS_ONLY and key in _VERTICAL):
                 return True
             meta = meta.superClass()
         item = item.parentItem()
@@ -136,7 +142,7 @@ def send_key(window: QQuickWindow, key: Qt.Key, modifiers: Qt.KeyboardModifier) 
     before = window.activeFocusItem()
     QGuiApplication.sendEvent(window, press)
     QGuiApplication.sendEvent(window, QKeyEvent(QEvent.Type.KeyRelease, key, modifiers, text))
-    if key in _ARROWS and not (press.isAccepted() and (window.activeFocusItem() is not before or _handles_arrows(before))):
+    if key in _ARROWS and not (press.isAccepted() and (window.activeFocusItem() is not before or _handles_arrows(before, key))):
         return move_focus(window, key)
     return press.isAccepted()
 

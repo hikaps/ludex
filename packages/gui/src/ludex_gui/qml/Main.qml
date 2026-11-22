@@ -131,6 +131,13 @@ ApplicationWindow {
             spacing: 8
             Btn { id: resume; width: 240; text: "Resume"; onClicked: menu.close() }
             Btn {
+                objectName: "refreshAll"
+                width: 240
+                text: backend.refreshing ? "Refreshing…" : "Refresh library"
+                enabled: !backend.refreshing
+                onClicked: { menu.close(); backend.reload(); backend.startRefresh(false) }
+            }
+            Btn {
                 objectName: "switchMode"
                 width: 240
                 text: consoleMode ? "Switch to desktop mode" : "Switch to console mode"
