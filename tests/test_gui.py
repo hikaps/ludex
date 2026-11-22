@@ -10,7 +10,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
 
 import pytest
-from PySide6.QtCore import QObject, Qt
+from PySide6.QtCore import Q_ARG, QMetaObject, QObject, Qt
 from PySide6.QtGui import QGuiApplication, QWindow
 
 from ludex import artwork
@@ -636,3 +636,118 @@ def test_ludex_gui_install_desktop_reports_the_files_it_wrote(monkeypatch, capsy
     assert (tmp_path / "xdg" / "applications" / "ludex-console.desktop").is_file()
     assert main(["--json", "gui", "--uninstall-desktop"]) == 0
     assert not (tmp_path / "xdg" / "applications" / "ludex.desktop").exists()
+
+
+def _find_item(item, name):
+    if item.objectName() == name:
+        return item
+    for child in item.childItems():
+        found = _find_item(child, name)
+        if found is not None:
+            return found
+    return None
+
+
+def _click(window, name):
+    button = _find_item(window.contentItem(), name)
+    assert button is not None, name
+    QMetaObject.invokeMethod(button, "click", Qt.ConnectionType.DirectConnection)
+
+
+def test_a_on_a_text_field_types_with_the_on_screen_keyboard(qapp, tmp_path, monkeypatch):
+    launcher, window, pad = _padded(qapp, tmp_path, monkeypatch)
+    keyboard = window.findChild(QObject, "keyboard")
+    pad.press("y")
+    pad.release("y")
+    field = window.activeFocusItem()
+    pad.press("a")
+    _until(qapp, lambda: keyboard.property("visible"))
+    assert window.activeFocusItem() is not field  # the focus is on a key, not on the field
+    _click(window, "key-h")
+    _click(window, "shift")
+    _click(window, "key-i")
+    _click(window, "symbols")
+    _click(window, "key-!")
+    assert window.findChild(QObject, "keyboardPreview").property("text") == "hI!"
+    _click(window, "delete")
+    _click(window, "left")
+    _click(window, "key-/")
+    assert field.property("text") == "h/I"
+    _click(window, "done")
+    _until(qapp, lambda: not keyboard.property("visible"))
+    assert window.activeFocusItem() is field
+    launcher.backend.closeDown()
+
+
+def test_b_closes_the_keyboard_and_keeps_what_was_typed(qapp, tmp_path, monkeypatch):
+    launcher, window, pad = _padded(qapp, tmp_path, monkeypatch)
+    keyboard = window.findChild(QObject, "keyboard")
+    pad.press("y")
+    pad.release("y")
+    field = window.activeFocusItem()
+    pad.press("a")
+    _until(qapp, lambda: keyboard.property("visible"))
+    _click(window, "key-d")
+    pad.press("b")
+    _until(qapp, lambda: not keyboard.property("visible"))
+    assert field.property("text") == "d"
+    assert window.activeFocusItem() is field
+    launcher.backend.closeDown()
+
+
+def test_the_pad_moves_across_the_keys_and_types_with_a(qapp, tmp_path, monkeypatch):
+    launcher, window, pad = _padded(qapp, tmp_path, monkeypatch)
+    keyboard = window.findChild(QObject, "keyboard")
+    pad.press("y")
+    pad.release("y")
+    field = window.activeFocusItem()
+    pad.press("a")
+    _until(qapp, lambda: keyboard.property("visible"))
+    assert window.activeFocusItem().objectName() == "space"
+    for control in ("dpup", "dpup"):  # Space -> a letter row -> the row above
+        previous = window.activeFocusItem()
+        pad.press(control)
+        pad.release(control)
+        assert window.activeFocusItem() is not previous
+    assert window.activeFocusItem().objectName().startswith("key-")
+    pad.press("a")
+    pad.release("a")
+    typed = field.property("text")
+    assert len(typed) == 1
+    previous = window.activeFocusItem()
+    pad.press("dpright")
+    pad.release("dpright")
+    assert window.activeFocusItem() is not previous
+    assert window.activeFocusItem().objectName().startswith("key-")
+    pad.press("b")
+    _until(qapp, lambda: not keyboard.property("visible"))
+    launcher.backend.closeDown()
+
+
+def test_down_from_a_closed_combo_lands_on_the_next_control_and_not_past_it(qapp, tmp_path, monkeypatch):
+    launcher, window, pad = _padded(qapp, tmp_path, monkeypatch)
+    box = window.findChild(QObject, "sortBox")
+    box.forceActiveFocus()
+    expected = box.nextItemInFocusChain(True)
+    pad.press("dpdown")
+    pad.release("dpdown")
+    assert window.activeFocusItem() is expected
+    launcher.backend.closeDown()
+
+
+def test_the_keyboard_replaces_a_selection_and_deletes_whole_characters(qapp, tmp_path, monkeypatch):
+    launcher, window, pad = _padded(qapp, tmp_path, monkeypatch)
+    keyboard = window.findChild(QObject, "keyboard")
+    pad.press("y")
+    pad.release("y")
+    field = window.activeFocusItem()
+    field.setProperty("text", "ab\U0001F600")
+    field.setProperty("cursorPosition", 4)
+    pad.press("a")
+    _until(qapp, lambda: keyboard.property("visible"))
+    _click(window, "delete")
+    assert field.property("text") == "ab"
+    QMetaObject.invokeMethod(field, "select", Qt.ConnectionType.DirectConnection, Q_ARG("int", 0), Q_ARG("int", 2))
+    _click(window, "key-x")
+    assert field.property("text") == "x"
+    launcher.backend.closeDown()

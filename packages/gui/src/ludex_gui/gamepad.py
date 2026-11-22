@@ -33,6 +33,9 @@ ACTIONS: dict[str, tuple[str, int | None]] = {
 DIRECTIONS = frozenset({"dpup", "dpdown", "dpleft", "dpright"})
 _ARROWS = frozenset({Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Left, Qt.Key.Key_Right})
 _FORWARD = frozenset({Qt.Key.Key_Down, Qt.Key.Key_Right})
+_ARROW_CLASSES = frozenset({
+    "QQuickItemView", "QQuickTextInput", "QQuickTextEdit", "QQuickComboBox", "QQuickSlider", "QQuickSpinBox", "QQuickTumbler",
+})
 REPEAT_DELAY_MS = 400
 REPEAT_INTERVAL_MS = 90
 POLL_MS = 16
@@ -107,6 +110,21 @@ def move_focus(window: QQuickWindow, key: Qt.Key) -> bool:
     return True
 
 
+def _handles_arrows(item: QQuickItem | None) -> bool:
+    """True when the focused item, or a list or grid around it, moves something with the arrows itself.
+
+    A modal popup accepts every key that reaches it, so acceptance alone cannot tell a control from a popup.
+    """
+    while item is not None:
+        meta = item.metaObject()
+        while meta is not None:
+            if meta.className() in _ARROW_CLASSES:
+                return True
+            meta = meta.superClass()
+        item = item.parentItem()
+    return False
+
+
 def send_key(window: QQuickWindow, key: Qt.Key, modifiers: Qt.KeyboardModifier) -> bool:
     """Deliver a key press and release to the window; True when something used it.
 
@@ -115,9 +133,10 @@ def send_key(window: QQuickWindow, key: Qt.Key, modifiers: Qt.KeyboardModifier) 
     text = "\r" if key == Qt.Key.Key_Return else ""
     press = QKeyEvent(QEvent.Type.KeyPress, key, modifiers, text)
     press.setAccepted(False)
+    before = window.activeFocusItem()
     QGuiApplication.sendEvent(window, press)
     QGuiApplication.sendEvent(window, QKeyEvent(QEvent.Type.KeyRelease, key, modifiers, text))
-    if key in _ARROWS and not press.isAccepted():
+    if key in _ARROWS and not (press.isAccepted() and (window.activeFocusItem() is not before or _handles_arrows(before))):
         return move_focus(window, key)
     return press.isAccepted()
 
@@ -152,6 +171,9 @@ class Gamepad(QObject):
             self._repeat.stop()
             self._held = None
             return
+        if control == "a" and self._editing():
+            QMetaObject.invokeMethod(self._window, "openKeyboard", Qt.ConnectionType.DirectConnection)
+            return
         if control in ACTIONS:
             name, step = ACTIONS[control]
             args = [] if step is None else [Q_ARG("QVariant", step)]
@@ -162,6 +184,11 @@ class Gamepad(QObject):
         if control in DIRECTIONS:
             self._held = control
             self._repeat.start(REPEAT_DELAY_MS)
+
+    def _editing(self) -> bool:
+        """True while a writable text field has focus: A then opens the on-screen keyboard instead of pressing Return."""
+        item = self._window.activeFocusItem()
+        return item is not None and item.property("cursorPosition") is not None and not item.property("readOnly")
 
     def release(self, control: str) -> None:
         if control == self._held:
