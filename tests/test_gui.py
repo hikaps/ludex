@@ -598,12 +598,29 @@ def test_menu_entries_are_written_quoted_and_removed_again(tmp_path):
     plain = (tmp_path / "data" / "applications" / "ludex.desktop").read_text()
     console = (tmp_path / "data" / "applications" / "ludex-console.desktop").read_text()
     assert f'Exec="{launcher}"\n' in plain
+    assert f"TryExec={launcher}\n" in plain  # a desktop hides the entry once the script is gone
     assert f'Exec="{launcher}" --console\n' in console
     assert "Icon=ludex\n" in plain and "Categories=Game;" in plain
     assert (tmp_path / "data" / "icons" / "hicolor" / "scalable" / "apps" / "ludex.svg").read_text().startswith("<svg")
     assert not list((tmp_path / "data").rglob("*.tmp"))
     assert sorted(desktop.uninstall(tmp_path / "data")) == sorted(first)
     assert desktop.uninstall(tmp_path / "data") == []
+
+
+def test_the_launcher_writes_its_menu_entries_once_and_repairs_them_but_never_brings_back_removed_ones(tmp_path):
+    from ludex_gui import desktop
+
+    base, marker = tmp_path / "data", tmp_path / "state" / "menu-entries"
+    launcher = tmp_path / "bin" / "ludex-gui"
+    entry = base / "applications" / "ludex.desktop"
+    assert len(desktop.ensure(base, launcher, marker)) == 3 and marker.is_file()
+    assert desktop.ensure(base, launcher, marker) == []  # nothing to do
+    moved = tmp_path / "other" / "ludex-gui"
+    assert desktop.ensure(base, moved, marker)  # a reinstall moved the script
+    assert f"TryExec={moved}\n" in entry.read_text()
+    desktop.uninstall(base)
+    assert desktop.ensure(base, moved, marker) == []  # the user removed them: they stay removed
+    assert not entry.exists()
 
 
 def test_the_data_directory_follows_xdg_only_for_an_absolute_path(tmp_path):
@@ -636,6 +653,7 @@ def test_ludex_gui_install_desktop_reports_the_files_it_wrote(monkeypatch, capsy
     assert (tmp_path / "xdg" / "applications" / "ludex-console.desktop").is_file()
     assert main(["--json", "gui", "--uninstall-desktop"]) == 0
     assert not (tmp_path / "xdg" / "applications" / "ludex.desktop").exists()
+    assert (_paths(tmp_path).root / "menu-entries").is_file()
 
 
 def _find_item(item, name):

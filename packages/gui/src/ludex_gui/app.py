@@ -21,6 +21,7 @@ from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuickControls2 import QQuickStyle
 
 from ludex.accounts import get_account
+from ludex.errors import LudexError
 from ludex.installed import installed_keys
 from ludex.loader import load_providers
 from ludex.paths import StatePaths, state_paths
@@ -89,13 +90,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--uninstall-desktop", action="store_true", help="remove them from the application menu again, then exit")
     args = parser.parse_args(argv)
     if args.install_desktop or args.uninstall_desktop:
-        files = desktop.manage(args.install_desktop, os.environ, Path.home())
+        files = desktop.manage(args.install_desktop, os.environ, Path.home(), state_paths().root / "menu-entries")
         print("\n".join(f"{'wrote' if args.install_desktop else 'removed'} {path}" for path in files))
         return 0
     if args.console:
         console_environment(os.environ)
     sources, _ = load_providers()
     paths = state_paths()
+    if "LUDEX_HOME" not in os.environ:  # a scratch state directory must not touch the real menu
+        try:
+            desktop.ensure(desktop.data_home(os.environ, Path.home()), desktop.launcher_path(), paths.root / "menu-entries")
+        except (OSError, LudexError):  # the launcher still works without menu entries
+            pass
     previous_umask = os.umask(0o077)
     try:
         app = QGuiApplication.instance() or QGuiApplication(sys.argv[:1])

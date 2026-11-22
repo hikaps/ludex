@@ -1,7 +1,9 @@
 """Menu entries for the launcher: two ``.desktop`` files and an icon in the user's XDG data directory.
 
-A Python package cannot place files outside its own directory when it is installed with pip or uv, so
+A Python package cannot place files outside its own directory when it is installed with pip or uv, and
+uninstalling it cannot remove them. So the launcher writes them itself the first time it starts (``ensure``),
 ``ludex gui --install-desktop`` writes them on request and ``--uninstall-desktop`` removes them again.
+``TryExec`` makes desktops hide the entries once the launcher script is gone.
 """
 from __future__ import annotations
 
@@ -45,13 +47,14 @@ def _quote(path: Path) -> str:
     return f'"{escaped}"'
 
 
-def _entry(name: str, comment: str, exec_line: str) -> str:
+def _entry(name: str, comment: str, exec_line: str, launcher: Path) -> str:
     return (
         "[Desktop Entry]\n"
         "Type=Application\n"
         f"Name={name}\n"
         "GenericName=Game Library\n"
         f"Comment={comment}\n"
+        f"TryExec={launcher}\n"
         f"Exec={exec_line}\n"
         f"Icon={ICON}\n"
         "Terminal=false\n"
@@ -73,7 +76,7 @@ def install(base: Path, launcher: Path) -> list[Path]:
     targets = _targets(base)
     written = []
     for key, (name, comment, extra) in ENTRIES.items():
-        _write(targets[key], _entry(name, comment, _quote(launcher) + extra).encode())
+        _write(targets[key], _entry(name, comment, _quote(launcher) + extra, launcher).encode())
         written.append(targets[key])
     _write(targets["icon"], (resources.files("ludex_gui") / "assets" / "ludex.svg").read_bytes())
     written.append(targets["icon"])
@@ -90,10 +93,36 @@ def uninstall(base: Path) -> list[Path]:
     return removed
 
 
-def manage(add: bool, env: Mapping[str, str], home: Path) -> list[Path]:
-    """Install (``add``) or remove the menu entries in the user's data directory; return the files touched."""
+def ensure(base: Path, launcher: Path, marker: Path) -> list[Path]:
+    """Keep the entries current without asking: write them on the first start, then only repair them.
+
+    ``marker`` records that the first write happened, so entries the user removed with ``--uninstall-desktop``
+    do not come back; entries that exist are rewritten when the launcher moved (a reinstall).
+    """
+    targets = _targets(base)
+    first = not marker.exists()
+    stale = any(
+        targets[key].is_file() and targets[key].read_text() != _entry(name, comment, _quote(launcher) + extra, launcher)
+        for key, (name, comment, extra) in ENTRIES.items()
+    )
+    if not first and not stale:
+        return []
+    written = install(base, launcher)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.touch()
+    return written
+
+
+def manage(add: bool, env: Mapping[str, str], home: Path, marker: Path) -> list[Path]:
+    """Install (``add``) or remove the menu entries in the user's data directory; return the files touched.
+
+    Either way the choice is recorded in ``marker`` so that starting the launcher does not undo it.
+    """
     base = data_home(env, home)
-    return install(base, launcher_path()) if add else uninstall(base)
+    files = install(base, launcher_path()) if add else uninstall(base)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.touch()
+    return files
 
 
 def _write(path: Path, data: bytes) -> None:
