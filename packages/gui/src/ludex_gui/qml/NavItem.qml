@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Layouts
 
 Rectangle {
     id: item
@@ -27,13 +28,20 @@ Rectangle {
         opacity: item.current ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: 140 } }
     }
-    Row {
+    // A glyph from a fallback font can be taller than the label; centre each on its own, not on the taller one.
+    RowLayout {
         anchors.verticalCenter: parent.verticalCenter
         anchors.left: parent.left
         anchors.leftMargin: 16
         spacing: 12
-        Txt { text: item.glyph; color: item.current ? Theme.accent : Theme.muted; width: 18; horizontalAlignment: Text.AlignHCenter }
-        Txt { text: item.label; color: item.current ? Theme.text : Theme.muted; font.bold: item.current }
+        Txt {
+            Layout.alignment: Qt.AlignVCenter
+            Layout.preferredWidth: 18
+            text: item.glyph
+            color: item.current ? Theme.accent : Theme.muted
+            horizontalAlignment: Text.AlignHCenter
+        }
+        Txt { objectName: "label"; Layout.alignment: Qt.AlignVCenter; text: item.label; color: item.current ? Theme.text : Theme.muted; font.bold: item.current }
     }
     Chip {
         visible: item.badge !== ""

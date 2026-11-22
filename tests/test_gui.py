@@ -785,3 +785,15 @@ def test_console_mode_shows_larger_covers_and_the_game_page_focuses_play(qapp, t
     _until(qapp, lambda: launcher.backend.current.get("gameId") is not None)
     _until(qapp, lambda: window.activeFocusItem() is not None and str(window.activeFocusItem().property("text")).endswith(("Play", "Install")))
     launcher.backend.closeDown()
+
+
+def test_sidebar_labels_are_centred_in_their_rows(qapp, tmp_path):
+    launcher = _launcher(_paths(tmp_path), {})
+    window = launcher.window
+    root = window.contentItem()
+    for name in ("nav-library", "nav-search", "nav-jobs", "nav-settings"):
+        item = _find_item(root, name)
+        label = _find_item(item, "label")
+        middle = label.mapToItem(item, 0, label.height() / 2).y()
+        assert abs(middle - item.height() / 2) <= 1, name
+    launcher.backend.closeDown()

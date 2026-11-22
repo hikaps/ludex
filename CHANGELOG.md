@@ -14,6 +14,7 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ### Fixed
 
+- **gui:** the Search and Settings labels in the sidebar sit centred in their rows like the others; their glyphs come from a taller fallback font, which pushed the label to the top.
 - **update:** `ludex update` no longer removes `ludex-gui` (or other `--with` extras it knew of): it reinstalls the GUI next to ludex-games. The rolling beta release now carries `ludex-gui.tar.gz` for this (and for `uv tool install <beta>/ludex.tar.gz --with <beta>/ludex-gui.tar.gz`). The stable channel reinstalls from PyPI (the old `stable` release URL did not exist), and any version without `.dev` counts as stable. The JSON result now lists `commands` instead of `command`.
 
 ## [0.62.0] - 2026-11-20
