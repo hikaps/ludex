@@ -4,6 +4,12 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+### Fixed
+
+- **gui:** the "refreshing accounts…" message no longer stays in the status bar after a start-up refresh that found nothing new.
+- **gui:** a controller that Steam shows twice (the real pad and its virtual copy) presses a button once instead of twice, and unplugging a pad releases whatever it was holding.
+- **gui:** console mode says so in the status bar when controller support is not installed (`ludex-gui[gamepad]`) instead of silently ignoring the pad.
+
 ### Changed
 
 - **docs, packaging:** the tagline is now "Every game you own, in one local library" (README, docs home, site description, PyPI summaries and keywords). The README has a Launcher (GUI) section (controller, console mode, store chooser, match review) instead of one long bullet; the introduction and docs home mention the GUI.

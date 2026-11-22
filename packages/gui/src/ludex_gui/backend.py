@@ -46,6 +46,7 @@ from .work import run_async
 PAGE = 500  # the core's page size
 MAX_GAMES = 20000
 COVERS_AT_A_TIME = 2
+REFRESHING = "refreshing accounts…"
 HANDOFF_MS = 4000  # a store client was asked to start the game (no job to follow): ignore repeats this long
 SORTS = ("title", "recent", "playtime", "installed")
 _DOING = {"play": "Running", "install": "Installing"}
@@ -674,7 +675,7 @@ class Backend(QObject):
             return
         self._refreshing = True
         self.busyChanged.emit()
-        self.notify("refreshing accounts…")
+        self.notify(REFRESHING)
         paths, sources = self._paths, self._sources
 
         def work() -> list:
@@ -701,6 +702,8 @@ class Backend(QObject):
                 self.notify(f"refreshed: {added} new, {restored} restored, {removed} removed")
             elif not quiet:
                 self.notify("refreshed: no changes")
+            elif self._status == REFRESHING:  # a quiet start-up refresh that found nothing: take the message down
+                self.notify("")
 
         run_async(work, done)
 

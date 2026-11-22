@@ -217,6 +217,7 @@ class _SdlSource:
         self._ctypes = ctypes
         self._pads: dict[int, object] = {}
         self._stick: dict[tuple[int, int], str | None] = {}
+        self._held: dict[str, set[int]] = {}  # control -> the devices holding it
         self._event = sdl2.SDL_Event()
 
     def poll(self) -> list[tuple[str, bool]]:
@@ -230,15 +231,31 @@ class _SdlSource:
                     joy = sdl.SDL_GameControllerGetJoystick(pad)
                     self._pads[sdl.SDL_JoystickInstanceID(joy)] = pad
             elif kind == sdl.SDL_CONTROLLERDEVICEREMOVED:
-                pad = self._pads.pop(ev.cdevice.which, None)
+                which = ev.cdevice.which
+                pad = self._pads.pop(which, None)
                 if pad:
                     sdl.SDL_GameControllerClose(pad)
+                for control in list(self._held):  # nothing stays pressed that the unplugged pad was holding
+                    self._hold(which, control, False, out)
+                for key in [k for k in self._stick if k[0] == which]:
+                    del self._stick[key]
             elif kind in (sdl.SDL_CONTROLLERBUTTONDOWN, sdl.SDL_CONTROLLERBUTTONUP):
                 name = sdl.SDL_GameControllerGetStringForButton(ev.cbutton.button)
-                out.append((name.decode(), kind == sdl.SDL_CONTROLLERBUTTONDOWN))
+                self._hold(ev.cbutton.which, name.decode(), kind == sdl.SDL_CONTROLLERBUTTONDOWN, out)
             elif kind == sdl.SDL_CONTROLLERAXISMOTION:
                 self._axis(ev.caxis.which, ev.caxis.axis, ev.caxis.value, out)
         return out
+
+    def _hold(self, which: int, control: str, pressed: bool, out: list[tuple[str, bool]]) -> None:
+        """Press or release ``control`` for one device. Steam shows a pad twice (the real one and its virtual copy), so a
+        control counts as pressed while any device holds it, and is reported once."""
+        holders = self._held.setdefault(control, set())
+        was = bool(holders)
+        holders.add(which) if pressed else holders.discard(which)
+        if bool(holders) != was:
+            out.append((control, bool(holders)))
+        if not holders:
+            del self._held[control]
 
     def _axis(self, which: int, axis: int, value: int, out: list[tuple[str, bool]]) -> None:
         sdl = self._sdl
@@ -261,9 +278,9 @@ class _SdlSource:
             new = None
         if new != current:
             if current is not None:
-                out.append((current, False))
+                self._hold(which, current, False, out)
             if new is not None:
-                out.append((new, True))
+                self._hold(which, new, True, out)
             self._stick[key] = new
 
     def close(self) -> None:

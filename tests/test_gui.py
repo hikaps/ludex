@@ -978,3 +978,37 @@ def test_the_logo_is_drawn_in_the_sidebar_and_in_the_console_tab_row(qapp, tmp_p
         assert len(shown) == 1 and shown[0].width() > 0
         _until(qapp, lambda: shown[0].property("progress") == 1)  # the file was found and decoded
         launcher.backend.closeDown()
+
+
+def test_a_pad_and_its_steam_copy_press_a_button_once_and_an_unplugged_pad_releases_what_it_held():
+    class _Sdl:
+        SDL_CONTROLLER_AXIS_LEFTX, SDL_CONTROLLER_AXIS_LEFTY = 0, 1
+
+        def SDL_Event(self):
+            return None
+
+    source = gamepad_mod._SdlSource(_Sdl())
+    out: list[tuple[str, bool]] = []
+    source._hold(1, "a", True, out)
+    source._hold(2, "a", True, out)  # the virtual copy of the same pad
+    source._hold(1, "a", False, out)
+    assert out == [("a", True)]  # still held by the other device
+    source._hold(2, "a", False, out)
+    assert out == [("a", True), ("a", False)]
+    out.clear()
+    source._axis(3, 0, 20000, out)  # a stick held right, then the pad is unplugged
+    source._hold(3, "dpright", False, out)
+    assert out == [("dpright", True), ("dpright", False)]
+
+
+def test_a_start_up_refresh_that_finds_nothing_does_not_leave_its_message_in_the_status_bar(qapp, tmp_path):
+    launcher = _launcher(_paths(tmp_path), {})
+    backend = launcher.backend
+    backend.startRefresh(True)
+    assert backend.status == "refreshing accounts…"
+    _until(qapp, lambda: not backend.refreshing)
+    assert backend.status == ""
+    backend.startRefresh(False)
+    _until(qapp, lambda: not backend.refreshing)
+    assert backend.status == "refreshed: no changes"
+    backend.closeDown()
