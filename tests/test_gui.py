@@ -24,7 +24,7 @@ from ludex.provider_settings import get_values
 from ludex.sources import steam
 from ludex.storage import connect
 from ludex_gui import gamepad as gamepad_mod
-from ludex_gui.app import QML_DIR, Launcher, build_engine, console_environment
+from ludex_gui.app import QML_DIR, Launcher, build_engine, console_environment, restart_command, restart_environment
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 64
 
@@ -582,11 +582,37 @@ def test_console_mode_goes_fullscreen_and_shows_the_controller_hints(qapp, tmp_p
 
 def test_console_mode_scales_the_ui_unless_the_user_chose_a_scale():
     env: dict[str, str] = {}
-    console_environment(env)
+    assert console_environment(env) is True
     assert env == {"QT_SCALE_FACTOR": "1.25"}
     env = {"QT_SCALE_FACTOR": "2"}
-    console_environment(env)
+    assert console_environment(env) is False
     assert env == {"QT_SCALE_FACTOR": "2"}
+
+
+def test_switching_mode_restarts_with_or_without_console_and_drops_only_its_own_scale():
+    assert restart_command(True)[-1] == "--console"
+    assert "--console" not in restart_command(False)
+    assert restart_environment({"QT_SCALE_FACTOR": "1.25", "HOME": "/h"}, True) == {"HOME": "/h"}
+    assert restart_environment({"QT_SCALE_FACTOR": "2"}, False) == {"QT_SCALE_FACTOR": "2"}
+
+
+def test_the_menu_and_the_sidebar_switch_between_desktop_and_console_mode(qapp, tmp_path, monkeypatch):
+    (tmp_path / "d").mkdir()
+    launcher, window, pad = _padded(qapp, tmp_path / "d", monkeypatch)
+    _find_item(window.contentItem(), "nav-console").forceActiveFocus(Qt.FocusReason.TabFocusReason)
+    pad.press("a")
+    pad.release("a")
+    assert launcher.backend.requested_console is True
+    launcher.backend.closeDown()
+    (tmp_path / "c").mkdir()
+    launcher, window, pad = _padded(qapp, tmp_path / "c", monkeypatch, console=True)
+    pad.press("start")
+    pad.release("start")
+    _until(qapp, lambda: _find_item(window.contentItem(), "switchMode") is not None and _find_item(window.contentItem(), "switchMode").isVisible())
+    assert _find_item(window.contentItem(), "switchMode").property("text") == "Switch to desktop mode"
+    _click(window, "switchMode")
+    assert launcher.backend.requested_console is False
+    launcher.backend.closeDown()
 
 
 def test_menu_entries_are_written_quoted_and_removed_again(tmp_path):

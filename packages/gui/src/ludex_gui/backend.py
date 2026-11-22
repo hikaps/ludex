@@ -11,7 +11,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Property, QAbstractListModel, QModelIndex, QObject, QPersistentModelIndex, Qt, QTimer, QUrl, Signal, Slot
+from PySide6.QtCore import Property, QAbstractListModel, QCoreApplication, QModelIndex, QObject, QPersistentModelIndex, Qt, QTimer, QUrl, Signal, Slot
 
 from ludex.acquire import download_game
 from ludex.artwork import cached_cover, fetch_cover
@@ -110,6 +110,7 @@ class Backend(QObject):
         self._paths, self._sources, self._installed = paths, sources, installed
         self._config_for, self._played_of, self._prefix_root = config_for, played, prefix_root
         self._conn = connect(paths.database)
+        self.requested_console: bool | None = None  # set by switchMode; app.main restarts into that mode
         self._keys: set[tuple[str, str]] = set()
         self._played: Mapping[int, Played] = {}
         self._filter = ("", "", False, "title", "")
@@ -229,6 +230,12 @@ class Backend(QObject):
     matching = Property(bool, _get_matching, notify=matchesChanged)
     canMatch = Property(bool, _get_can_match, constant=True)
     searching = Property(bool, _get_searching, notify=hitsChanged)
+
+    @Slot(bool)
+    def switchMode(self, console: bool) -> None:  # noqa: N802 (Qt)
+        """Ask for the launcher to restart in console (fullscreen, controller) or desktop mode."""
+        self.requested_console = console
+        QCoreApplication.quit()
 
     @Slot(str, bool)
     def notify(self, text: str, error: bool = False) -> None:

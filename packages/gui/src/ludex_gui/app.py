@@ -73,9 +73,26 @@ def build_engine(
 CONSOLE_SCALE = "1.25"
 
 
-def console_environment(env: MutableMapping[str, str]) -> None:
-    """Make everything a little larger for a couch distance, unless the user set a scale."""
-    env.setdefault("QT_SCALE_FACTOR", CONSOLE_SCALE)
+def console_environment(env: MutableMapping[str, str]) -> bool:
+    """Make everything a little larger for a couch distance, unless the user set a scale; True when it did."""
+    if "QT_SCALE_FACTOR" in env:
+        return False
+    env["QT_SCALE_FACTOR"] = CONSOLE_SCALE
+    return True
+
+
+def restart_command(console: bool) -> list[str]:
+    """The command that starts this launcher again in the other mode (the same interpreter, so the same environment)."""
+    code = "import sys; from ludex_gui.app import main; sys.exit(main(sys.argv[1:]))"
+    return [sys.executable, "-c", code, *(["--console"] if console else [])]
+
+
+def restart_environment(env: Mapping[str, str], scale_set_here: bool) -> dict[str, str]:
+    """The environment for the restart: without the console scale this process added, which desktop mode must not inherit."""
+    kept = dict(env)
+    if scale_set_here:
+        kept.pop("QT_SCALE_FACTOR", None)
+    return kept
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -92,8 +109,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         files = desktop.manage(args.install_desktop, os.environ, Path.home())
         print("\n".join(f"{'wrote' if args.install_desktop else 'removed'} {path}" for path in files))
         return 0
-    if args.console:
-        console_environment(os.environ)
+    scale_set_here = console_environment(os.environ) if args.console else False
     sources, _ = load_providers()
     paths = state_paths()
     previous_umask = os.umask(0o077)
@@ -121,4 +137,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         launcher.backend.closeDown()
     finally:
         os.umask(previous_umask)
+    if launcher.backend.requested_console is not None:
+        command = restart_command(launcher.backend.requested_console)
+        os.execve(command[0], command, restart_environment(os.environ, scale_set_here))
     return code
