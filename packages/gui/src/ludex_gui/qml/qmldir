@@ -14,6 +14,7 @@ PluginViewPage PluginViewPage.qml
 Combo Combo.qml
 LaunchOptions LaunchOptions.qml
 MatchDialog MatchDialog.qml
+ReviewDialog ReviewDialog.qml
 AddAccount AddAccount.qml
 Toggle Toggle.qml
 OnScreenKeyboard OnScreenKeyboard.qml

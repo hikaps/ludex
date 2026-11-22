@@ -24,8 +24,8 @@ from ludex.game_settings import (
     parse_environment, set_download_dir, update_settings,
 )
 from ludex.jobs import Job, list_jobs, progress_line, stop_job
-from ludex.launch import install_game, launch_game, open_url
-from ludex.library import get_game, list_games, list_genres
+from ludex.launch import install_game, launch_game, open_url, usable_stores
+from ludex.library import dismiss_review, get_game, list_games, list_genres, list_review, merge_games
 from ludex.metadata import (
     cached_match, cached_metadata, choose_match, clear_match, default_query, game_metadata, get_auto_details, get_auto_match,
     match_candidates,
@@ -98,6 +98,7 @@ class Backend(QObject):
     matchesChanged = Signal()
     detailsChanged = Signal()
     activityChanged = Signal()
+    reviewChanged = Signal()
 
     def __init__(
         self,
@@ -135,6 +136,7 @@ class Backend(QObject):
         self._jobs: list[dict[str, Any]] = []
         self._running_jobs = 0
         self._handoff: set[int] = set()  # games a store client was asked to start a moment ago
+        self._review: list[dict[str, Any]] = []
         self._by_job: dict[int, str] = {}  # game id -> what its running job is doing
         self._activity: dict[str, str] = {}
         self._jobs_seen: dict[int, str] = {}
@@ -236,6 +238,10 @@ class Backend(QObject):
     gameModel = Property(QObject, _get_games, constant=True)
     settingsController = Property(QObject, _get_settings, constant=True)
     refreshing = Property(bool, _get_busy, notify=busyChanged)
+    def _get_review(self) -> list[dict[str, Any]]:
+        return self._review
+
+    review = Property("QVariantList", _get_review, notify=reviewChanged)
     matches = Property("QVariantList", _get_matches, notify=matchesChanged)
     matching = Property(bool, _get_matching, notify=matchesChanged)
     canMatch = Property(bool, _get_can_match, constant=True)
@@ -308,6 +314,8 @@ class Backend(QObject):
         self._stores, self._count = stores, len(rows)
         self._genres = [{"genre": name, "games": count} for name, count in list_genres(self._conn)]
         self._missing = len(games_without_details(self._conn))
+        self._review = self._review_items()
+        self.reviewChanged.emit()
         self.libraryChanged.emit()
         self.detailsChanged.emit()
         if self._current:
@@ -399,6 +407,7 @@ class Backend(QObject):
             "ownership": [{"store": o["store"], "storeId": str(o["store_id"]), "account": str(o["account"]), "removed": bool(o["removed"])} for o in game["ownership"]],
             "stores": ", ".join(sorted({o["store"] for o in live})),
             "installed": any(c in self._keys for c in copies),
+            "playStores": self._play_stores(game_id, any(c in self._keys for c in copies), game["ownership"]),
             "played": describe_played(self._played.get(game_id)),
             "coverUrl": self._covers.get(game_id, ""),
             "description": found.description or "" if found else "",
@@ -569,11 +578,25 @@ class Backend(QObject):
 
     @Slot(int)
     def launch(self, game_id: int) -> None:
-        self._start_game(game_id, launch_game, "launch", "launched from")
+        self._start_game(game_id, launch_game, "launch", None)
+
+    @Slot(int, str)
+    def launchFrom(self, game_id: int, store: str) -> None:  # noqa: N802 (Qt)
+        self._start_game(game_id, launch_game, "launch", store or None)
 
     @Slot(int)
     def install(self, game_id: int) -> None:
-        self._start_game(game_id, install_game, "install", "installed from")
+        self._start_game(game_id, install_game, "install", None)
+
+    @Slot(int, str)
+    def installFrom(self, game_id: int, store: str) -> None:  # noqa: N802 (Qt)
+        self._start_game(game_id, install_game, "install", store or None)
+
+    def _play_stores(self, game_id: int, installed: bool, ownership: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """The stores a game can be played (or, when none has it installed, installed) from; the first one is what a click uses."""
+        stores = usable_stores(self._conn, self._sources, game_id, "launch" if installed else "install")
+        has = {o["store"] for o in ownership if not o["removed"] and (o["store"], str(o["store_id"])) in self._keys}
+        return [{"store": store, "installed": store in has} for store in sorted(stores, key=lambda st: (st not in has, st))]
 
     def _show_activity(self) -> None:
         """What each game is doing now, for the cards and game pages: its running job, or a client being asked to start it."""
@@ -587,19 +610,16 @@ class Backend(QObject):
         self._handoff.discard(game_id)
         self._show_activity()
 
-    def _start_game(self, game_id: int, call: Callable, verb: str, phrase: str) -> None:
+    def _start_game(self, game_id: int, call: Callable, verb: str, store: str | None) -> None:
         if str(game_id) in self._activity:  # a repeated click while the game is already starting, running or installing
             return
         logs = self._paths.database.parent / "logs"
         extra = (get_prefix_root(self._conn, self._prefix_root), logs) if verb == "launch" else (logs,)
         try:
-            try:
-                target, job = call(self._conn, self._sources, game_id, None, self._config_for, *extra)
-            except LudexError as exc:
-                if exc.code != f"{verb}_ambiguous":
-                    raise
-                store = exc.message.split(phrase)[1].split(";")[0].split(", ")[0]  # several stores: the first, alphabetically
-                target, job = call(self._conn, self._sources, game_id, store, self._config_for, *extra)
+            if store is None:  # several stores: the one with an installed copy, else the first alphabetically
+                choices = self._play_stores(game_id, verb == "launch", get_game(self._conn, game_id)["ownership"])
+                store = choices[0]["store"] if len(choices) > 1 else None
+            target, job = call(self._conn, self._sources, game_id, store, self._config_for, *extra)
         except LudexError as exc:
             self.notify(exc.message, True)
             return
@@ -801,6 +821,41 @@ class Backend(QObject):
             return
         self._jobs_seen[job.id] = job.state
         self.notify(f"downloading {hit['title']} in the background; see Downloads")
+
+    # --- matches that need a decision -----------------------------------------------------------------------
+
+    def _review_items(self) -> list[dict[str, Any]]:
+        items = []
+        for item in list_review(self._conn):
+            candidates = []
+            for candidate in item["candidates"]:
+                stores = sorted({o["store"] for o in get_game(self._conn, candidate["id"])["ownership"] if not o["removed"]})
+                candidates.append({"id": candidate["id"], "title": candidate["title"], "stores": ", ".join(stores)})
+            items.append({"id": item["id"], "gameId": item["game_id"], "title": item["title"], "store": item["store"],
+                          "account": item["account"], "candidates": candidates})
+        return items
+
+    @Slot(int, int)
+    def mergeReview(self, game_id: int, into: int) -> None:  # noqa: N802 (Qt)
+        """Join the game of a queued match to the candidate ``into``; the other candidates stay as they are."""
+        try:
+            with writer_lock(self._paths.import_lock):
+                merge_games(self._conn, into, game_id)
+        except LudexError as exc:
+            self.notify(exc.message, True)
+            return
+        self.notify("merged the two games")
+        self.reload()
+
+    @Slot(int)
+    def keepSeparate(self, review_id: int) -> None:  # noqa: N802 (Qt)
+        try:
+            with writer_lock(self._paths.import_lock):
+                dismiss_review(self._conn, review_id)
+        except LudexError as exc:
+            self.notify(exc.message, True)
+            return
+        self.reload()
 
     # --- jobs -----------------------------------------------------------------------------------------------
 

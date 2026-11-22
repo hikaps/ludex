@@ -831,19 +831,23 @@ def test_play_is_disabled_while_the_game_runs_and_a_second_click_is_ignored(qapp
     from ludex_gui import backend as backend_mod
 
     calls = []
-    job = Job(1, "play", 7, "steam:7", "Doom", 0, tmp_path / "log", "now", None, "running", None)
+    job = Job(1, "play", 1, "steam:7", "Doom", 0, tmp_path / "log", "now", None, "running", None)
     monkeypatch.setattr(backend_mod, "launch_game", lambda *a, **k: calls.append(a[2]) or ("steam:7", job))
-    launcher = _launcher(_paths(tmp_path), {})
+    paths = _paths(tmp_path)
+    conn = connect(paths.database)
+    import_account(conn, "m", [OwnedGame("steam", "7", "Doom")], store="steam")
+    conn.close()
+    launcher = _launcher(paths, {})
     backend = launcher.backend
     monkeypatch.setattr(backend, "openGame", lambda *a, **k: None)
-    backend.launch(7)
-    backend.launch(7)
-    assert calls == [7] and backend.activity == {"7": "Running"}
+    backend.launch(1)
+    backend.launch(1)
+    assert calls == [1] and backend.activity == {"1": "Running"}
     monkeypatch.setattr(backend_mod, "list_jobs", lambda *a, **k: [dataclasses.replace(job, state="exited")])
     backend.pollJobs()
     assert backend.activity == {}
-    backend.launch(7)
-    assert calls == [7, 7]
+    backend.launch(1)
+    assert calls == [1, 1]
     backend.closeDown()
 
 
@@ -853,12 +857,107 @@ def test_a_game_handed_to_a_store_client_is_busy_only_for_a_moment(qapp, tmp_pat
     calls = []
     monkeypatch.setattr(backend_mod, "launch_game", lambda *a, **k: calls.append(a[2]) or ("steam:7", None))
     monkeypatch.setattr(backend_mod, "HANDOFF_MS", 30)
-    launcher = _launcher(_paths(tmp_path), {})
+    paths = _paths(tmp_path)
+    conn = connect(paths.database)
+    import_account(conn, "m", [OwnedGame("steam", "7", "Doom")], store="steam")
+    conn.close()
+    launcher = _launcher(paths, {})
     backend = launcher.backend
-    backend.launch(7)
-    backend.launch(7)
-    assert calls == [7] and backend.activity == {"7": "Starting"}
+    backend.launch(1)
+    backend.launch(1)
+    assert calls == [1] and backend.activity == {"1": "Starting"}
     _until(qapp, lambda: backend.activity == {})
-    backend.launch(7)
-    assert calls == [7, 7]
+    backend.launch(1)
+    assert calls == [1, 1]
+    backend.closeDown()
+
+
+def _two_stores(tmp_path, installed=frozenset()):
+    paths = _paths(tmp_path)
+    conn = connect(paths.database)
+    import_account(conn, "m", [OwnedGame("a", "1", "Hades")], store="a")
+    import_account(conn, "m", [OwnedGame("b", "1", "Hades")], store="b")
+    conn.close()
+    shop = lambda name: Provider(name, name, (), launch_url=lambda i: f"{name}://{i}", install_url=lambda i: f"{name}://install/{i}")
+    return _launcher(paths, {"a": shop("a"), "b": shop("b")}, installed)
+
+
+def test_a_game_in_two_stores_starts_from_the_installed_copy_unless_a_store_is_chosen(qapp, tmp_path, monkeypatch):
+    from ludex_gui import backend as backend_mod
+
+    stores = []
+    monkeypatch.setattr(backend_mod, "launch_game", lambda *a, **k: stores.append(a[3]) or ("x:1", None))
+    monkeypatch.setattr(backend_mod, "HANDOFF_MS", 20)
+    launcher = _two_stores(tmp_path, {("b", "1")})
+    backend = launcher.backend
+    backend.openGame(1)
+    assert backend.current["playStores"] == [{"store": "b", "installed": True}, {"store": "a", "installed": False}]
+    backend.launch(1)
+    _until(qapp, lambda: backend.activity == {})
+    backend.launchFrom(1, "a")
+    assert stores == ["b", "a"]
+    backend.closeDown()
+
+
+def test_the_game_page_offers_the_stores_only_when_there_are_several(qapp, tmp_path):
+    launcher = _two_stores(tmp_path)
+    backend, window = launcher.backend, launcher.window
+    backend.openGame(1)
+    box = _find_item(window.contentItem(), "storeBox")
+    _until(qapp, lambda: box is not None and box.isVisible())
+    assert box.property("count") == 2
+    backend.closeDown()
+
+
+def _doom_world(tmp_path):
+    paths = _paths(tmp_path)
+    conn = connect(paths.database)
+    import_account(conn, "m", [OwnedGame("a", "1", "Doom"), OwnedGame("a", "2", "Doom")], store="a")
+    import_account(conn, "m", [OwnedGame("b", "9", "Doom")], store="b")
+    conn.close()
+    return _launcher(paths, {})
+
+
+def test_a_queued_match_is_merged_into_the_chosen_candidate(qapp, tmp_path):
+    launcher = _doom_world(tmp_path)
+    backend = launcher.backend
+    assert len(backend.review) == 2  # the second Doom of store a, and Doom of store b
+    item = next(i for i in backend.review if i["store"] == "b")
+    assert [c["stores"] for c in item["candidates"]] == ["a", "a"]
+    chosen = item["candidates"][1]["id"]
+    backend.mergeReview(item["gameId"], chosen)
+    assert [i["store"] for i in backend.review] == ["a"] and backend.count == 2
+    backend.openGame(chosen)
+    assert backend.current["stores"] == "a, b"
+    backend.closeDown()
+
+
+def test_a_queued_match_can_be_kept_separate_and_the_dialog_lists_it(qapp, tmp_path):
+    launcher = _doom_world(tmp_path)
+    backend, window = launcher.backend, launcher.window
+    button = _find_item(window.contentItem(), "reviewButton")
+    _until(qapp, lambda: button.isVisible())
+    assert "(2)" in button.property("text")
+    backend.keepSeparate(backend.review[0]["id"])
+    assert len(backend.review) == 1 and backend.count == 3
+    backend.keepSeparate(backend.review[0]["id"])
+    assert backend.review == []
+    _until(qapp, lambda: not button.isVisible())
+    backend.closeDown()
+
+
+def test_the_review_dialog_merges_with_a_click_and_lands_on_the_first_answer(qapp, tmp_path):
+    launcher = _doom_world(tmp_path)
+    backend, window = launcher.backend, launcher.window
+    root = window.contentItem()
+    _until(qapp, lambda: _find_item(root, "reviewButton").isVisible())
+    _click(window, "reviewButton")
+    dialog = window.findChild(QObject, "reviewDialog")
+    _until(qapp, lambda: dialog.property("visible"))
+    first = backend.review[0]
+    target = first["candidates"][0]["id"]
+    _until(qapp, lambda: _find_item(dialog.property("contentItem"), f"mergeInto-{target}") is not None)
+    _until(qapp, lambda: window.activeFocusItem() is _find_item(dialog.property("contentItem"), f"mergeInto-{target}"))
+    QMetaObject.invokeMethod(_find_item(dialog.property("contentItem"), f"mergeInto-{target}"), "click", Qt.ConnectionType.DirectConnection)
+    _until(qapp, lambda: len(backend.review) < 2)
     backend.closeDown()
