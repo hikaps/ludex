@@ -3,7 +3,7 @@
 [![Tests](https://github.com/hikaps/ludex/actions/workflows/tests.yml/badge.svg?branch=develop)](https://github.com/hikaps/ludex/actions/workflows/tests.yml)
 [![Rolling packages](https://github.com/hikaps/ludex/actions/workflows/releases.yml/badge.svg?branch=main)](https://github.com/hikaps/ludex/actions/workflows/releases.yml)
 
-**beets for games.** A headless, scriptable, local-only library of the games you own across stores, with a command line, a terminal UI and a desktop launcher you can drive with a controller. Linux first, Python 3.11+, SQLite.
+**Every game you own, in one local library.** A headless, scriptable library of the games you own across stores, with a command line, a terminal UI and a desktop launcher you can drive with a controller. Linux first, Python 3.11+, SQLite.
 
 ## The problem
 
