@@ -961,3 +961,20 @@ def test_the_review_dialog_merges_with_a_click_and_lands_on_the_first_answer(qap
     QMetaObject.invokeMethod(_find_item(dialog.property("contentItem"), f"mergeInto-{target}"), "click", Qt.ConnectionType.DirectConnection)
     _until(qapp, lambda: len(backend.review) < 2)
     backend.closeDown()
+
+
+def _logos(item):
+    found = [item] if item.objectName() == "logo" else []
+    for child in item.childItems():
+        found += _logos(child)
+    return found
+
+
+def test_the_logo_is_drawn_in_the_sidebar_and_in_the_console_tab_row(qapp, tmp_path, monkeypatch):
+    for name, console in (("d", False), ("c", True)):
+        (tmp_path / name).mkdir()
+        launcher, window, pad = _padded(qapp, tmp_path / name, monkeypatch, console=console)
+        shown = [i for i in _logos(window.contentItem()) if i.isVisible()]
+        assert len(shown) == 1 and shown[0].width() > 0
+        _until(qapp, lambda: shown[0].property("progress") == 1)  # the file was found and decoded
+        launcher.backend.closeDown()

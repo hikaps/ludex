@@ -6,6 +6,7 @@ Like the TUI it only collects input, calls the core and shows results. Blocking 
 from __future__ import annotations
 
 import sqlite3
+from importlib import resources
 import threading
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -234,6 +235,7 @@ class Backend(QObject):
 
     runningJobs = Property(int, _get_running_jobs, notify=jobsChanged)
     activity = Property("QVariantMap", _get_activity, notify=activityChanged)
+    logo = Property(str, lambda self: QUrl.fromLocalFile(str(resources.files("ludex_gui") / "assets" / "ludex.svg")).toString(), constant=True)
     views = Property("QVariantList", _get_views, constant=True)
     gameModel = Property(QObject, _get_games, constant=True)
     settingsController = Property(QObject, _get_settings, constant=True)
