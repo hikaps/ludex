@@ -37,13 +37,14 @@ Item {
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 24
+        anchors.margins: consoleMode ? 32 : 24
         spacing: 14
 
         RowLayout {
             Layout.fillWidth: true
             spacing: 12
             Txt {
+                visible: !consoleMode
                 text: page.installedOnly ? "Installed" : "Library"
                 font.pixelSize: Theme.title
                 font.bold: true
@@ -83,6 +84,7 @@ Item {
                 onActivated: page.apply()
             }
             Btn {
+                visible: !consoleMode
                 text: backend.refreshing ? "Refreshing…" : "Refresh"
                 enabled: !backend.refreshing
                 onClicked: { backend.reload(); backend.startRefresh(false) }
@@ -128,9 +130,9 @@ Item {
             activeFocusOnTab: true
             Layout.fillWidth: true
             Layout.fillHeight: true
-            readonly property int columns: Math.max(2, Math.floor(width / 190))
+            readonly property int columns: Math.max(2, Math.floor(width / (consoleMode ? 220 : 190)))
             cellWidth: Math.floor(width / columns)
-            cellHeight: Math.round(cellWidth * 1.5) + 62
+            cellHeight: Math.round(cellWidth * 1.5) + (consoleMode ? 84 : 62)
             clip: true
             focus: true
             keyNavigationEnabled: true

@@ -25,7 +25,7 @@ Item {
         radius: 4
         color: Theme.surface
         clip: true
-        scale: card.lifted ? 1.035 : 1
+        scale: card.lifted ? (consoleMode ? 1.08 : 1.035) : 1
         Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
 
         CoverArt {
@@ -74,9 +74,9 @@ Item {
             anchors.margins: 10
             anchors.topMargin: 8
             spacing: 2
-            Txt { width: parent.width; text: card.title; font.bold: true; elide: Text.ElideRight }
+            Txt { width: parent.width; text: card.title; font.bold: true; font.pixelSize: consoleMode ? 17 : Theme.body; elide: Text.ElideRight }
             Txt { width: parent.width; text: card.played !== "" && card.played !== "never" ? card.stores + " · " + card.played : card.stores
-                  font.pixelSize: Theme.small; color: Theme.muted; elide: Text.ElideRight }
+                  font.pixelSize: consoleMode ? 14 : Theme.small; color: Theme.muted; elide: Text.ElideRight }
         }
         // Drawn as a child so it paints over the cover; a Rectangle's own border sits under its children.
         Rectangle {
@@ -84,7 +84,7 @@ Item {
             z: 10
             color: "transparent"
             radius: parent.radius
-            border.width: card.current ? 3 : 0
+            border.width: card.current ? (consoleMode ? 5 : 3) : 0
             border.color: Theme.accent
         }
     }

@@ -41,6 +41,10 @@ ApplicationWindow {
         var item = activeFocusItem
         if (item && item.hasOwnProperty("cursorPosition")) keyboard.openFor(item)
     }
+    function sectionTitle(name) {
+        if (name.indexOf("view:") === 0) return backend.views[parseInt(name.split(":")[1])].title
+        return {library: "Library", installed: "Installed", search: "Search", jobs: "Jobs", settings: "Settings"}[name]
+    }
     readonly property var sections: ["library", "installed", "search", "jobs", "settings"].concat(backend.views.map((v, i) => "view:" + i))
 
     // The functions below are what the keyboard shortcuts and the controller (gamepad.py) call.
@@ -136,6 +140,7 @@ ApplicationWindow {
         spacing: 0
 
         Rectangle {
+            visible: !consoleMode
             Layout.fillHeight: true
             Layout.preferredWidth: 224
             color: Theme.surface
@@ -209,6 +214,62 @@ ApplicationWindow {
             Layout.fillHeight: true
             spacing: 0
 
+            Rectangle {
+                visible: consoleMode
+                objectName: "consoleTabs"
+                Layout.fillWidth: true
+                Layout.preferredHeight: 64
+                color: Theme.surface
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 32
+                    anchors.rightMargin: 32
+                    spacing: 8
+                    Txt { text: "ludex"; font.pixelSize: 26; font.bold: true; Layout.rightMargin: 24 }
+                    Repeater {
+                        model: win.sections
+                        delegate: Item {
+                            id: tab
+                            required property string modelData
+                            readonly property bool here: win.section === modelData
+                            objectName: "tab-" + modelData
+                            Layout.preferredWidth: tabLabel.implicitWidth + 36
+                            Layout.fillHeight: true
+                            activeFocusOnTab: true
+                            Keys.onReturnPressed: win.go(modelData)
+                            Txt {
+                                id: tabLabel
+                                anchors.centerIn: parent
+                                text: win.sectionTitle(tab.modelData)
+                                font.pixelSize: 18
+                                font.bold: tab.here
+                                color: tab.here ? Theme.text : Theme.muted
+                            }
+                            Rectangle {
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.bottom: parent.bottom
+                                height: 4
+                                radius: 2
+                                color: Theme.accent
+                                visible: tab.here
+                            }
+                            Rectangle {
+                                anchors.fill: parent
+                                anchors.margins: 6
+                                radius: Theme.radius
+                                color: "transparent"
+                                border.width: tab.activeFocus ? 3 : 0
+                                border.color: Theme.text
+                            }
+                            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: win.go(tab.modelData) }
+                        }
+                    }
+                    Item { Layout.fillWidth: true }
+                    Chip { visible: backend.runningJobs > 0; text: backend.runningJobs + " running"; checked: true; interactive: false }
+                }
+            }
+
             Item {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
@@ -239,7 +300,7 @@ ApplicationWindow {
 
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 30
+                Layout.preferredHeight: consoleMode ? 44 : 30
                 color: Theme.surface
                 Txt {
                     id: hints
@@ -248,8 +309,8 @@ ApplicationWindow {
                     anchors.right: parent.right
                     anchors.rightMargin: 16
                     objectName: "hints"
-                    text: "A Select    B Back    X Play    Y Search    LB RB Pages    Start Menu"
-                    font.pixelSize: Theme.small
+                    text: win.gameOpen ? "A Select    B Back    X Play    Start Menu" : "A Open    B Back    X Play    Y Search    LB RB Tabs    Start Menu"
+                    font.pixelSize: 15
                     color: Theme.muted
                 }
                 Txt {
