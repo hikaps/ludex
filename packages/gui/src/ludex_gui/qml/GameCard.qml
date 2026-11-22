@@ -13,7 +13,11 @@ Item {
     property bool current: false
     signal opened()
 
-    readonly property bool lifted: mouse.containsMouse || current
+    readonly property bool starting: backend.starting.indexOf(gameId) >= 0
+    // A HoverHandler sees the pointer over the Play button too; a MouseArea under it would lose the hover
+    // and hide the button, which brings the hover back, and so on.
+    readonly property bool lifted: hover.hovered || current
+    HoverHandler { id: hover }
 
     Component.onCompleted: backend.requestCover(gameId)
     Component.onDestruction: if (backend) backend.cancelCover(gameId)
@@ -58,7 +62,8 @@ Item {
             id: play
             focusPolicy: Qt.NoFocus
             primary: true
-            text: card.installed ? "Play" : "Install"
+            text: card.starting ? "Starting…" : card.installed ? "Play" : "Install"
+            enabled: !card.starting
             anchors.horizontalCenter: art.horizontalCenter
             anchors.bottom: art.bottom
             anchors.bottomMargin: 12
@@ -91,7 +96,6 @@ Item {
     MouseArea {
         id: mouse
         anchors.fill: parent
-        hoverEnabled: true
         z: -1
         cursorShape: Qt.PointingHandCursor
         onClicked: card.opened()

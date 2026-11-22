@@ -92,11 +92,13 @@ Item {
                     spacing: 12
                     Btn {
                         id: playButton
+                        readonly property bool starting: backend.starting.indexOf(game.gameId) >= 0
                         primary: true
                         fontSize: 18
                         implicitHeight: 52
                         implicitWidth: 200
-                        text: page.installed ? "▶  Play" : "⇩  Install"
+                        text: starting ? "Starting…" : page.installed ? "▶  Play" : "⇩  Install"
+                        enabled: !starting && !page.running
                         onClicked: page.playOrInstall()
                     }
                     Btn {

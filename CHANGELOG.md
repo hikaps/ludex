@@ -4,6 +4,10 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+### Fixed
+
+- **gui:** the Play button on a game card no longer flickers while the pointer is on it (the hover moved from under the button to the button and back). Clicking Play or Install now shows "Starting…" on the card and the game page, and further clicks, the controller and `Ctrl+P` are ignored for a few seconds, so a game is no longer started two or three times.
+
 ## [0.63.0] - 2026-11-21
 
 ### Added

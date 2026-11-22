@@ -823,3 +823,20 @@ def test_sidebar_labels_are_centred_in_their_rows(qapp, tmp_path):
         middle = label.mapToItem(item, 0, label.height() / 2).y()
         assert abs(middle - item.height() / 2) <= 1, name
     launcher.backend.closeDown()
+
+
+def test_a_second_click_on_play_is_ignored_while_the_game_is_starting(qapp, tmp_path, monkeypatch):
+    from ludex_gui import backend as backend_mod
+
+    calls = []
+    monkeypatch.setattr(backend_mod, "launch_game", lambda *a, **k: calls.append(a[2]) or ("Doom", None))
+    monkeypatch.setattr(backend_mod, "START_COOLDOWN_MS", 30)
+    launcher = _launcher(_paths(tmp_path), {})
+    backend = launcher.backend
+    backend.launch(7)
+    backend.launch(7)
+    assert calls == [7] and backend.starting == [7]
+    _until(qapp, lambda: backend.starting == [])
+    backend.launch(7)
+    assert calls == [7, 7]
+    backend.closeDown()
