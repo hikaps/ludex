@@ -1073,3 +1073,21 @@ def test_the_start_menu_refreshes_the_library_so_console_mode_can_do_it(qapp, tm
     assert refreshed == [False]
     _until(qapp, lambda: not menu.property("visible"))
     launcher.backend.closeDown()
+
+
+def test_the_library_and_installed_tabs_keep_their_own_search_text(qapp, tmp_path, monkeypatch):
+    launcher, window, pad = _padded(qapp, tmp_path, monkeypatch, {("steam", "1")})
+    backend = launcher.backend
+    pad.press("rightshoulder")  # Installed
+    pad.release("rightshoulder")
+    assert window.property("section") == "installed"
+    boxes = [i for i in _items(window.contentItem()) if i.objectName() == "librarySearch" and i.isVisible()]
+    assert len(boxes) == 1
+    boxes[0].setProperty("text", "hades")
+    _until(qapp, lambda: backend.count == 1)
+    pad.press("leftshoulder")  # back to Library: its box is empty and every game shows
+    pad.release("leftshoulder")
+    shown = [i for i in _items(window.contentItem()) if i.objectName() == "librarySearch" and i.isVisible()]
+    assert len(shown) == 1 and shown[0] is not boxes[0] and shown[0].property("text") == ""
+    _until(qapp, lambda: backend.count == 2)
+    backend.closeDown()

@@ -6,6 +6,7 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ### Fixed
 
+- **gui:** the Library and Installed tabs are separate pages with their own search text, store, genre and sort (they shared one, so a search typed in one showed in the other).
 - **gui:** a controller can walk a dialog that opens with no control focused (the match dialog, among others): the first D-pad press lands on its first control, and Up and Down leave a one-line text field instead of getting stuck in it, so the results can be reached and picked.
 - **gui:** console mode can refresh the library: the Start menu has "Refresh library" (the Refresh button of the library page is hidden in console mode).
 - **gui:** the "refreshing accounts…" message no longer stays in the status bar after a start-up refresh that found nothing new.
