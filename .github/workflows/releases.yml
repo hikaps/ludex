@@ -62,6 +62,7 @@ jobs:
           name: packages
           path: |
             dist/ludex.tar.gz
+            dist/ludex-gui.tar.gz
             dist/*.whl
             dist/SHA256SUMS
           if-no-files-found: error
@@ -144,7 +145,7 @@ jobs:
           names = {p.name for p in dist.iterdir()} - {"SHA256SUMS"}
           wheels = {n for n in names if n.endswith(".whl")}
           prefixes = {"ludex_core-", "ludex_cli-", "ludex_tui-", "ludex_games-"}
-          if set(sums) != names or "ludex.tar.gz" not in names or len(wheels) != 4 or {w.split("-")[0] + "-" for w in wheels} != prefixes:
+          if set(sums) != names or {"ludex.tar.gz", "ludex-gui.tar.gz"} - names or len(wheels) != 4 or {w.split("-")[0] + "-" for w in wheels} != prefixes:
               raise SystemExit(f"package artifact set is incomplete or unexpected: {sorted(names)}")
           for name, digest in sums.items():
               if hashlib.sha256((dist / name).read_bytes()).hexdigest() != digest:
@@ -199,8 +200,8 @@ jobs:
           PRERELEASE=true
           MAKE_LATEST=false
           BETA_URL="https://github.com/$REPOSITORY/releases/download/beta/ludex.tar.gz"
-          NOTES="$(printf 'Rolling pre-release of `%s` at `%s`. For the latest stable version use `uv tool install ludex-games`.\n\nPackage version: `%s`\nWorkflow: %s\n\nWith uv: `uv tool install %s`\nWith pipx: `pipx install %s`' \
-            "$SOURCE_BRANCH" "$SOURCE_SHA" "$PACKAGE_VERSION" "$RUN_URL" "$BETA_URL" "$BETA_URL")"
+          NOTES="$(printf 'Rolling pre-release of `%s` at `%s`. For the latest stable version use `uv tool install ludex-games`.\n\nPackage version: `%s`\nWorkflow: %s\n\nWith uv: `uv tool install %s`\nWith pipx: `pipx install %s`\nWith the GUI: `uv tool install %s --with %s`' \
+            "$SOURCE_BRANCH" "$SOURCE_SHA" "$PACKAGE_VERSION" "$RUN_URL" "$BETA_URL" "$BETA_URL" "$BETA_URL" "${BETA_URL%ludex.tar.gz}ludex-gui.tar.gz")"
 
           if [[ "$RELEASE_COUNT" == "0" ]]; then
             RELEASE_FLAGS=()
@@ -212,7 +213,7 @@ jobs:
             if [[ "$PRERELEASE" == "true" ]]; then
               RELEASE_FLAGS+=(--prerelease)
             fi
-            gh release create "$CHANNEL" dist/ludex.tar.gz dist/SHA256SUMS dist/*.whl \
+            gh release create "$CHANNEL" dist/ludex.tar.gz dist/ludex-gui.tar.gz dist/SHA256SUMS dist/*.whl \
               --verify-tag --title "$TITLE" --notes "$NOTES" "${RELEASE_FLAGS[@]}"
           else
             RELEASE_ID="$(jq -r '.[0].id' <<< "$RELEASES")"
@@ -244,7 +245,7 @@ jobs:
               fi
             }
             for wheel in "${WHEELS[@]}"; do upload_wheel "$wheel"; done
-            gh release upload "$CHANNEL" dist/ludex.tar.gz --clobber
+            gh release upload "$CHANNEL" dist/ludex.tar.gz dist/ludex-gui.tar.gz --clobber
             upload_wheel "${BUNDLE_WHEEL[0]}"
             gh release upload "$CHANNEL" dist/SHA256SUMS --clobber
             gh api --method PATCH "repos/$REPOSITORY/releases/$RELEASE_ID" \

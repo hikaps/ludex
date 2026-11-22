@@ -64,10 +64,12 @@ Item {
         parent: actionsButton.parent
         padding: 6
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        onOpened: if (actionButtons.count > 0) actionButtons.itemAt(0).forceActiveFocus(Qt.TabFocusReason)
         background: Rectangle { radius: Theme.radius; color: Theme.surface2; border.width: 1; border.color: Theme.border }
         contentItem: Column {
             spacing: 4
             Repeater {
+                id: actionButtons
                 model: view.actions
                 delegate: Btn {
                     required property var modelData
@@ -128,6 +130,11 @@ Item {
                     Layout.fillHeight: true
                     clip: true
                     model: view.rows
+                    activeFocusOnTab: true
+                    keyNavigationEnabled: true
+                    currentIndex: -1
+                    onCurrentIndexChanged: view.selected = currentIndex
+                    Keys.onReturnPressed: if (view.actions.length > 0) menu.open()
                     ScrollBar.vertical: ScrollBar {}
                     delegate: Rectangle {
                         id: line
@@ -168,8 +175,8 @@ Item {
                         }
                         MouseArea {
                             anchors.fill: parent
-                            onClicked: view.selected = line.index
-                            onDoubleClicked: { view.selected = line.index; if (view.actions.length > 0) menu.open() }
+                            onClicked: list.currentIndex = line.index
+                            onDoubleClicked: { list.currentIndex = line.index; if (view.actions.length > 0) menu.open() }
                         }
                     }
                     Txt {

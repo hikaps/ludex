@@ -10,6 +10,7 @@ ApplicationWindow {
     minimumWidth: 900
     minimumHeight: 600
     visible: true
+    visibility: consoleMode ? Window.FullScreen : Window.Windowed
     title: "ludex"
     color: Theme.bg
     font.family: Theme.family
@@ -21,6 +22,68 @@ ApplicationWindow {
         backend.closeGame()
         section = name
     }
+    // Y on the controller and "/" on the keyboard: jump to the search field of the current page.
+    function focusSearch() {
+        if (inPopup(activeFocusItem)) return
+        if (section === "search") {
+            search.focusSearch()
+        } else if (section === "library" || section === "installed") {
+            go(section)
+            library.focusSearch()
+        }
+    }
+    // Start on the controller: resume or quit.
+    function openMenu() {
+        if (!inPopup(activeFocusItem)) menu.open()
+    }
+    // A on a text field: type with the on-screen keyboard.
+    function openKeyboard() {
+        var item = activeFocusItem
+        if (item && item.hasOwnProperty("cursorPosition")) keyboard.openFor(item)
+    }
+    function sectionTitle(name) {
+        if (name.indexOf("view:") === 0) return backend.views[parseInt(name.split(":")[1])].title
+        return {library: "Library", installed: "Installed", search: "Search", jobs: "Jobs", settings: "Settings"}[name]
+    }
+    readonly property var sections: ["library", "installed", "search", "jobs", "settings"].concat(backend.views.map((v, i) => "view:" + i))
+
+    // The functions below are what the keyboard shortcuts and the controller (gamepad.py) call.
+    function cycle(step) {
+        if (inPopup(activeFocusItem)) return
+        go(sections[(sections.indexOf(section) + step + sections.length) % sections.length])
+    }
+    function goBack() {
+        if (gameOpen) backend.closeGame()
+    }
+    function playCurrent() {
+        if (inPopup(activeFocusItem)) return
+        if (gameOpen) {
+            gamePage.playOrInstall()
+        } else if (section === "library" || section === "installed") {
+            library.playCurrent()
+        }
+    }
+    // True while the focus sits inside a dialog or popup, which owns Escape and page keys.
+    function inPopup(item) {
+        for (var p = item; p; p = p.parent) {
+            if (p === Overlay.overlay) return true
+        }
+        return false
+    }
+    // Scrolls the nearest Flickable so the focused control stays on screen.
+    function ensureVisible(item) {
+        if (!item || inPopup(item)) return
+        var p = item.parent
+        while (p && !(p instanceof Flickable)) p = p.parent
+        if (!p || p.contentHeight <= p.height) return
+        var y = item.mapToItem(p.contentItem, 0, 0).y
+        if (y < p.contentY) {
+            p.contentY = Math.max(p.originY, y - 16)
+        } else if (y + item.height > p.contentY + p.height) {
+            p.contentY = Math.min(p.originY + p.contentHeight - p.height, y + item.height - p.height + 16)
+        }
+    }
+    onActiveFocusItemChanged: ensureVisible(activeFocusItem)
     function pageIndex(name) {
         if (name === "library" || name === "installed") return 0
         if (name === "search") return 1
@@ -37,6 +100,7 @@ ApplicationWindow {
         }
     }
 
+    Shortcut { sequence: "F11"; onActivated: backend.switchMode(!consoleMode) }
     Shortcut { sequence: "Ctrl+1"; onActivated: win.go("library") }
     Shortcut { sequence: "Ctrl+2"; onActivated: win.go("installed") }
     Shortcut { sequence: "Ctrl+3"; onActivated: win.go("search") }
@@ -44,27 +108,46 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+5"; onActivated: win.go("settings") }
     Shortcut {
         sequence: "Escape"
-        enabled: win.gameOpen
-        onActivated: backend.closeGame()
+        enabled: win.gameOpen && !win.inPopup(win.activeFocusItem)
+        onActivated: win.goBack()
     }
+    Shortcut { sequence: "Ctrl+PgDown"; onActivated: win.cycle(1) }
+    Shortcut { sequence: "Ctrl+PgUp"; onActivated: win.cycle(-1) }
+    Shortcut { sequence: "Ctrl+P"; onActivated: win.playCurrent() }
     Shortcut {
         sequence: "/"
         enabled: !(win.activeFocusItem && win.activeFocusItem.hasOwnProperty("cursorPosition"))
-        onActivated: {
-            if (win.section === "search") {
-                search.focusSearch()
-            } else if (win.section === "library" || win.section === "installed") {
-                win.go(win.section)
-                library.focusSearch()
-            }
-        }
+        onActivated: win.focusSearch()
     }
+    Dialog {
+        id: menu
+        objectName: "menu"
+        modal: true
+        anchors.centerIn: Overlay.overlay
+        padding: 20
+        background: Rectangle { radius: Theme.radius; color: Theme.surface2; border.width: 1; border.color: Theme.border }
+        header: Txt { text: "ludex"; font.bold: true; font.pixelSize: 18; padding: 20; bottomPadding: 0 }
+        contentItem: Column {
+            spacing: 8
+            Btn { id: resume; width: 240; text: "Resume"; onClicked: menu.close() }
+            Btn {
+                objectName: "switchMode"
+                width: 240
+                text: consoleMode ? "Switch to desktop mode" : "Switch to console mode"
+                onClicked: backend.switchMode(!consoleMode)
+            }
+            Btn { width: 240; text: "Quit ludex"; onClicked: Qt.quit() }
+        }
+        onOpened: resume.forceActiveFocus(Qt.TabFocusReason)
+    }
+    OnScreenKeyboard { id: keyboard }
 
     RowLayout {
         anchors.fill: parent
         spacing: 0
 
         Rectangle {
+            visible: !consoleMode
             Layout.fillHeight: true
             Layout.preferredWidth: 224
             color: Theme.surface
@@ -130,6 +213,7 @@ ApplicationWindow {
                         }
                     }
                 }
+                NavItem { objectName: "nav-console"; Layout.fillWidth: true; label: "Console mode"; glyph: "▣"; onActivated: backend.switchMode(true) }
             }
         }
 
@@ -137,6 +221,66 @@ ApplicationWindow {
             Layout.fillWidth: true
             Layout.fillHeight: true
             spacing: 0
+
+            Rectangle {
+                visible: consoleMode
+                objectName: "consoleTabs"
+                Layout.fillWidth: true
+                Layout.preferredHeight: 64
+                color: Theme.surface
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 32
+                    anchors.rightMargin: 32
+                    spacing: 8
+                    Txt { text: "ludex"; font.pixelSize: 26; font.bold: true; Layout.rightMargin: 24 }
+                    Repeater {
+                        model: win.sections
+                        delegate: Item {
+                            id: tab
+                            required property string modelData
+                            readonly property bool here: win.section === modelData
+                            objectName: "tab-" + modelData
+                            Layout.preferredWidth: tabLabel.implicitWidth + 36
+                            Layout.minimumWidth: 72
+                            Layout.fillHeight: true
+                            activeFocusOnTab: true
+                            Keys.onReturnPressed: win.go(modelData)
+                            Txt {
+                                id: tabLabel
+                                anchors.centerIn: parent
+                                width: Math.min(implicitWidth, tab.width - 16)
+                                elide: Text.ElideRight
+                                horizontalAlignment: Text.AlignHCenter
+                                text: win.sectionTitle(tab.modelData)
+                                font.pixelSize: 18
+                                font.bold: tab.here
+                                color: tab.here ? Theme.text : Theme.muted
+                            }
+                            Rectangle {
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.bottom: parent.bottom
+                                height: 4
+                                radius: 2
+                                color: Theme.accent
+                                visible: tab.here
+                            }
+                            Rectangle {
+                                anchors.fill: parent
+                                anchors.margins: 6
+                                radius: Theme.radius
+                                color: "transparent"
+                                border.width: tab.activeFocus ? 3 : 0
+                                border.color: Theme.text
+                            }
+                            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: win.go(tab.modelData) }
+                        }
+                    }
+                    Item { Layout.fillWidth: true }
+                    Chip { visible: backend.runningJobs > 0; text: backend.runningJobs + " running"; checked: true; interactive: false }
+                }
+            }
 
             Item {
                 Layout.fillWidth: true
@@ -168,13 +312,25 @@ ApplicationWindow {
 
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 30
+                Layout.preferredHeight: consoleMode ? 44 : 30
                 color: Theme.surface
+                Txt {
+                    id: hints
+                    visible: consoleMode
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.right: parent.right
+                    anchors.rightMargin: 16
+                    objectName: "hints"
+                    text: win.gameOpen ? "A Select    B Back    X Play    Start Menu" : "A Open    B Back    X Play    Y Search    LB RB Tabs    Start Menu"
+                    font.pixelSize: 15
+                    color: Theme.muted
+                }
                 Txt {
                     anchors.verticalCenter: parent.verticalCenter
                     anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.margins: 16
+                    anchors.right: consoleMode ? hints.left : parent.right
+                    anchors.leftMargin: 16
+                    anchors.rightMargin: 16
                     objectName: "status"
                     text: backend.status
                     elide: Text.ElideRight

@@ -61,6 +61,9 @@ Dialog {
             clip: true
             spacing: 6
             model: backend.matches
+            activeFocusOnTab: true
+            keyNavigationEnabled: true
+            Keys.onReturnPressed: if (currentIndex >= 0) { backend.chooseMatch(dialog.gameId, currentIndex); dialog.close() }
             ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
             delegate: Rectangle {
                 required property var modelData
@@ -68,7 +71,7 @@ Dialog {
                 width: list.width
                 height: 48
                 radius: 8
-                color: hover.hovered ? Theme.surface3 : Theme.surface
+                color: ListView.isCurrentItem && list.activeFocus || hover.hovered ? Theme.surface3 : Theme.surface
                 border.width: 1
                 border.color: Theme.border
                 HoverHandler { id: hover }

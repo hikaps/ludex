@@ -10,7 +10,14 @@ Item {
     readonly property bool running: (game.running || "") !== ""
     signal back()
     focus: visible
-    onVisibleChanged: if (visible) backButton.forceActiveFocus()
+    function focusDefault() {
+        if (!page.visible) return
+        (consoleMode ? playButton : backButton).forceActiveFocus(Qt.TabFocusReason)
+    }
+    onVisibleChanged: if (visible) Qt.callLater(focusDefault)
+    function playOrInstall() {
+        installed ? backend.launch(game.gameId) : backend.install(game.gameId)
+    }
 
     Rectangle { anchors.fill: parent; color: Theme.bg }
     Image {
@@ -84,12 +91,15 @@ Item {
                 RowLayout {
                     spacing: 12
                     Btn {
+                        id: playButton
+                        readonly property string activity: backend.activity[String(game.gameId)] || ""
                         primary: true
                         fontSize: 18
                         implicitHeight: 52
                         implicitWidth: 200
-                        text: page.installed ? "▶  Play" : "⇩  Install"
-                        onClicked: page.installed ? backend.launch(game.gameId) : backend.install(game.gameId)
+                        text: activity !== "" ? activity + "…" : page.installed ? "▶  Play" : "⇩  Install"
+                        enabled: activity === ""
+                        onClicked: page.playOrInstall()
                     }
                     Btn {
                         implicitHeight: 52

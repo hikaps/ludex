@@ -4,6 +4,23 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.63.0] - 2026-11-21
+
+### Added
+
+- **gui:** a game controller drives the launcher when `ludex-gui[gamepad]` is installed (SDL2 through PySDL2): D-pad or left stick move focus, A selects, B goes back, X plays or installs, LB and RB switch between pages; `Ctrl+P`, `Ctrl+PgUp` and `Ctrl+PgDown` do the same on a keyboard. It acts only while the launcher window has focus, so a running game's input never reaches ludex. Every control can now be reached and activated from the keyboard (Return on buttons, chips and toggles, lists of matches, search results and plugin view rows, with a visible focus ring), and the page scrolls to the focused control.
+- **gui:** `ludex gui --console` (and `ludex-gui --console`) opens the launcher fullscreen and 25% larger (unless `QT_SCALE_FACTOR` is set) in a living-room layout: a tab row replaces the sidebar, covers are bigger, a game page starts on Play, and the status bar lists the controller buttons for the current screen; on the controller Y jumps to the search field and Start opens a menu to resume or quit.
+- **gui:** `ludex gui --install-desktop` (or `ludex-gui --install-desktop`) adds Ludex and Ludex Console to the application menu with an icon, in `$XDG_DATA_HOME` (default `~/.local/share`); `--uninstall-desktop` removes them. The window now has the icon and, on Wayland, the application id `ludex` that matches the menu entry.
+- **gui:** an on-screen keyboard for the controller: A on a text field (search, Settings, account forms, launch options) opens it; Shift, a symbols layer, cursor keys, Delete, Clear and Done (which submits the field like Return); B closes it. Secret fields show dots in its preview.
+- **gui:** switch between the desktop and the console layout without restarting by hand: "Console mode" at the bottom of the sidebar, "Switch to desktop/console mode" in the Start menu, or `F11`. The launcher restarts in the other mode (the console scale is only applied in console mode).
+- **gui:** Settings can update a managed plugin (reinstalled from the source it was added with, after a trust confirmation) and remove one (after a confirmation). Both take effect after a restart.
+
+### Fixed
+
+- **gui:** the Play button on a game card no longer flickers while the pointer is on it (the hover moved from under the button to the button and back). The card and the game page now follow the game's job: Play shows "Running…" or "Installing…" and is disabled while it runs (and "Starting…" for a few seconds when a store client was asked to start it), so a click, the controller or `Ctrl+P` no longer starts the game two or three times.
+- **gui:** the Search and Settings labels in the sidebar sit centred in their rows like the others; their glyphs come from a taller fallback font, which pushed the label to the top.
+- **update:** `ludex update` no longer removes `ludex-gui` (or other `--with` extras it knew of): it reinstalls the GUI next to ludex-games. The rolling beta release now carries `ludex-gui.tar.gz` for this (and for `uv tool install <beta>/ludex.tar.gz --with <beta>/ludex-gui.tar.gz`). The stable channel reinstalls from PyPI (the old `stable` release URL did not exist), and any version without `.dev` counts as stable. The JSON result now lists `commands` instead of `command`.
+
 ## [0.62.0] - 2026-11-20
 
 Also includes 0.61.0 below, which was never published to PyPI.

@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ludex-gui"
-version = "0.62.0"
+version = "0.63.0"
 description = "Desktop game launcher (Qt Quick) frontend of ludex"
 readme = { text = "The Qt Quick game launcher of [ludex](https://github.com/hikaps/ludex). Not part of `ludex-games`: install it next to it (`ludex gui`) or on its own (`ludex-gui`).", content-type = "text/markdown" }
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
-dependencies = ["ludex-core==0.62.0", "PySide6-Essentials==6.12.0"]
+dependencies = ["ludex-core==0.63.0", "PySide6-Essentials==6.12.0"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: X11 Applications :: Qt",
@@ -23,6 +23,9 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
     "Topic :: Games/Entertainment",
 ]
+
+[project.optional-dependencies]
+gamepad = ["PySDL2==0.9.17", "pysdl2-dll==2.32.10"]
 
 [project.urls]
 Homepage = "https://hikaps.github.io/ludex/"
@@ -38,7 +41,7 @@ where = ["src"]
 include = ["ludex_gui*"]
 
 [tool.setuptools.package-data]
-ludex_gui = ["qml/*"]
+ludex_gui = ["qml/*", "assets/*"]
 
 [tool.uv.sources]
 ludex-core = { workspace = true }

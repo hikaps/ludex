@@ -13,7 +13,11 @@ Item {
     property bool current: false
     signal opened()
 
-    readonly property bool lifted: mouse.containsMouse || current
+    readonly property string activity: backend.activity[String(gameId)] || ""
+    // A HoverHandler sees the pointer over the Play button too; a MouseArea under it would lose the hover
+    // and hide the button, which brings the hover back, and so on.
+    readonly property bool lifted: hover.hovered || current
+    HoverHandler { id: hover }
 
     Component.onCompleted: backend.requestCover(gameId)
     Component.onDestruction: if (backend) backend.cancelCover(gameId)
@@ -25,7 +29,7 @@ Item {
         radius: 4
         color: Theme.surface
         clip: true
-        scale: card.lifted ? 1.035 : 1
+        scale: card.lifted ? (consoleMode ? 1.04 : 1.035) : 1
         Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
 
         CoverArt {
@@ -56,8 +60,10 @@ Item {
         }
         Btn {
             id: play
+            focusPolicy: Qt.NoFocus
             primary: true
-            text: card.installed ? "Play" : "Install"
+            text: card.activity !== "" ? card.activity + "…" : card.installed ? "Play" : "Install"
+            enabled: card.activity === ""
             anchors.horizontalCenter: art.horizontalCenter
             anchors.bottom: art.bottom
             anchors.bottomMargin: 12
@@ -73,17 +79,23 @@ Item {
             anchors.margins: 10
             anchors.topMargin: 8
             spacing: 2
-            Txt { width: parent.width; text: card.title; font.bold: true; elide: Text.ElideRight }
+            Txt { width: parent.width; text: card.title; font.bold: true; font.pixelSize: consoleMode ? 17 : Theme.body; elide: Text.ElideRight }
             Txt { width: parent.width; text: card.played !== "" && card.played !== "never" ? card.stores + " · " + card.played : card.stores
-                  font.pixelSize: Theme.small; color: Theme.muted; elide: Text.ElideRight }
+                  font.pixelSize: consoleMode ? 14 : Theme.small; color: Theme.muted; elide: Text.ElideRight }
         }
-        border.width: card.current ? 2 : 0
-        border.color: Theme.accent
+        // Drawn as a child so it paints over the cover; a Rectangle's own border sits under its children.
+        Rectangle {
+            anchors.fill: parent
+            z: 10
+            color: "transparent"
+            radius: parent.radius
+            border.width: card.current ? (consoleMode ? 5 : 3) : 0
+            border.color: Theme.accent
+        }
     }
     MouseArea {
         id: mouse
         anchors.fill: parent
-        hoverEnabled: true
         z: -1
         cursorShape: Qt.PointingHandCursor
         onClicked: card.opened()

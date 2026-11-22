@@ -11,7 +11,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Property, QAbstractListModel, QModelIndex, QObject, QPersistentModelIndex, Qt, QTimer, QUrl, Signal, Slot
+from PySide6.QtCore import Property, QAbstractListModel, QCoreApplication, QModelIndex, QObject, QPersistentModelIndex, Qt, QTimer, QUrl, Signal, Slot
 
 from ludex.acquire import download_game
 from ludex.artwork import cached_cover, fetch_cover
@@ -45,7 +45,9 @@ from .work import run_async
 PAGE = 500  # the core's page size
 MAX_GAMES = 20000
 COVERS_AT_A_TIME = 2
+HANDOFF_MS = 4000  # a store client was asked to start the game (no job to follow): ignore repeats this long
 SORTS = ("title", "recent", "playtime", "installed")
+_DOING = {"play": "Running", "install": "Installing"}
 _ROLES = ("gameId", "title", "stores", "installed", "played", "coverUrl")
 
 
@@ -95,6 +97,7 @@ class Backend(QObject):
     busyChanged = Signal()
     matchesChanged = Signal()
     detailsChanged = Signal()
+    activityChanged = Signal()
 
     def __init__(
         self,
@@ -110,6 +113,7 @@ class Backend(QObject):
         self._paths, self._sources, self._installed = paths, sources, installed
         self._config_for, self._played_of, self._prefix_root = config_for, played, prefix_root
         self._conn = connect(paths.database)
+        self.requested_console: bool | None = None  # set by switchMode; app.main restarts into that mode
         self._keys: set[tuple[str, str]] = set()
         self._played: Mapping[int, Played] = {}
         self._filter = ("", "", False, "title", "")
@@ -130,6 +134,9 @@ class Backend(QObject):
         self._refreshing = False
         self._jobs: list[dict[str, Any]] = []
         self._running_jobs = 0
+        self._handoff: set[int] = set()  # games a store client was asked to start a moment ago
+        self._by_job: dict[int, str] = {}  # game id -> what its running job is doing
+        self._activity: dict[str, str] = {}
         self._jobs_seen: dict[int, str] = {}
         self._covers: dict[int, str] = {}
         self._cover_tried: set[int] = set()
@@ -220,7 +227,11 @@ class Backend(QObject):
     current = Property("QVariantMap", _get_current, notify=currentChanged)
     hits = Property("QVariantList", _get_hits, notify=hitsChanged)
     jobs = Property("QVariantList", _get_jobs, notify=jobsChanged)
+    def _get_activity(self) -> dict[str, str]:
+        return dict(self._activity)
+
     runningJobs = Property(int, _get_running_jobs, notify=jobsChanged)
+    activity = Property("QVariantMap", _get_activity, notify=activityChanged)
     views = Property("QVariantList", _get_views, constant=True)
     gameModel = Property(QObject, _get_games, constant=True)
     settingsController = Property(QObject, _get_settings, constant=True)
@@ -229,6 +240,12 @@ class Backend(QObject):
     matching = Property(bool, _get_matching, notify=matchesChanged)
     canMatch = Property(bool, _get_can_match, constant=True)
     searching = Property(bool, _get_searching, notify=hitsChanged)
+
+    @Slot(bool)
+    def switchMode(self, console: bool) -> None:  # noqa: N802 (Qt)
+        """Ask for the launcher to restart in console (fullscreen, controller) or desktop mode."""
+        self.requested_console = console
+        QCoreApplication.quit()
 
     @Slot(str, bool)
     def notify(self, text: str, error: bool = False) -> None:
@@ -558,7 +575,21 @@ class Backend(QObject):
     def install(self, game_id: int) -> None:
         self._start_game(game_id, install_game, "install", "installed from")
 
+    def _show_activity(self) -> None:
+        """What each game is doing now, for the cards and game pages: its running job, or a client being asked to start it."""
+        shown = {str(game): "Starting" for game in self._handoff}
+        shown.update({str(game): what for game, what in self._by_job.items()})
+        if shown != self._activity:
+            self._activity = shown
+            self.activityChanged.emit()
+
+    def _handoff_done(self, game_id: int) -> None:
+        self._handoff.discard(game_id)
+        self._show_activity()
+
     def _start_game(self, game_id: int, call: Callable, verb: str, phrase: str) -> None:
+        if str(game_id) in self._activity:  # a repeated click while the game is already starting, running or installing
+            return
         logs = self._paths.database.parent / "logs"
         extra = (get_prefix_root(self._conn, self._prefix_root), logs) if verb == "launch" else (logs,)
         try:
@@ -573,8 +604,14 @@ class Backend(QObject):
             self.notify(exc.message, True)
             return
         self.notify(f"{verb}ing {target}" if job is None else f"{verb}ing {target} in the background")
-        if job is not None:
+        if job is None:
+            self._handoff.add(game_id)
+            QTimer.singleShot(HANDOFF_MS, self, lambda: self._handoff_done(game_id))
+        else:
+            self._by_job[game_id] = _DOING[job.kind]
             self._jobs_seen[job.id] = job.state
+        self._show_activity()
+        if job is not None:
             self.openGame(game_id, quiet=True)
 
     @Slot(int)
@@ -785,6 +822,8 @@ class Backend(QObject):
             for j in jobs
         ]
         self._running_jobs = sum(j.state == "running" for j in jobs)
+        self._by_job = {j.game_id: _DOING[j.kind] for j in jobs if j.state == "running" and j.kind in _DOING}
+        self._show_activity()
         self.jobsChanged.emit()
         if changed:
             self.reload()

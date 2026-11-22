@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import dataclasses
 import os
+from pathlib import Path
+import sys
 import threading
 import time
 
@@ -8,8 +11,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
 
 import pytest
-from PySide6.QtCore import QObject
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtCore import Q_ARG, QMetaObject, QObject, Qt
+from PySide6.QtGui import QGuiApplication, QWindow
 
 from ludex import artwork
 from ludex import launch as launch_mod
@@ -21,7 +24,8 @@ from ludex.plugins import Command, CommandResult, ConfigField, FetchResult, Meta
 from ludex.provider_settings import get_values
 from ludex.sources import steam
 from ludex.storage import connect
-from ludex_gui.app import QML_DIR, Launcher, build_engine
+from ludex_gui import gamepad as gamepad_mod
+from ludex_gui.app import QML_DIR, Launcher, build_engine, console_environment, restart_command, restart_environment
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 64
 
@@ -47,8 +51,8 @@ def _paths(tmp_path) -> StatePaths:
     return StatePaths(root, root / "library.sqlite3", root / "accounts.json", root / "import.lock")
 
 
-def _launcher(paths, sources, installed=frozenset()) -> Launcher:
-    return build_engine(paths, sources, lambda: set(installed), lambda store, account: {}, lambda conn: {}, paths.root / "prefixes")
+def _launcher(paths, sources, installed=frozenset(), console=False) -> Launcher:
+    return build_engine(paths, sources, lambda: set(installed), lambda store, account: {}, lambda conn: {}, paths.root / "prefixes", console)
 
 
 def test_the_window_loads_without_warnings_and_lists_the_sidebar_pages(qapp, tmp_path):
@@ -263,6 +267,42 @@ def test_a_plugin_is_added_in_the_background_and_reported(qapp, tmp_path, monkey
     launcher.backend.closeDown()
 
 
+def test_a_plugin_is_updated_in_the_background_and_a_failure_is_reported(qapp, tmp_path, monkeypatch):
+    import ludex_gui.settings as settings_mod
+
+    results = [[{"name": "demo", "ok": True, "from": "1.0", "to": "1.1"}], [{"name": "demo", "ok": False, "error": {"code": "install_failed", "message": "network down"}}]]
+    seen: list = []
+    monkeypatch.setattr(settings_mod, "update_plugins", lambda name: seen.append((name, threading.current_thread() is threading.main_thread())) or results.pop(0))
+    launcher = _launcher(_paths(tmp_path), {})
+    controller = launcher.backend.settingsController
+    notes: list = []
+    controller.notice.connect(lambda text, bad: notes.append((text, bad)))
+    for expected in (("updated plugin demo to 1.1; restart ludex to load it", False), ("plugin: network down", True)):
+        controller.updatePlugin("demo")
+        assert controller.installing
+        _until(qapp, lambda: not controller.installing)
+        assert notes[-1] == expected
+    assert seen == [("demo", False), ("demo", False)]
+    launcher.backend.closeDown()
+
+
+def test_removing_a_plugin_reports_it_and_an_unknown_one_is_refused(qapp, tmp_path, monkeypatch):
+    import ludex_gui.settings as settings_mod
+
+    gone: list = []
+    monkeypatch.setattr(settings_mod, "remove_plugin", lambda name: gone.append(name) or {"name": name, "providers": []})
+    launcher = _launcher(_paths(tmp_path), {})
+    controller = launcher.backend.settingsController
+    notes: list = []
+    controller.notice.connect(lambda text, bad: notes.append((text, bad)))
+    controller.removePlugin("demo")
+    assert gone == ["demo"] and notes[-1] == ("removed plugin demo; restart ludex to unload it", False)
+    monkeypatch.undo()
+    controller.removePlugin("nope")
+    assert notes[-1][1] is True and "no managed plugin named nope" in notes[-1][0]
+    launcher.backend.closeDown()
+
+
 def test_launch_options_round_trip_and_reject_a_bad_environment_line(qapp, tmp_path):
     from ludex.game_settings import get_settings
 
@@ -385,3 +425,440 @@ def test_the_gui_command_explains_a_missing_ludex_gui(monkeypatch, capsys, tmp_p
     monkeypatch.setattr(sys, "meta_path", [Gone, *sys.meta_path])
     assert main(["--json", "gui"]) == 1
     assert '"gui_missing"' in capsys.readouterr().err
+
+
+class _FakeSource:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, bool]] = []
+        self.closed = False
+
+    def poll(self):
+        out, self.events = self.events, []
+        return out
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _padded(qapp, tmp_path, monkeypatch, installed=frozenset(), focused=True, console=False):
+    paths = _paths(tmp_path)
+    conn = connect(paths.database)
+    import_account(conn, "m", [OwnedGame("steam", "1", "Hades"), OwnedGame("steam", "2", "Doom")], store="steam")
+    conn.close()
+    launcher = _launcher(paths, {"steam": steam.PLUGIN}, installed, console)
+    window = launcher.window
+    monkeypatch.setattr(gamepad_mod.QGuiApplication, "focusWindow", staticmethod(lambda: window if focused else None))
+    pad = gamepad_mod.Gamepad(window, _FakeSource())
+    grid = window.findChild(QObject, "grid")
+    _until(qapp, lambda: grid.property("count") == 2)
+    grid.forceActiveFocus()
+    grid.setProperty("currentIndex", 0)
+    qapp.processEvents()
+    return launcher, window, pad
+
+
+def test_the_pad_moves_through_the_grid_and_opens_and_closes_a_game(qapp, tmp_path, monkeypatch):
+    launcher, window, pad = _padded(qapp, tmp_path, monkeypatch)
+    grid = window.findChild(QObject, "grid")
+    assert grid.property("currentIndex") == 0
+    pad.press("dpright")
+    pad.release("dpright")
+    assert grid.property("currentIndex") == 1
+    pad.press("a")
+    _until(qapp, lambda: launcher.backend.current.get("gameId") is not None)
+    pad.press("b")
+    _until(qapp, lambda: launcher.backend.current.get("gameId") is None)
+    pad.close()
+    launcher.backend.closeDown()
+
+
+def test_an_arrow_nothing_uses_moves_focus_to_the_nearest_control_that_way(qapp, tmp_path, monkeypatch):
+    launcher, window, pad = _padded(qapp, tmp_path, monkeypatch)
+    refresh = next(b for b in window.findChildren(QObject) if b.property("text") == "Refresh" and b.property("visible"))
+    refresh.forceActiveFocus()
+    qapp.processEvents()
+    assert window.activeFocusItem() is refresh
+    assert gamepad_mod.send_key(window, Qt.Key.Key_Left, Qt.KeyboardModifier.NoModifier)
+    neighbour = window.activeFocusItem()
+    assert neighbour is not refresh and neighbour.x() < refresh.x() + 1
+    assert gamepad_mod.send_key(window, Qt.Key.Key_Right, Qt.KeyboardModifier.NoModifier)
+    assert window.activeFocusItem() is refresh
+    assert not gamepad_mod.send_key(window, Qt.Key.Key_Right, Qt.KeyboardModifier.NoModifier)
+    assert window.activeFocusItem() is refresh
+    launcher.backend.closeDown()
+
+
+def test_the_bumpers_change_page_but_not_under_a_dialog(qapp, tmp_path, monkeypatch):
+    launcher, window, pad = _padded(qapp, tmp_path, monkeypatch)
+    assert window.property("section") == "library"
+    pad.press("rightshoulder")
+    assert window.property("section") == "installed"
+    pad.press("leftshoulder")
+    pad.press("leftshoulder")
+    assert window.property("section") == "settings"
+    dialog = window.findChild(QObject, "trust")
+    dialog.open()
+    _until(qapp, lambda: dialog.property("visible"))
+    dialog.property("contentItem").forceActiveFocus()
+    pad.press("rightshoulder")
+    assert window.property("section") == "settings"
+    launcher.backend.closeDown()
+
+
+def test_x_plays_the_current_installed_game(qapp, tmp_path, monkeypatch):
+    opened = []
+    monkeypatch.setattr(launch_mod.subprocess, "run", lambda argv, **kw: opened.append(argv[1]))
+    launcher, window, pad = _padded(qapp, tmp_path, monkeypatch, {("steam", "1"), ("steam", "2")})
+    pad.press("dpright")
+    pad.release("dpright")
+    pad.press("x")
+    _until(qapp, lambda: opened)
+    assert opened == ["steam://rungameid/1"]
+    launcher.backend.closeDown()
+
+
+def test_the_pad_does_nothing_while_the_window_is_not_focused(qapp, tmp_path, monkeypatch):
+    launcher, window, pad = _padded(qapp, tmp_path, monkeypatch, focused=False)
+    pad.press("dpright")
+    assert window.findChild(QObject, "grid").property("currentIndex") == 0
+    launcher.backend.closeDown()
+
+
+def test_without_the_gamepad_extra_there_is_no_source(monkeypatch):
+    monkeypatch.setitem(sys.modules, "sdl2", None)
+    assert gamepad_mod.open_sdl_source() is None
+
+
+def test_return_opens_a_combo_and_the_list_stays_open_after_the_key_is_released(qapp, tmp_path, monkeypatch):
+    launcher, window, pad = _padded(qapp, tmp_path, monkeypatch)
+    box = window.findChild(QObject, "sortBox")
+    box.forceActiveFocus()
+    qapp.processEvents()
+    pad.press("a")
+    qapp.processEvents()
+    assert box.property("down")
+    launcher.backend.closeDown()
+
+
+def test_a_stick_held_right_survives_the_other_pad_centering_and_releases_when_pushed_back():
+    class _Sdl:
+        SDL_CONTROLLER_AXIS_LEFTX, SDL_CONTROLLER_AXIS_LEFTY = 0, 1
+
+        def SDL_Event(self):
+            return None
+
+    source = gamepad_mod._SdlSource(_Sdl())
+    out: list[tuple[str, bool]] = []
+    source._axis(1, 0, 20000, out)
+    source._axis(2, 0, 0, out)
+    assert out == [("dpright", True)]
+    out.clear()
+    source._axis(1, 0, -12000, out)
+    assert out == [("dpright", False)]
+
+
+def test_y_jumps_to_the_search_field_and_start_opens_the_menu_with_a_working_quit(qapp, tmp_path, monkeypatch):
+    launcher, window, pad = _padded(qapp, tmp_path, monkeypatch)
+    pad.press("y")
+    _until(qapp, lambda: window.activeFocusItem() is not None and window.activeFocusItem().property("cursorPosition") is not None)
+    pad.release("y")
+    window.findChild(QObject, "grid").forceActiveFocus()
+    qapp.processEvents()
+    pad.press("start")
+    menu = window.findChild(QObject, "menu")
+    _until(qapp, lambda: menu.property("visible"))
+    pad.press("start")  # a second press under the open menu changes nothing
+    assert menu.property("visible")
+    pad.press("b")
+    _until(qapp, lambda: not menu.property("visible"))
+    launcher.backend.closeDown()
+
+
+def test_console_mode_goes_fullscreen_and_shows_the_controller_hints(qapp, tmp_path, monkeypatch):
+    launcher, window, pad = _padded(qapp, tmp_path, monkeypatch, console=True)
+    assert window.visibility() == QWindow.Visibility.FullScreen
+    assert window.findChild(QObject, "hints").property("visible")
+    launcher.backend.closeDown()
+
+
+def test_console_mode_scales_the_ui_unless_the_user_chose_a_scale():
+    env: dict[str, str] = {}
+    assert console_environment(env) is True
+    assert env == {"QT_SCALE_FACTOR": "1.25"}
+    env = {"QT_SCALE_FACTOR": "2"}
+    assert console_environment(env) is False
+    assert env == {"QT_SCALE_FACTOR": "2"}
+
+
+def test_switching_mode_restarts_with_or_without_console_and_drops_only_its_own_scale():
+    assert restart_command(True)[-1] == "--console"
+    assert "--console" not in restart_command(False)
+    assert restart_environment({"QT_SCALE_FACTOR": "1.25", "HOME": "/h"}, True) == {"HOME": "/h"}
+    assert restart_environment({"QT_SCALE_FACTOR": "2"}, False) == {"QT_SCALE_FACTOR": "2"}
+
+
+def test_the_menu_and_the_sidebar_switch_between_desktop_and_console_mode(qapp, tmp_path, monkeypatch):
+    (tmp_path / "d").mkdir()
+    launcher, window, pad = _padded(qapp, tmp_path / "d", monkeypatch)
+    _find_item(window.contentItem(), "nav-console").forceActiveFocus(Qt.FocusReason.TabFocusReason)
+    pad.press("a")
+    pad.release("a")
+    assert launcher.backend.requested_console is True
+    launcher.backend.closeDown()
+    (tmp_path / "c").mkdir()
+    launcher, window, pad = _padded(qapp, tmp_path / "c", monkeypatch, console=True)
+    pad.press("start")
+    pad.release("start")
+    _until(qapp, lambda: _find_item(window.contentItem(), "switchMode") is not None and _find_item(window.contentItem(), "switchMode").isVisible())
+    assert _find_item(window.contentItem(), "switchMode").property("text") == "Switch to desktop mode"
+    _click(window, "switchMode")
+    assert launcher.backend.requested_console is False
+    launcher.backend.closeDown()
+
+
+def test_menu_entries_are_written_quoted_and_removed_again(tmp_path):
+    from ludex_gui import desktop
+
+    launcher = tmp_path / "my tools" / "ludex-gui"
+    first = desktop.install(tmp_path / "data", launcher)
+    assert desktop.install(tmp_path / "data", launcher) == first
+    plain = (tmp_path / "data" / "applications" / "ludex.desktop").read_text()
+    console = (tmp_path / "data" / "applications" / "ludex-console.desktop").read_text()
+    assert f'Exec="{launcher}"\n' in plain
+    assert f'Exec="{launcher}" --console\n' in console
+    assert "Icon=ludex\n" in plain and "Categories=Game;" in plain
+    assert (tmp_path / "data" / "icons" / "hicolor" / "scalable" / "apps" / "ludex.svg").read_text().startswith("<svg")
+    assert not list((tmp_path / "data").rglob("*.tmp"))
+    assert sorted(desktop.uninstall(tmp_path / "data")) == sorted(first)
+    assert desktop.uninstall(tmp_path / "data") == []
+
+
+def test_the_data_directory_follows_xdg_only_for_an_absolute_path(tmp_path):
+    from ludex_gui import desktop
+
+    assert desktop.data_home({"XDG_DATA_HOME": "/srv/data"}, tmp_path) == Path("/srv/data")
+    assert desktop.data_home({"XDG_DATA_HOME": "data"}, tmp_path) == tmp_path / ".local" / "share"
+    assert desktop.data_home({}, tmp_path) == tmp_path / ".local" / "share"
+
+
+def test_the_window_icon_renders(qapp):
+    from importlib import resources
+
+    from PySide6.QtGui import QIcon
+
+    icon = QIcon(str(resources.files("ludex_gui") / "assets" / "ludex.svg"))
+    assert not icon.pixmap(64, 64).isNull()
+
+
+def test_ludex_gui_install_desktop_reports_the_files_it_wrote(monkeypatch, capsys, tmp_path):
+    import json
+
+    from ludex_cli.cli import main
+
+    monkeypatch.setenv("LUDEX_HOME", str(_paths(tmp_path).root))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    assert main(["--json", "gui", "--install-desktop"]) == 0
+    files = json.loads(capsys.readouterr().out)["data"]["files"]
+    assert str(tmp_path / "xdg" / "applications" / "ludex.desktop") in files
+    assert (tmp_path / "xdg" / "applications" / "ludex-console.desktop").is_file()
+    assert main(["--json", "gui", "--uninstall-desktop"]) == 0
+    assert not (tmp_path / "xdg" / "applications" / "ludex.desktop").exists()
+
+
+def _find_item(item, name):
+    if item.objectName() == name:
+        return item
+    for child in item.childItems():
+        found = _find_item(child, name)
+        if found is not None:
+            return found
+    return None
+
+
+def _click(window, name):
+    button = _find_item(window.contentItem(), name)
+    assert button is not None, name
+    QMetaObject.invokeMethod(button, "click", Qt.ConnectionType.DirectConnection)
+
+
+def test_a_on_a_text_field_types_with_the_on_screen_keyboard(qapp, tmp_path, monkeypatch):
+    launcher, window, pad = _padded(qapp, tmp_path, monkeypatch)
+    keyboard = window.findChild(QObject, "keyboard")
+    pad.press("y")
+    pad.release("y")
+    field = window.activeFocusItem()
+    pad.press("a")
+    _until(qapp, lambda: keyboard.property("visible"))
+    assert window.activeFocusItem() is not field  # the focus is on a key, not on the field
+    _click(window, "key-h")
+    _click(window, "shift")
+    _click(window, "key-i")
+    _click(window, "symbols")
+    _click(window, "key-!")
+    assert window.findChild(QObject, "keyboardPreview").property("text") == "hI!"
+    _click(window, "delete")
+    _click(window, "left")
+    _click(window, "key-/")
+    assert field.property("text") == "h/I"
+    _click(window, "done")
+    _until(qapp, lambda: not keyboard.property("visible"))
+    assert window.activeFocusItem() is field
+    launcher.backend.closeDown()
+
+
+def test_b_closes_the_keyboard_and_keeps_what_was_typed(qapp, tmp_path, monkeypatch):
+    launcher, window, pad = _padded(qapp, tmp_path, monkeypatch)
+    keyboard = window.findChild(QObject, "keyboard")
+    pad.press("y")
+    pad.release("y")
+    field = window.activeFocusItem()
+    pad.press("a")
+    _until(qapp, lambda: keyboard.property("visible"))
+    _click(window, "key-d")
+    pad.press("b")
+    _until(qapp, lambda: not keyboard.property("visible"))
+    assert field.property("text") == "d"
+    assert window.activeFocusItem() is field
+    launcher.backend.closeDown()
+
+
+def test_the_pad_moves_across_the_keys_and_types_with_a(qapp, tmp_path, monkeypatch):
+    launcher, window, pad = _padded(qapp, tmp_path, monkeypatch)
+    keyboard = window.findChild(QObject, "keyboard")
+    pad.press("y")
+    pad.release("y")
+    field = window.activeFocusItem()
+    pad.press("a")
+    _until(qapp, lambda: keyboard.property("visible"))
+    assert window.activeFocusItem().objectName() == "space"
+    for control in ("dpup", "dpup"):  # Space -> a letter row -> the row above
+        previous = window.activeFocusItem()
+        pad.press(control)
+        pad.release(control)
+        assert window.activeFocusItem() is not previous
+    assert window.activeFocusItem().objectName().startswith("key-")
+    pad.press("a")
+    pad.release("a")
+    typed = field.property("text")
+    assert len(typed) == 1
+    previous = window.activeFocusItem()
+    pad.press("dpright")
+    pad.release("dpright")
+    assert window.activeFocusItem() is not previous
+    assert window.activeFocusItem().objectName().startswith("key-")
+    pad.press("b")
+    _until(qapp, lambda: not keyboard.property("visible"))
+    launcher.backend.closeDown()
+
+
+def test_down_from_a_closed_combo_lands_on_the_next_control_and_not_past_it(qapp, tmp_path, monkeypatch):
+    launcher, window, pad = _padded(qapp, tmp_path, monkeypatch)
+    box = window.findChild(QObject, "sortBox")
+    box.forceActiveFocus()
+    expected = box.nextItemInFocusChain(True)
+    pad.press("dpdown")
+    pad.release("dpdown")
+    assert window.activeFocusItem() is expected
+    launcher.backend.closeDown()
+
+
+def test_the_keyboard_replaces_a_selection_and_deletes_whole_characters(qapp, tmp_path, monkeypatch):
+    launcher, window, pad = _padded(qapp, tmp_path, monkeypatch)
+    keyboard = window.findChild(QObject, "keyboard")
+    pad.press("y")
+    pad.release("y")
+    field = window.activeFocusItem()
+    field.setProperty("text", "ab\U0001F600")
+    field.setProperty("cursorPosition", 4)
+    pad.press("a")
+    _until(qapp, lambda: keyboard.property("visible"))
+    _click(window, "delete")
+    assert field.property("text") == "ab"
+    QMetaObject.invokeMethod(field, "select", Qt.ConnectionType.DirectConnection, Q_ARG("int", 0), Q_ARG("int", 2))
+    _click(window, "key-x")
+    assert field.property("text") == "x"
+    launcher.backend.closeDown()
+
+
+def test_console_mode_replaces_the_sidebar_with_tabs_the_pad_can_use(qapp, tmp_path, monkeypatch):
+    launcher, window, pad = _padded(qapp, tmp_path, monkeypatch, console=True)
+    tabs = _find_item(window.contentItem(), "consoleTabs")
+    assert tabs.isVisible()
+    assert not _find_item(window.contentItem(), "nav-library").isVisible()
+    pad.press("rightshoulder")
+    pad.release("rightshoulder")
+    assert window.property("section") == "installed"
+    assert _find_item(window.contentItem(), "tab-installed").property("here")
+    first = _find_item(window.contentItem(), "tab-library")
+    first.forceActiveFocus()
+    pad.press("a")
+    pad.release("a")
+    assert window.property("section") == "library"
+    launcher.backend.closeDown()
+
+
+def test_console_mode_shows_larger_covers_and_the_game_page_focuses_play(qapp, tmp_path, monkeypatch):
+    (tmp_path / "d").mkdir()
+    (tmp_path / "c").mkdir()
+    desktop = _padded(qapp, tmp_path / "d", monkeypatch)
+    cell_desktop = desktop[1].findChild(QObject, "grid").property("cellWidth")
+    desktop[0].backend.closeDown()
+    launcher, window, pad = _padded(qapp, tmp_path / "c", monkeypatch, console=True)
+    window.setVisibility(QWindow.Visibility.Windowed)
+    window.resize(desktop[1].width(), desktop[1].height())
+    _until(qapp, lambda: window.width() == desktop[1].width())
+    assert window.findChild(QObject, "grid").property("cellWidth") > cell_desktop
+    pad.press("a")
+    _until(qapp, lambda: launcher.backend.current.get("gameId") is not None)
+    _until(qapp, lambda: window.activeFocusItem() is not None and str(window.activeFocusItem().property("text")).endswith(("Play", "Install")))
+    launcher.backend.closeDown()
+
+
+def test_sidebar_labels_are_centred_in_their_rows(qapp, tmp_path):
+    launcher = _launcher(_paths(tmp_path), {})
+    window = launcher.window
+    root = window.contentItem()
+    for name in ("nav-library", "nav-search", "nav-jobs", "nav-settings"):
+        item = _find_item(root, name)
+        label = _find_item(item, "label")
+        middle = label.mapToItem(item, 0, label.height() / 2).y()
+        assert abs(middle - item.height() / 2) <= 1, name
+    launcher.backend.closeDown()
+
+
+def test_play_is_disabled_while_the_game_runs_and_a_second_click_is_ignored(qapp, tmp_path, monkeypatch):
+    from ludex.jobs import Job
+    from ludex_gui import backend as backend_mod
+
+    calls = []
+    job = Job(1, "play", 7, "steam:7", "Doom", 0, tmp_path / "log", "now", None, "running", None)
+    monkeypatch.setattr(backend_mod, "launch_game", lambda *a, **k: calls.append(a[2]) or ("steam:7", job))
+    launcher = _launcher(_paths(tmp_path), {})
+    backend = launcher.backend
+    monkeypatch.setattr(backend, "openGame", lambda *a, **k: None)
+    backend.launch(7)
+    backend.launch(7)
+    assert calls == [7] and backend.activity == {"7": "Running"}
+    monkeypatch.setattr(backend_mod, "list_jobs", lambda *a, **k: [dataclasses.replace(job, state="exited")])
+    backend.pollJobs()
+    assert backend.activity == {}
+    backend.launch(7)
+    assert calls == [7, 7]
+    backend.closeDown()
+
+
+def test_a_game_handed_to_a_store_client_is_busy_only_for_a_moment(qapp, tmp_path, monkeypatch):
+    from ludex_gui import backend as backend_mod
+
+    calls = []
+    monkeypatch.setattr(backend_mod, "launch_game", lambda *a, **k: calls.append(a[2]) or ("steam:7", None))
+    monkeypatch.setattr(backend_mod, "HANDOFF_MS", 30)
+    launcher = _launcher(_paths(tmp_path), {})
+    backend = launcher.backend
+    backend.launch(7)
+    backend.launch(7)
+    assert calls == [7] and backend.activity == {"7": "Starting"}
+    _until(qapp, lambda: backend.activity == {})
+    backend.launch(7)
+    assert calls == [7, 7]
+    backend.closeDown()

@@ -20,7 +20,7 @@ Check it works:
 ludex --version
 ```
 
-Update a PyPI install with `uv tool upgrade ludex-games` or `pipx upgrade ludex-games`. `ludex update` reinstalls from the rolling `stable` or `beta` build instead (`--channel stable|beta`).
+Update a PyPI install with `uv tool upgrade ludex-games` or `pipx upgrade ludex-games`. `ludex update` does the same for the channel this install came from (`--channel stable|beta`; stable is PyPI, beta is the rolling pre-release) and keeps `ludex-gui` if it is installed. To add the GUI to a beta install: `uv tool install https://github.com/hikaps/ludex/releases/download/beta/ludex.tar.gz --with https://github.com/hikaps/ludex/releases/download/beta/ludex-gui.tar.gz`.
 
 ## First steps
 
