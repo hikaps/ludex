@@ -3,11 +3,11 @@
 [![Tests](https://github.com/hikaps/ludex/actions/workflows/tests.yml/badge.svg?branch=develop)](https://github.com/hikaps/ludex/actions/workflows/tests.yml)
 [![Rolling packages](https://github.com/hikaps/ludex/actions/workflows/releases.yml/badge.svg?branch=main)](https://github.com/hikaps/ludex/actions/workflows/releases.yml)
 
-**beets for games.** A headless, scriptable, local-only library of the games you own across stores. Linux first, Python 3.11+, SQLite.
+**beets for games.** A headless, scriptable, local-only library of the games you own across stores, with a command line, a terminal UI and a desktop launcher you can drive with a controller. Linux first, Python 3.11+, SQLite.
 
 ## The problem
 
-Your games are spread over Steam, Epic, Heroic sideloads and folders on a drive. Which games do you own, which store has them, and which are installed on this machine? ludex imports ownership from each store into one local database you can search, script and export, then launches or installs a game through the store that owns it.
+Your games are spread over Steam, Epic, Heroic sideloads and folders on a drive. Which games do you own, which store has them, and which are installed on this machine? ludex imports ownership from each store into one local database you can search, script and export, then launches or installs a game through the store that owns it, from the command line, the TUI or the GUI (mouse, keyboard or game controller).
 
 Status: early development.
 
@@ -21,9 +21,33 @@ Status: early development.
 - **Downloads and jobs**: `i` on a Search hit of a plugin that downloads games (it has `acquire`) asks for a folder and downloads there in the background (`ludex download STORE ID`, `--status`, `--stop`); the Jobs tab lists installs, downloads and games ludex started, with progress (a bar and time left when the plugin reports numbers), and `x` stops one; the folder is remembered as `download_dir` (`ludex config download_dir`, default `~/Games`). `ludex acquire STORE ID` uses it when `--to` is left out. Stores with their own client (Steam, Heroic) still open that client, which asks for its own library.
 - **Play time**: `show` and `ls --sort played|recent` report how long you played, from what Steam and Heroic (Epic and sideloads) recorded on this machine, plus the games ludex started itself. The TUI shows it in Detail and `o` changes the order.
 - **TUI**: `ludex tui` browses, searches and launches games in the terminal. It imports every account when it starts and again on `r` (in the background; `ludex config auto_refresh no` turns the startup import off).
-- **GUI**: `pip install ludex-gui` (or `uv tool install ludex-games --with ludex-gui`), then `ludex gui` opens a game launcher (cover-art grid, game pages with Play or Install (and a store chooser for a game you own in several), review of uncertain title matches, launch options and title matching, search, jobs, settings with accounts and plugins, and a sidebar page for every plugin view). Covers come from the Steam and RAWG plugins and are fetched only for games on screen while `ludex config auto_details` is on. It is separate from `ludex-games` because it brings Qt. A game controller drives it when installed with `ludex-gui[gamepad]` (`uv tool install ludex-games --with "ludex-gui[gamepad]"`): D-pad or left stick move, A selects, B goes back, X plays or installs, LB and RB switch pages, Y jumps to search, Start opens a menu with Quit and a switch between desktop and console mode (`F11` and the sidebar do too; the launcher restarts in the other mode) (keyboard: `Ctrl+P`, `Ctrl+PgUp`, `Ctrl+PgDown`). The controller only acts while the launcher window has focus, `ludex gui --console` (or `ludex-gui --console`) opens it fullscreen and 25% larger in a living-room layout (a tab row instead of the sidebar, big covers, the Play button focused on a game, button hints in the status bar), for a TV or a handheld (`QT_SCALE_FACTOR` overrides the size); `ludex gui --install-desktop` adds "Ludex" and "Ludex Console" (with an icon) to the application menu, for example to add them to Steam as non-Steam games; `--uninstall-desktop` removes them. On a text field A opens an on-screen keyboard (Shift, 123 for symbols, Left/Right to move the cursor, Delete, Clear; Done submits, B closes it).
+- **GUI**: `ludex gui` opens a game launcher, with a controller-friendly console mode; see [Launcher (GUI)](#launcher-gui) below. It is a separate install because it brings Qt.
 - **Scripting**: `ludex --json <command>` prints `{"ok": ..., "data": ...}` (errors go to stderr).
 - **Plugins**: `plugin add/ls/view/rm/enable/disable/update` (`plugin view` lists the tables and panels plugins contribute, which the TUI shows as extra tabs); `update` updates ludex from its release channel.
+
+## Launcher (GUI)
+
+`ludex-gui` is a Qt Quick launcher over the same library. It is separate from `ludex-games` because it brings Qt:
+
+```sh
+uv tool install ludex-games --with "ludex-gui[gamepad]"   # drop [gamepad] for mouse and keyboard only
+ludex gui
+```
+
+- **Library**: cover-art grid (covers come from the Steam and RAWG plugins and are fetched only for games on screen while `ludex config auto_details` is on), search, sort, store and genre filters.
+- **Game pages**: Play or Install, with a store chooser for a game you own in several stores (otherwise the copy that is installed, else the first store alphabetically), launch options, title matching, details. The button shows Running or Installing while the game's job runs, so it cannot be started twice.
+- **Review matches**: title matches an import was not sure about, settled by joining the game to a candidate or keeping them apart (the GUI side of `ludex review` and `ludex merge`).
+- **Everything else**: search, jobs, settings with accounts and plugins, and a sidebar page for every plugin view.
+
+### Controller
+
+With the `gamepad` extra a controller drives the launcher, only while its window has focus: D-pad or left stick move, A selects, B goes back, X plays or installs, LB and RB switch pages, Y jumps to search, Start opens a menu with Quit and the mode switch. On a text field A opens an on-screen keyboard (Shift, 123 for symbols, Left/Right to move the cursor, Delete, Clear; Done submits, B closes it). Keyboard equivalents: `Ctrl+P`, `Ctrl+PgUp`, `Ctrl+PgDown`.
+
+### Console mode
+
+`ludex gui --console` (or `ludex-gui --console`) opens fullscreen and 25% larger in a living-room layout for a TV or a handheld: a tab row instead of the sidebar, big covers, Play focused on a game, button hints in the status bar (`QT_SCALE_FACTOR` overrides the size). The Start menu, the sidebar and `F11` switch between desktop and console mode; the launcher restarts in the other mode.
+
+`ludex gui --install-desktop` adds "Ludex" and "Ludex Console" (with an icon) to the application menu, for example to add them to Steam as non-Steam games; `--uninstall-desktop` removes them.
 
 ## Install
 
