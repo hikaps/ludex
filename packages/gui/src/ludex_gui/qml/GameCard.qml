@@ -13,7 +13,7 @@ Item {
     property bool current: false
     signal opened()
 
-    readonly property bool starting: backend.starting.indexOf(gameId) >= 0
+    readonly property string activity: backend.activity[String(gameId)] || ""
     // A HoverHandler sees the pointer over the Play button too; a MouseArea under it would lose the hover
     // and hide the button, which brings the hover back, and so on.
     readonly property bool lifted: hover.hovered || current
@@ -62,8 +62,8 @@ Item {
             id: play
             focusPolicy: Qt.NoFocus
             primary: true
-            text: card.starting ? "Starting…" : card.installed ? "Play" : "Install"
-            enabled: !card.starting
+            text: card.activity !== "" ? card.activity + "…" : card.installed ? "Play" : "Install"
+            enabled: card.activity === ""
             anchors.horizontalCenter: art.horizontalCenter
             anchors.bottom: art.bottom
             anchors.bottomMargin: 12
