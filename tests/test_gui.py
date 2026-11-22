@@ -750,6 +750,9 @@ def test_the_keyboard_replaces_a_selection_and_deletes_whole_characters(qapp, tm
     QMetaObject.invokeMethod(field, "select", Qt.ConnectionType.DirectConnection, Q_ARG("int", 0), Q_ARG("int", 2))
     _click(window, "key-x")
     assert field.property("text") == "x"
+    launcher.backend.closeDown()
+
+
 def test_console_mode_replaces_the_sidebar_with_tabs_the_pad_can_use(qapp, tmp_path, monkeypatch):
     launcher, window, pad = _padded(qapp, tmp_path, monkeypatch, console=True)
     tabs = _find_item(window.contentItem(), "consoleTabs")
@@ -771,10 +774,13 @@ def test_console_mode_shows_larger_covers_and_the_game_page_focuses_play(qapp, t
     (tmp_path / "d").mkdir()
     (tmp_path / "c").mkdir()
     desktop = _padded(qapp, tmp_path / "d", monkeypatch)
-    columns_desktop = desktop[1].findChild(QObject, "grid").property("columns")
+    cell_desktop = desktop[1].findChild(QObject, "grid").property("cellWidth")
     desktop[0].backend.closeDown()
     launcher, window, pad = _padded(qapp, tmp_path / "c", monkeypatch, console=True)
-    assert window.findChild(QObject, "grid").property("columns") < columns_desktop
+    window.setVisibility(QWindow.Visibility.Windowed)
+    window.resize(desktop[1].width(), desktop[1].height())
+    _until(qapp, lambda: window.width() == desktop[1].width())
+    assert window.findChild(QObject, "grid").property("cellWidth") > cell_desktop
     pad.press("a")
     _until(qapp, lambda: launcher.backend.current.get("gameId") is not None)
     _until(qapp, lambda: window.activeFocusItem() is not None and str(window.activeFocusItem().property("text")).endswith(("Play", "Install")))

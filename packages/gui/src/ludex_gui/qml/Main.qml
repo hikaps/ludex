@@ -234,12 +234,16 @@ ApplicationWindow {
                             readonly property bool here: win.section === modelData
                             objectName: "tab-" + modelData
                             Layout.preferredWidth: tabLabel.implicitWidth + 36
+                            Layout.minimumWidth: 72
                             Layout.fillHeight: true
                             activeFocusOnTab: true
                             Keys.onReturnPressed: win.go(modelData)
                             Txt {
                                 id: tabLabel
                                 anchors.centerIn: parent
+                                width: Math.min(implicitWidth, tab.width - 16)
+                                elide: Text.ElideRight
+                                horizontalAlignment: Text.AlignHCenter
                                 text: win.sectionTitle(tab.modelData)
                                 font.pixelSize: 18
                                 font.bold: tab.here

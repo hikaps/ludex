@@ -11,6 +11,7 @@ Item {
     signal back()
     focus: visible
     function focusDefault() {
+        if (!page.visible) return
         (consoleMode ? playButton : backButton).forceActiveFocus(Qt.TabFocusReason)
     }
     onVisibleChanged: if (visible) Qt.callLater(focusDefault)

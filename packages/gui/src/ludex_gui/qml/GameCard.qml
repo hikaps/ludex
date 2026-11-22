@@ -25,7 +25,7 @@ Item {
         radius: 4
         color: Theme.surface
         clip: true
-        scale: card.lifted ? (consoleMode ? 1.08 : 1.035) : 1
+        scale: card.lifted ? (consoleMode ? 1.04 : 1.035) : 1
         Behavior on scale { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
 
         CoverArt {
