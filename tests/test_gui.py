@@ -693,3 +693,28 @@ def test_b_closes_the_keyboard_and_keeps_what_was_typed(qapp, tmp_path, monkeypa
     assert field.property("text") == "d"
     assert window.activeFocusItem() is field
     launcher.backend.closeDown()
+
+
+def test_the_pad_moves_across_the_keys_and_types_with_a(qapp, tmp_path, monkeypatch):
+    launcher, window, pad = _padded(qapp, tmp_path, monkeypatch)
+    keyboard = window.findChild(QObject, "keyboard")
+    pad.press("y")
+    pad.release("y")
+    field = window.activeFocusItem()
+    pad.press("a")
+    _until(qapp, lambda: keyboard.property("visible"))
+    assert window.activeFocusItem().objectName() == "space"
+    for control in ("dpup", "dpup"):  # Space -> a letter row -> the row above
+        pad.press(control)
+        pad.release(control)
+    assert window.activeFocusItem().objectName().startswith("key-")
+    pad.press("a")
+    pad.release("a")
+    typed = field.property("text")
+    assert len(typed) == 1
+    pad.press("dpright")
+    pad.release("dpright")
+    assert window.activeFocusItem().objectName().startswith("key-")
+    pad.press("b")
+    _until(qapp, lambda: not keyboard.property("visible"))
+    launcher.backend.closeDown()
