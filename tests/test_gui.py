@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import os
 from pathlib import Path
 import sys
@@ -823,3 +824,41 @@ def test_sidebar_labels_are_centred_in_their_rows(qapp, tmp_path):
         middle = label.mapToItem(item, 0, label.height() / 2).y()
         assert abs(middle - item.height() / 2) <= 1, name
     launcher.backend.closeDown()
+
+
+def test_play_is_disabled_while_the_game_runs_and_a_second_click_is_ignored(qapp, tmp_path, monkeypatch):
+    from ludex.jobs import Job
+    from ludex_gui import backend as backend_mod
+
+    calls = []
+    job = Job(1, "play", 7, "steam:7", "Doom", 0, tmp_path / "log", "now", None, "running", None)
+    monkeypatch.setattr(backend_mod, "launch_game", lambda *a, **k: calls.append(a[2]) or ("steam:7", job))
+    launcher = _launcher(_paths(tmp_path), {})
+    backend = launcher.backend
+    monkeypatch.setattr(backend, "openGame", lambda *a, **k: None)
+    backend.launch(7)
+    backend.launch(7)
+    assert calls == [7] and backend.activity == {"7": "Running"}
+    monkeypatch.setattr(backend_mod, "list_jobs", lambda *a, **k: [dataclasses.replace(job, state="exited")])
+    backend.pollJobs()
+    assert backend.activity == {}
+    backend.launch(7)
+    assert calls == [7, 7]
+    backend.closeDown()
+
+
+def test_a_game_handed_to_a_store_client_is_busy_only_for_a_moment(qapp, tmp_path, monkeypatch):
+    from ludex_gui import backend as backend_mod
+
+    calls = []
+    monkeypatch.setattr(backend_mod, "launch_game", lambda *a, **k: calls.append(a[2]) or ("steam:7", None))
+    monkeypatch.setattr(backend_mod, "HANDOFF_MS", 30)
+    launcher = _launcher(_paths(tmp_path), {})
+    backend = launcher.backend
+    backend.launch(7)
+    backend.launch(7)
+    assert calls == [7] and backend.activity == {"7": "Starting"}
+    _until(qapp, lambda: backend.activity == {})
+    backend.launch(7)
+    assert calls == [7, 7]
+    backend.closeDown()

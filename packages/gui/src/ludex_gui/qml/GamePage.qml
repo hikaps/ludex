@@ -92,11 +92,13 @@ Item {
                     spacing: 12
                     Btn {
                         id: playButton
+                        readonly property string activity: backend.activity[String(game.gameId)] || ""
                         primary: true
                         fontSize: 18
                         implicitHeight: 52
                         implicitWidth: 200
-                        text: page.installed ? "▶  Play" : "⇩  Install"
+                        text: activity !== "" ? activity + "…" : page.installed ? "▶  Play" : "⇩  Install"
+                        enabled: activity === ""
                         onClicked: page.playOrInstall()
                     }
                     Btn {
