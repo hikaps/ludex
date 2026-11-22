@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ludex-gui"
 version = "0.63.0"
-description = "Desktop game launcher (Qt Quick) frontend of ludex"
+description = "Desktop and console-mode game launcher (Qt Quick) for ludex, drivable with a game controller"
 readme = { text = "The Qt Quick game launcher of [ludex](https://github.com/hikaps/ludex). Not part of `ludex-games`: install it next to it (`ludex gui`) or on its own (`ludex-gui`).", content-type = "text/markdown" }
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]

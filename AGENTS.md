@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-`ludex` is a headless, scriptable library of the games a user owns across stores, with a stable plugin API ("beets for games"). Linux, Python 3.11+, SQLite. The core never provides or endorses content; store, metadata and sync access are plugins.
+`ludex` is a headless, scriptable library of the games a user owns across stores, with a stable plugin API. Linux, Python 3.11+, SQLite. The core never provides or endorses content; store, metadata and sync access are plugins.
 
 The plugin API contract and the removal policy are specified in the docstrings of `ludex.plugins` and `ludex.library` (`packages/core/src/ludex/`); they are the source of truth. Requirements and plans are not tracked in this repository.
 

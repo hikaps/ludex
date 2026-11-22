@@ -4,6 +4,10 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+### Changed
+
+- **docs, packaging:** the tagline is now "Every game you own, in one local library" (README, docs home, site description, PyPI summaries and keywords). The README has a Launcher (GUI) section (controller, console mode, store chooser, match review) instead of one long bullet; the introduction and docs home mention the GUI.
+
 ### Added
 
 - **gui:** a game owned in several stores shows a store chooser next to Play (or Install) on its page; without a choice a click uses the store with an installed copy, else the first alphabetically. "Review matches" on the library page settles the title matches an import was not sure about (join the game to a candidate, or keep them apart), as `ludex review` and `ludex merge` do.
