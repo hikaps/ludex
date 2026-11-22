@@ -133,9 +133,10 @@ def send_key(window: QQuickWindow, key: Qt.Key, modifiers: Qt.KeyboardModifier) 
     text = "\r" if key == Qt.Key.Key_Return else ""
     press = QKeyEvent(QEvent.Type.KeyPress, key, modifiers, text)
     press.setAccepted(False)
+    before = window.activeFocusItem()
     QGuiApplication.sendEvent(window, press)
     QGuiApplication.sendEvent(window, QKeyEvent(QEvent.Type.KeyRelease, key, modifiers, text))
-    if key in _ARROWS and not (press.isAccepted() and _handles_arrows(window.activeFocusItem())):
+    if key in _ARROWS and not (press.isAccepted() and (window.activeFocusItem() is not before or _handles_arrows(before))):
         return move_focus(window, key)
     return press.isAccepted()
 
