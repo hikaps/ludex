@@ -157,12 +157,12 @@ ApplicationWindow {
                 anchors.margins: 12
                 spacing: 4
 
-                Txt {
-                    text: "ludex"
-                    font.pixelSize: 26
-                    font.bold: true
+                RowLayout {
                     Layout.margins: 8
                     Layout.bottomMargin: 18
+                    spacing: 10
+                    Logo { Layout.preferredWidth: 36; Layout.preferredHeight: 36 }
+                    Txt { text: "ludex"; font.pixelSize: 26; font.bold: true }
                 }
                 NavItem { objectName: "nav-library"; Layout.fillWidth: true; label: "Library"; glyph: "▤"; current: win.section === "library"; onActivated: win.go("library") }
                 NavItem { objectName: "nav-installed"; Layout.fillWidth: true; label: "Installed"; glyph: "▶"; current: win.section === "installed"; onActivated: win.go("installed") }
@@ -233,7 +233,8 @@ ApplicationWindow {
                     anchors.leftMargin: 32
                     anchors.rightMargin: 32
                     spacing: 8
-                    Txt { text: "ludex"; font.pixelSize: 26; font.bold: true; Layout.rightMargin: 24 }
+                    Logo { Layout.preferredWidth: 40; Layout.preferredHeight: 40 }
+                    Txt { text: "ludex"; font.pixelSize: 26; font.bold: true; Layout.leftMargin: 6; Layout.rightMargin: 24 }
                     Repeater {
                         model: win.sections
                         delegate: Item {
