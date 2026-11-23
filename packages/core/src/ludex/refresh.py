@@ -41,7 +41,7 @@ def refresh_all(paths: StatePaths, conn: sqlite3.Connection, providers: Mapping[
 
 
 def get_auto_refresh(conn: sqlite3.Connection) -> bool:
-    """Whether the TUI imports every account when it starts (default yes)."""
+    """Whether the GUI imports every account when it starts (default yes)."""
     row = conn.execute("SELECT value FROM meta WHERE key = 'auto_refresh'").fetchone()
     return row is None or row["value"] != "0"
 

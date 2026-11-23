@@ -10,7 +10,12 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ### Added
 
+- **gui:** a game matched to a database entry shows an "Open ..." button on its page that opens the entry's page in the browser: the active hyperlink credit the database's terms ask for, which only the terminal UI showed.
 - **plugins, cli, gui:** a plugin can offer extra actions for a game with the optional `actions(store, store_id)` (API version unchanged), for example a split-screen launcher. Each `GameAction` has an id, a label and an `argv` (absolute executable, no shell). The game page lists them under a "More" button next to Play, `ludex action GAME` lists them and `ludex action GAME PLUGIN:ID [--store S] [--dry-run]` runs one as a background `action` job with its output in the job log. An `actions` function that declares `settings` receives the plugin's settings, as `search` does.
+
+### Removed
+
+- **BREAKING: tui, packaging:** the terminal UI is gone: `ludex tui` is no longer a command and the `ludex-tui` distribution is no longer built, bundled or published (the 0.64.0 release stays on PyPI and works only with its own 0.64.0 core). `ludex-games` now bundles `ludex-core` and `ludex-cli`. Use the CLI or `ludex gui` (`ludex-gui`) instead. The `auto_details` and `auto_refresh` settings stay: the GUI uses them. `ludex-tui` remains a reserved name that `ludex plugin add` refuses.
 
 ## [0.64.0] - 2026-11-23
 

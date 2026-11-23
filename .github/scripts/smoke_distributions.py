@@ -4,7 +4,7 @@
     python .github/scripts/smoke_distributions.py --mode beta --dist dist/beta --repository OWNER/ludex
 
 ``stable``: the eight artifacts of ``build_distributions.py`` act as a wheelhouse; core alone, CLI alone, the bundle with
-uv and pipx (wheel and sdist), the ``ludex tui`` handoff in a terminal, and a managed plugin that downloads a game.
+uv and pipx (wheel and sdist), and a managed plugin that downloads a game.
 ``beta``: verifies the production artifacts (checksums, hash-pinned release URLs), rebuilds the same tree against a
 loopback server, and installs ``/ludex.tar.gz`` from it with uv and pipx, fresh and reinstalled. Never publishes anything.
 Run it from the checkout root with a Python that has ``build``, ``uv`` and ``pipx`` installed.
@@ -12,19 +12,14 @@ Run it from the checkout root with a Python that has ``build``, ``uv`` and ``pip
 from __future__ import annotations
 
 import argparse
-import fcntl
 import hashlib
 import json
 import os
-import pty
 import re
-import select
 import shutil
-import struct
 import subprocess
 import sys
 import tempfile
-import termios
 import threading
 import time
 import zipfile
@@ -82,43 +77,8 @@ def check(condition: bool, message: str) -> None:
 
 
 def installed_versions(python: Path, env) -> dict[str, str]:
-    code = "import importlib.metadata as m\nfor n in ('ludex-core','ludex-cli','ludex-tui','ludex-games','ludex-gui'):\n    try: print(n, m.version(n))\n    except m.PackageNotFoundError: pass\n"
+    code = "import importlib.metadata as m\nfor n in ('ludex-core','ludex-cli','ludex-games','ludex-gui'):\n    try: print(n, m.version(n))\n    except m.PackageNotFoundError: pass\n"
     return dict(line.split() for line in run([python, "-I", "-c", code], env=env).stdout.splitlines())
-
-
-def tui_in_terminal(binary: Path, args: list[str], env, extra_tabs: tuple[str, ...] = ()) -> None:
-    """Start the TUI on a pseudo-terminal, wait for its tabs (and ``extra_tabs``), press q, expect a clean exit."""
-    pid, fd = pty.fork()
-    if pid == 0:
-        os.execve(str(binary), [str(binary), *args], env)
-    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
-    tabs = ("Owned", "Installed", "Search", "Jobs", "Settings", *extra_tabs)
-    seen, deadline = b"", time.time() + 40
-    while time.time() < deadline and not all(tab.encode() in seen for tab in tabs):
-        if select.select([fd], [], [], 0.5)[0]:
-            try:
-                seen += os.read(fd, 65536)
-            except OSError:
-                break
-    check(all(tab.encode() in seen for tab in tabs), f"{binary.name} {' '.join(args)}: tabs not drawn: {seen[-300:]!r}")
-    os.write(fd, b"q")
-    status = None
-    for _ in range(100):
-        done, status = os.waitpid(pid, os.WNOHANG)
-        if done:
-            break
-        try:
-            if select.select([fd], [], [], 0.1)[0]:
-                os.read(fd, 65536)
-        except OSError:
-            pass
-        time.sleep(0.1)
-    else:
-        os.kill(pid, 9)
-        os.waitpid(pid, 0)
-        raise SystemExit(f"FAILED: {binary.name} did not exit after q")
-    check(os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0, f"{binary.name} exited with status {status}")
-    os.close(fd)
 
 
 FIXTURE = '''\
@@ -200,7 +160,7 @@ def check_stable(dist: Path) -> None:
         code = (
             "import importlib.util as u, os, sys, time\nos.umask(0o077)\n"
             "import ludex.plugins, ludex.library, ludex.services\n"
-            "assert all(u.find_spec(n) is None for n in ('ludex_cli', 'ludex_tui', 'textual')), 'frontend installed'\n"
+            "assert all(u.find_spec(n) is None for n in ('ludex_cli', 'ludex_gui')), 'frontend installed'\n"
             "from ludex.loader import load_providers\n"
             "from ludex.plugin_manager import add_plugin\n"
             f"print(add_plugin({str(plugin)!r}))\n"
@@ -222,28 +182,20 @@ def check_stable(dist: Path) -> None:
         )
         run([python, "-c", code], env=scratch.fresh_state("core"))
 
-        say("CLI alone: no Textual, and `ludex tui` explains what is missing")
+        say("CLI alone: no GUI")
         python = venv(scratch.root / "cli-venv")
         run([python, "-m", "pip", "install", "-q", f"ludex-cli=={version}"], env=env)
         binary = python.parent / "ludex"
         check(run([binary, "--version"], env=env).stdout.strip() == f"ludex {version}", "cli version")
-        check(run([python, "-c", "import importlib.util as u; raise SystemExit(u.find_spec('textual') is not None)"]).returncode == 0, "textual was installed with the CLI")
-        result = run([binary, "--json", "tui"], env=scratch.fresh_state("cli"), check=False)
-        check(result.returncode == 1 and json.loads(result.stderr)["error"]["code"] == "tui_missing", f"tui_missing expected: {result.stderr}")
+        check(run([python, "-c", "import importlib.util as u; raise SystemExit(u.find_spec('ludex_gui') is not None)"]).returncode == 0, "the GUI was installed with the CLI")
         result = run([binary, "update"], env=scratch.fresh_state("cli"), check=False)
         check(result.returncode == 1 and "requires ludex-games" in result.stderr, f"standalone update: {result.stderr}")
-
-        say("TUI without the CLI: the ludex-tui script")
-        python = venv(scratch.root / "tui-venv")
-        run([python, "-m", "pip", "install", "-q", f"ludex-tui=={version}"], env=env)
-        check(not (python.parent / "ludex").exists(), "ludex-tui must not provide the ludex command")
-        tui_in_terminal(python.parent / "ludex-tui", [], scratch.fresh_state("tui"))
 
         say("GUI without the CLI: ludex-gui loads its launcher offscreen")
         gui_python = venv(scratch.root / "gui-venv")
         run([gui_python, "-m", "pip", "install", "-q", f"ludex-gui=={version}"], env=env)
         check(not (gui_python.parent / "ludex").exists(), "ludex-gui must not provide the ludex command")
-        check(run([gui_python, "-c", "import importlib.util as u; raise SystemExit(any(u.find_spec(n) is not None for n in ('ludex_cli', 'ludex_tui', 'textual')))"]).returncode == 0, "a TUI or CLI package came with ludex-gui")
+        check(run([gui_python, "-c", "import importlib.util as u; raise SystemExit(any(u.find_spec(n) is not None for n in ('ludex_cli',)))"]).returncode == 0, "the CLI came with ludex-gui")
         code = (
             "import os\nos.umask(0o077)\n"
             "from PySide6.QtCore import QObject\n"
@@ -261,7 +213,7 @@ def check_stable(dist: Path) -> None:
         )
         run([gui_python, "-c", code], env=scratch.fresh_state("gui") | {"QT_QPA_PLATFORM": "offscreen", "QT_QUICK_BACKEND": "software"})
 
-        say("bundle with uv and pipx: wheel and sdist, one command, TUI, plugin download")
+        say("bundle with uv and pipx: wheel and sdist, one command, plugin download")
         sdist = next(dist.glob("ludex_games-*.tar.gz"))
         for label, source in (("wheel", wheels["ludex_games"]), ("sdist", sdist)):
             for tool in ("uv", "pipx"):
@@ -275,10 +227,9 @@ def check_stable(dist: Path) -> None:
                 binary = bin_dir / "ludex"
                 check([p.name for p in bin_dir.iterdir()] == ["ludex"], f"{tool} {label}: unexpected commands {[p.name for p in bin_dir.iterdir()]}")
                 check(run([binary, "--version"], env=env).stdout.strip() == f"ludex {version}", f"{tool} {label} version")
-                check(set(installed_versions(tool_python, env).values()) == {version} and len(installed_versions(tool_python, env)) == 4, f"{tool} {label} versions")
+                check(set(installed_versions(tool_python, env).values()) == {version} and len(installed_versions(tool_python, env)) == 3, f"{tool} {label} versions")
                 names, problems = providers_of(binary, scratch.fresh_state(f"{tool}{label}"))
                 check(names == BUILTINS and not problems, f"{tool} {label} providers {names} {problems}")
-        tui_in_terminal(binary, ["tui"], scratch.fresh_state("bundle-tui"))
         state = scratch.fresh_state("bundle-plugin")
         run([binary, "plugin", "add", plugin], env=env | {"LUDEX_HOME": state["LUDEX_HOME"]})
         names, problems = providers_of(binary, state)
@@ -288,7 +239,6 @@ def check_stable(dist: Path) -> None:
         check(shown["kind"] == "table" and shown["rows"] == [{"id": "alice", "cells": ["Alice", "online"], "actions": []}], f"plugin view: {shown}")
         missing = run([binary, "--json", "plugin", "view", "fixture", "nope"], env=state, check=False)
         check(missing.returncode == 1 and json.loads(missing.stderr)["error"]["code"] == "unknown_view", f"unknown view: {missing.stderr}")
-        tui_in_terminal(binary, ["tui"], state, ("People",))
         say("stable smoke passed")
     finally:
         scratch.close()
@@ -307,7 +257,7 @@ def read_sums(path: Path) -> dict[str, str]:
 def verify_production(dist: Path, repository: str) -> str:
     sums = read_sums(dist / "SHA256SUMS")
     names = {p.name for p in dist.iterdir()} - {"SHA256SUMS"}
-    check(set(sums) == names and len(names) == 6 and {"ludex.tar.gz", "ludex-gui.tar.gz"} <= names, f"unexpected artifact set {sorted(names)}")
+    check(set(sums) == names and len(names) == 5 and {"ludex.tar.gz", "ludex-gui.tar.gz"} <= names, f"unexpected artifact set {sorted(names)}")
     for name, digest in sums.items():
         check(hashlib.sha256((dist / name).read_bytes()).hexdigest() == digest, f"checksum mismatch: {name}")
     meta = metadata_of(dist / "ludex.tar.gz")
@@ -360,10 +310,9 @@ def check_beta(dist: Path, repository: str) -> None:
                 check([p.name for p in bin_dir.iterdir()] == ["ludex"], f"{tool}: unexpected commands")
                 check(run([binary, "--version"], env=env).stdout.strip() == expected, f"{tool} version")
                 versions = installed_versions(tool_python, env)
-                check(set(versions.values()) == {version} and len(versions) == (5 if tool == "uv" else 4), f"{tool} versions {versions}")
+                check(set(versions.values()) == {version} and len(versions) == (4 if tool == "uv" else 3), f"{tool} versions {versions}")
                 names, problems = providers_of(binary, scratch.fresh_state(f"{tool}{step}"))
                 check(names == BUILTINS and not problems, f"{tool} providers {names} {problems}")
-            tui_in_terminal(bin_dir / "ludex", ["tui"], scratch.fresh_state(f"{tool}-tui"))
         say("beta smoke passed")
     finally:
         server.shutdown()

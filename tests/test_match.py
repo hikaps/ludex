@@ -142,30 +142,6 @@ def test_auto_match_is_off_until_turned_on(tmp_path):
     assert get_auto_match(conn) is False
 
 
-def test_the_detail_pane_credits_the_match_with_a_link(tmp_path):
-    import asyncio
-
-    from textual.widgets import Static
-
-    from ludex_tui.app import LudexApp
-
-    conn, game_id = database(tmp_path)
-    game_metadata(conn, {"db": db_provider([SearchHit("db", "7", "Hades", "https://x/hades")])}, game_id, match=True)
-    conn.close()
-
-    async def scenario():
-        app = LudexApp(tmp_path / "db.sqlite3", {})
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            app._show_game(game_id)
-            await pilot.pause()
-            content = app.query_one("#detail", Static).visual
-            assert "matched to db: Hades" in str(content)
-            assert any("https://x/hades" in str(span.style) for span in content.spans)
-
-    asyncio.run(scenario())
-
-
 def test_the_users_pick_replaces_an_automatic_match_survives_refresh_and_can_be_cleared(tmp_path):
     conn, game_id = database(tmp_path)
     auto = SearchHit("db", "7", "Hades", "https://x/hades")
@@ -194,38 +170,6 @@ def test_match_candidates_report_failing_plugins_and_skip_plugins_without_match(
     plain = Provider("plain", "p", (), metadata=lambda s: None)
     hits, problems = match_candidates({"a": broken, "b": plain, "c": db_provider([SearchHit("db", "1", "X", "https://x/1")])}, "x")
     assert [p for p, _ in hits] == ["c"] and problems == {"a": "set a key"}
-
-
-def test_m_opens_the_picker_and_a_choice_sets_the_title_and_details(tmp_path):
-    import asyncio
-
-    from textual.widgets import OptionList
-
-    from ludex_tui.app import LudexApp
-
-    conn, game_id = database(tmp_path)
-    conn.close()
-    hit = SearchHit("db", "7", "Hades", "https://x/hades")
-    sources = {"db": Provider("db", "d", (), metadata=lambda store_id: Metadata("Slash.", (), (), None), match=lambda title: [hit])}
-
-    async def scenario():
-        app = LudexApp(tmp_path / "db.sqlite3", sources)
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("m")
-            await pilot.pause(0.5)
-            results = app.screen.query_one(OptionList)
-            assert results.option_count == 1
-            await pilot.press("enter")
-            await app.workers.wait_for_complete()
-            await pilot.pause(0.5)
-            assert str(app.query_one("#owned-table").get_row_at(0)[1]) == "Hades"
-            await pilot.press("m", "ctrl+r")
-            await app.workers.wait_for_complete()
-            await pilot.pause(0.5)
-            assert str(app.query_one("#owned-table").get_row_at(0)[1]) == "Hades_v1.2_(GOG)"
-
-    asyncio.run(scenario())
 
 
 def test_games_matched_to_one_database_entry_become_one_game(tmp_path):

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 
 from ludex import accounts, provider_settings
@@ -9,9 +7,6 @@ from ludex.errors import LudexError
 from ludex.loader import _valid_settings
 from ludex.paths import StatePaths
 from ludex.plugins import ConfigField, FetchResult, Provider
-from ludex_tui.app import LudexApp
-from ludex.storage import connect
-from textual.widgets import Select, Switch
 
 YN = ConfigField("fast", "go fast", kind="yes_no", optional=True)
 CH = ConfigField("region", "where", kind="choice", choices=("eu", "us"), optional=True)
@@ -63,23 +58,3 @@ def test_account_fields_are_validated_the_same_way(tmp_path):
 def test_the_loader_rejects_malformed_kinds(bad):
     assert not _valid_settings(plugin(settings=(bad,)))
     assert _valid_settings(plugin(settings=(YN, CH)))
-
-
-def test_settings_tab_shows_a_switch_and_a_dropdown_and_saves_them(tmp_path):
-    ps = paths(tmp_path)
-    connect(ps.database).close()
-    p = plugin(settings=(YN, CH))
-
-    async def scenario():
-        app = LudexApp(ps.database, {"p": p}, paths=ps)
-        async with app.run_test() as pilot:
-            await pilot.press("s")
-            await pilot.pause()
-            switch = next(w for w in app.query(Switch) if w.id in app._fields)
-            select = app.query_one(Select)
-            switch.value = True
-            select.value = "us"
-            await pilot.pause()
-
-    asyncio.run(scenario())
-    assert provider_settings.get_values(ps, "p") == {"fast": "yes", "region": "us"}

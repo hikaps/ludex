@@ -2,7 +2,7 @@
 
 ludex is a headless, scriptable catalog of the games you own on Steam, Epic/Heroic and in local folders, for Linux. It stores everything in a local SQLite database, has a plugin API for stores and metadata, sends no telemetry and has no hosted component. The core never provides or endorses content; store access lives in plugins.
 
-Use it from the command line, the terminal UI (`ludex tui`) or the desktop launcher (`ludex gui`, installed separately), which a game controller can drive and which has a fullscreen console mode for a TV or handheld.
+Use it from the command line or the desktop launcher (`ludex gui`, installed separately), which a game controller can drive and which has a fullscreen console mode for a TV or handheld.
 
 Requires Python 3.11 or newer.
 

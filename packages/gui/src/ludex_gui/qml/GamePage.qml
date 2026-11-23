@@ -188,6 +188,12 @@ Item {
                         Txt { text: modelData.value; Layout.fillWidth: true; wrapMode: Text.Wrap }
                     }
                 }
+                Btn {
+                    objectName: "matchLink"
+                    visible: (game.matchedUrl || "") !== ""
+                    text: "Open " + (game.matched || "") + "  \u2197"
+                    onClicked: Qt.openUrlExternally(game.matchedUrl)
+                }
                 Txt {
                     visible: (game.description || "") === "" && (game.genres || "") === ""
                     color: Theme.muted

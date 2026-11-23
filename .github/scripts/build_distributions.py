@@ -1,10 +1,10 @@
-"""Build the four ludex distributions (core, cli, tui and the ludex-games bundle) plus ludex-gui with one consistent version.
+"""Build the three ludex distributions (core, cli and the ludex-games bundle) plus ludex-gui with one consistent version.
 
     python .github/scripts/build_distributions.py --outdir dist
     python .github/scripts/build_distributions.py --outdir dist --beta-run-number 7 --asset-base https://github.com/OWNER/ludex/releases/download/beta
 
 Stable mode builds an sdist and a wheel of each (eight files). Beta mode stamps ``<base>.dev<N>`` into a private copy of
-the tree, builds the three member wheels and the bundle's wheel and sdist (renamed ``ludex.tar.gz``), and points the
+the tree, builds the two member wheels and the bundle's wheel and sdist (renamed ``ludex.tar.gz``), and points the
 bundle's requirements at the member wheels under ``--asset-base`` by direct URL with their SHA-256. It also builds
 ``ludex-gui`` (kept out of the bundle) as ``ludex-gui.tar.gz``, an sdist whose core requirement is the same URL, so
 ``--with`` that archive adds the GUI to a beta install. It also writes ``SHA256SUMS``. The beta URLs exist only in the generated artifacts, never in the source tree.
@@ -26,7 +26,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 BUNDLE = "ludex-games"
-BUNDLED = {"ludex-core": "packages/core", "ludex-cli": "packages/cli", "ludex-tui": "packages/tui"}  # what ludex-games depends on; all beta builds
+BUNDLED = {"ludex-core": "packages/core", "ludex-cli": "packages/cli"}  # what ludex-games depends on; all beta builds
 STANDALONE = {"ludex-gui": "packages/gui"}  # same version, own PyPI project; kept out of the bundle (it brings Qt); beta builds only its sdist
 PROJECTS = BUNDLED | STANDALONE
 VERSION = re.compile(r"\d+\.\d+\.\d+")
@@ -87,7 +87,7 @@ def _sdist_has_license(path: Path) -> bool:
         return any(m.isfile() and m.name.count("/") == 1 and m.name.endswith("/LICENSE") for m in archive.getmembers())
 
 
-_OWNS = {"ludex-core": "ludex/", "ludex-cli": "ludex_cli/", "ludex-tui": "ludex_tui/", "ludex-gui": "ludex_gui/", BUNDLE: None}
+_OWNS = {"ludex-core": "ludex/", "ludex-cli": "ludex_cli/", "ludex-gui": "ludex_gui/", BUNDLE: None}
 
 
 def verify(outdir: Path, version: str, expected_requires: dict[str, set[str]], *, sdists: bool) -> list[Path]:
@@ -173,7 +173,7 @@ def build_beta(outdir: Path, run_number: str, asset_base: str) -> None:
                 raise SystemExit(f"unexpected ludex-gui sdist metadata {gmeta['Name']!r} {gmeta['Version']!r} {sorted(gui_requires)}")
             shutil.copy2(gui_sdist, outdir / "ludex-gui.tar.gz")
     expected = {BUNDLE: {f"{name} @ {asset_base}/{wheel}#sha256={digest}" for name, (wheel, digest) in digests.items()},
-                "ludex-core": set(), "ludex-cli": {f"ludex-core=={version}"}, "ludex-tui": {f"ludex-core=={version}"}}
+                "ludex-core": set(), "ludex-cli": {f"ludex-core=={version}"}}
     wheels = verify(outdir, version, expected, sdists=False)
     sdist = next(outdir.glob(f"ludex_games-{version}.tar.gz"))
     meta = metadata_of(sdist)

@@ -1,6 +1,6 @@
 """The object QML talks to: library, game page, search, jobs, covers, plus the settings and plugin-view controllers.
 
-Like the TUI it only collects input, calls the core and shows results. Blocking core calls run on pool threads
+It only collects input, calls the core and shows results. Blocking core calls run on pool threads
 (``work.run_async``) with their own SQLite connections; this object and its connection live on the UI thread.
 """
 from __future__ import annotations
@@ -442,6 +442,7 @@ class Backend(QObject):
             "developers": ", ".join(found.developers) if found else "",
             "released": found.released or "" if found else "",
             "matched": f"{matched['plugin']}: {matched['title']}" if matched else "",
+            "matchedUrl": matched["url"] if matched else "",
             "running": what,
         }
         self.currentChanged.emit()

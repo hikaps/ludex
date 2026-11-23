@@ -11,8 +11,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
 
 import pytest
-from PySide6.QtCore import Q_ARG, QMetaObject, QObject, QPointF, Qt, QThread
-from PySide6.QtGui import QGuiApplication, QWindow
+from PySide6.QtCore import Q_ARG, QMetaObject, QObject, QPointF, Qt, QThread, QUrl, Slot
+from PySide6.QtGui import QDesktopServices, QGuiApplication, QWindow
 
 from ludex import artwork
 from ludex import launch as launch_mod
@@ -354,6 +354,16 @@ def test_an_account_is_added_imported_and_removed_from_settings(qapp, tmp_path):
     backend.closeDown()
 
 
+class _UrlRecorder(QObject):
+    def __init__(self) -> None:
+        super().__init__()
+        self.urls: list[str] = []
+
+    @Slot(QUrl)
+    def open(self, url: QUrl) -> None:
+        self.urls.append(url.toString())
+
+
 def test_a_match_is_chosen_off_the_ui_thread_then_cleared(qapp, tmp_path):
     paths = _paths(tmp_path)
     conn = connect(paths.database)
@@ -372,8 +382,20 @@ def test_a_match_is_chosen_off_the_ui_thread_then_cleared(qapp, tmp_path):
     backend.chooseMatch(1, 0)
     _until(qapp, lambda: backend.current.get("matched"))
     assert backend.current["title"] == "Hades" and backend.current["genres"] == "Roguelike"
+    assert backend.current["matchedUrl"] == "https://x/hades"
+    window = launcher.window
+    window.show()
+    _until(qapp, lambda: _find_item(window.contentItem(), "matchLink") is not None)
+    opener = _UrlRecorder()
+    QDesktopServices.setUrlHandler("https", opener, "open")
+    try:
+        _click(window, "matchLink")
+    finally:
+        QDesktopServices.unsetUrlHandler("https")
+    assert opener.urls == ["https://x/hades"]
     backend.chooseMatch(1, -1)
     _until(qapp, lambda: not backend.current.get("matched"))
+    assert backend.current["matchedUrl"] == ""
     assert backend.current["title"] == "hades_v1.2"
 
 

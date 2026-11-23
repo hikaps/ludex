@@ -144,14 +144,14 @@ jobs:
           sums = dict(line.split("  ", 1)[::-1] for line in (dist / "SHA256SUMS").read_text().splitlines())
           names = {p.name for p in dist.iterdir()} - {"SHA256SUMS"}
           wheels = {n for n in names if n.endswith(".whl")}
-          prefixes = {"ludex_core-", "ludex_cli-", "ludex_tui-", "ludex_games-"}
-          if set(sums) != names or {"ludex.tar.gz", "ludex-gui.tar.gz"} - names or len(wheels) != 4 or {w.split("-")[0] + "-" for w in wheels} != prefixes:
+          prefixes = {"ludex_core-", "ludex_cli-", "ludex_games-"}
+          if set(sums) != names or {"ludex.tar.gz", "ludex-gui.tar.gz"} - names or len(wheels) != 3 or {w.split("-")[0] + "-" for w in wheels} != prefixes:
               raise SystemExit(f"package artifact set is incomplete or unexpected: {sorted(names)}")
           for name, digest in sums.items():
               if hashlib.sha256((dist / name).read_bytes()).hexdigest() != digest:
                   raise SystemExit(f"checksum mismatch: {name}")
           PY
-          WHEELS=(dist/ludex_core-*.whl dist/ludex_cli-*.whl dist/ludex_tui-*.whl)
+          WHEELS=(dist/ludex_core-*.whl dist/ludex_cli-*.whl)
           BUNDLE_WHEEL=(dist/ludex_games-*.whl)
 
           BRANCH_HEAD="$(git ls-remote --heads origin "refs/heads/$SOURCE_BRANCH")"

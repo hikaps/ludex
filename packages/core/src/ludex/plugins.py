@@ -59,7 +59,7 @@ results across providers; a failing provider is reported and skipped.
 
 Metadata (optional): ``metadata(store_id)`` returns a ``Metadata`` record (description, genres,
 developers, release date) for one game, or ``None`` when the store does not know it. The core calls
-it only when the user asks (``ludex metadata``, the TUI ``m`` key) and caches the answer in the
+it only when the user asks (``ludex metadata``, the GUI match dialog) and caches the answer in the
 library database. It may use the network under the same rules as ``search``. Several providers
 may offer it; the core uses the first one that owns a copy of the game.
 
@@ -163,14 +163,14 @@ SQL. The core holds the writer lock for the whole run, so commands are serialize
 Services: a command may start a long-running background process with
 ``ludex.services.start_service(ctx.conn, provider, name, argv, cwd=..., settle=...)``, and later
 ``stop_service`` / ``service_status``. ludex runs it as a ``service`` job: detached, in its own session,
-with output in a private log under the state directory, and visible in the TUI Jobs tab. Stopping ends
+with output in a private log under the state directory, and visible on the GUI Jobs page. Stopping ends
 its whole process group. One service of a given name runs at a time.
 Raise ``LudexError`` with a fixed, secret-free message for expected failures; any other exception
 is reported as ``command_failed`` without its text. Commands alone do not add tabs; see Views.
 
 Views (optional): ``views`` is a tuple of ``View(id, title, fetch)``; ids are lowercase letters, digits
 and ``-``, unique within the provider, and ``title`` is a single line. A frontend lists them as
-navigation entries (a TUI tab, a GUI drawer item) identified by ``(provider name, view id)``.
+navigation entries (a GUI sidebar page, ``ludex plugin view``) identified by ``(provider name, view id)``.
 ``fetch(settings)`` receives the plugin-wide settings (read at call time, never account settings) and
 returns either a ``ViewTable(columns, rows)`` or a ``ViewDetail(fields)``. A ``ViewRow`` has a string
 ``id`` (unique in the table), one string cell per column and optional ``ViewAction(label, command,

@@ -189,7 +189,6 @@ def _parser() -> argparse.ArgumentParser:
     game_set.add_argument("--unset-env", action="append", default=[], metavar="NAME", help="remove an environment variable (repeatable)")
     game_set.add_argument("--clear", action="store_true", help="reset all settings first")
 
-    commands.add_parser("tui", help="browse, search and launch games in the terminal")
     gui = commands.add_parser("gui", help="open the desktop window (needs ludex-gui)")
     gui.add_argument("--console", action="store_true", help="fullscreen and larger, for a controller on a TV or a handheld")
     gui.add_argument("--install-desktop", action="store_true", help="add Ludex and Ludex Console to the application menu instead of opening the window")
@@ -937,17 +936,6 @@ def _cmd_action(args: argparse.Namespace) -> tuple[object, str]:
     return data, f"started {info.label} (job {job.id}); log: {job.log}"
 
 
-def _cmd_tui(args: argparse.Namespace) -> tuple[object, str]:
-    try:
-        from ludex_tui.app import main as run_tui
-    except ModuleNotFoundError as exc:
-        if exc.name != "ludex_tui":
-            raise
-        raise LudexError("tui_missing", "install ludex-tui alongside ludex-cli, or install ludex-games") from None
-    run_tui()
-    return {}, ""
-
-
 def _cmd_gui(args: argparse.Namespace) -> tuple[object, str]:
     try:
         from ludex_gui.app import main as run_gui
@@ -1063,7 +1051,6 @@ _HANDLERS = {
     ("game", "set"): _cmd_game_set,
     ("launch", None): _cmd_launch,
     ("action", None): _cmd_action,
-    ("tui", None): _cmd_tui,
     ("gui", None): _cmd_gui,
 }
 
