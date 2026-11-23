@@ -4,7 +4,7 @@ The key is the plugin setting ``api_key`` (``ludex config rawg.api_key --secret`
 request URL, as RAWG requires, so errors never include the URL. RAWG's terms (free for personal use,
 no redistribution of its data) require crediting it with an active hyperlink wherever its data is
 shown: the core shows "matched to rawg: <title>" linked to the game's rawg.io page (``SearchHit.url``)
-in the TUI and prints that URL in ``ludex metadata``. Each user brings their own key.
+in the GUI game page and prints that URL in ``ludex metadata``. Each user brings their own key.
 ponytail: no pagination or caching here (the core caches metadata); one request per call.
 """
 from __future__ import annotations

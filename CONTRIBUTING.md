@@ -13,7 +13,7 @@ Setup, code conventions and testing are in [AGENTS.md](AGENTS.md).
 
 ## Commits and PRs
 
-- Conventional Commits: `<type>(<optional-scope>): <summary>`; types `feat`, `fix`, `docs`, `test`, `refactor`, `perf`, `build`, `ci`, `chore`. Scopes name the subsystem (`import`, `matching`, `storage`, `plugins`, `accounts`, `steam`, `cli`, `tui`).
+- Conventional Commits: `<type>(<optional-scope>): <summary>`; types `feat`, `fix`, `docs`, `test`, `refactor`, `perf`, `build`, `ci`, `chore`. Scopes name the subsystem (`import`, `matching`, `storage`, `plugins`, `accounts`, `steam`, `cli`, `gui`).
 - Imperative subject, no trailing period, at most 72 characters including the `(#N)` that squash merges append, so keep PR titles to 68 or fewer.
 - One logical change per commit, with its tests and docs. Body: motivation, constraints, and verification actually performed.
 - Breaking CLI, `--json` or persisted-state changes: `!` after the type/scope and a `BREAKING CHANGE:` body.
@@ -23,10 +23,10 @@ Setup, code conventions and testing are in [AGENTS.md](AGENTS.md).
 
 1. In a feature PR on `develop`, bump `version` in the root and the four `packages/*/pyproject.toml` (with the exact `==` pins between them) and `__version__` in `packages/core/src/ludex/__init__.py` together, then run `uv lock`. All must be plain `X.Y.Z` and equal; `.github/scripts/build_distributions.py` checks it.
 2. Open a PR from `develop` to `main` and merge it with a merge commit (never squash, or the branches diverge).
-3. That merge releases the version: `.github/workflows/pypi.yml` publishes to PyPI (trusted publishing, no token), publishing `ludex-core`, `ludex-cli`, `ludex-tui` and then `ludex-games`, then creates tag `vX.Y.Z` and a GitHub Release with all ten files, and finally publishes `ludex-gui` (not in the bundle; a failure there leaves the release intact and a re-run skips what PyPI has). A push to `main` whose tag already exists only builds.
+3. That merge releases the version: `.github/workflows/pypi.yml` publishes to PyPI (trusted publishing, no token), publishing `ludex-core`, `ludex-cli` and then `ludex-games`, then creates tag `vX.Y.Z` and a GitHub Release with all eight files, and finally publishes `ludex-gui` (not in the bundle; a failure there leaves the release intact and a re-run skips what PyPI has). A push to `main` whose tag already exists only builds.
 
 A PyPI version can never be reused, so keep a required reviewer on the `pypi` environment (GitHub Settings, Environments): the release waits for approval. Re-running after a failed tag or release step is safe. Pushing tag `vX.Y.Z` by hand also publishes it.
 
-The bundle on PyPI is `ludex-games`; the command and import package stay `ludex`. One-time setup: a PyPI publisher for each of `ludex-core` (environment `pypi`), `ludex-cli` (`pypi-cli`), `ludex-tui` (`pypi-tui`), `ludex-gui` (`pypi-gui`) and `ludex-games` (`pypi`); PyPI allows one pending publisher per repository, workflow and environment, so new projects need distinct environments. Owner `hikaps`, repository `ludex`, workflow `pypi.yml`, environment `pypi`.
+The bundle on PyPI is `ludex-games`; the command and import package stay `ludex`. One-time setup: a PyPI publisher for each of `ludex-core` (environment `pypi`), `ludex-cli` (`pypi-cli`), `ludex-gui` (`pypi-gui`) and `ludex-games` (`pypi`); PyPI allows one pending publisher per repository, workflow and environment, so new projects need distinct environments. Owner `hikaps`, repository `ludex`, workflow `pypi.yml`, environment `pypi`.
 
-CI: `tests.yml` runs on every push and PR. `releases.yml` runs on `develop` pushes and PRs to it: it builds the four distributions as `.devN` wheels plus the `ludex.tar.gz` bundle whose requirements are hash-pinned release URLs, smoke-installs them with uv and pipx, and on pushes moves the single rolling `beta` pre-release (keeping the previous wheel set so an older `ludex.tar.gz` stays installable).
+CI: `tests.yml` runs on every push and PR. `releases.yml` runs on `develop` pushes and PRs to it: it builds the distributions as `.devN` wheels plus the `ludex.tar.gz` bundle whose requirements are hash-pinned release URLs, smoke-installs them with uv and pipx, and on pushes moves the single rolling `beta` pre-release (keeping the previous wheel set so an older `ludex.tar.gz` stays installable).

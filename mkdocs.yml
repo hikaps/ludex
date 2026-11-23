@@ -1,5 +1,5 @@
 site_name: ludex
-site_description: "Every game you own, in one local library: scriptable, with a CLI, a TUI and a controller-friendly launcher."
+site_description: "Every game you own, in one local library: scriptable, with a CLI and a controller-friendly launcher."
 site_url: https://hikaps.github.io/ludex/
 repo_url: https://github.com/hikaps/ludex
 theme:

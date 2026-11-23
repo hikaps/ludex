@@ -1,7 +1,7 @@
 """The ludex desktop launcher (Qt Quick): a sidebar, a cover-art library grid, game pages, search, jobs, settings
 and one sidebar page per plugin view.
 
-Like the TUI it only collects input, calls the core and shows results. ``backend.py`` bridges the core to QML;
+It only collects input, calls the core and shows results. ``backend.py`` bridges the core to QML;
 the screens are the files under ``qml/``.
 """
 from __future__ import annotations
