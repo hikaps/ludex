@@ -14,7 +14,7 @@ it cannot be told apart from a failed fetch; only an explicit ``game_count: 0`` 
 """
 from __future__ import annotations
 
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import json
 import re
@@ -351,7 +351,39 @@ _COVER_FILES = ("library_600x900.jpg", "header.jpg")  # portrait art, else the s
 _RAW = {"Accept-Encoding": "identity"}  # an image is already compressed; never let a response inflate past the cap
 
 
-def cover(store_id: str, *, base_url: str = COVER_BASE_URL, client: httpx.Client | None = None) -> bytes | None:
+def _image(client: httpx.Client, url: str) -> bytes | None:
+    """One image, at most ``MAX_COVER_BYTES``; ``None`` when Steam has no such file."""
+    with client.stream("GET", url, headers=_RAW) as response:
+        if response.status_code in (403, 404):
+            return None
+        if response.status_code != 200:
+            raise SourceError("steam_unavailable", "Steam is unavailable")
+        body = bytearray()
+        if response.headers.get("content-encoding", "identity").lower() != "identity":
+            raise _bad_response()
+        for chunk in response.iter_raw():
+            body += chunk
+            if len(body) > MAX_COVER_BYTES:
+                raise _bad_response()
+        return bytes(body)
+
+
+def _store_header(client: httpx.Client, store_id: str, url: str) -> str | None:
+    """The banner link in the store entry. Newer apps keep their art under a hashed path that only the entry names."""
+    with client.stream("GET", url, params={"appids": store_id, "filters": "basic"}) as response:
+        if response.status_code != 200:
+            return None
+        body = _read_body(response)
+    try:
+        link = json.loads(body)[store_id]["data"]["header_image"]
+    except (ValueError, KeyError, TypeError):
+        return None
+    parts = urlsplit(link) if isinstance(link, str) else None
+    # only Steam's own image hosts, over https
+    return link if parts and parts.scheme == "https" and (parts.hostname or "").endswith(".steamstatic.com") else None
+
+
+def cover(store_id: str, *, base_url: str = COVER_BASE_URL, details_url: str = APP_DETAILS_URL, client: httpx.Client | None = None) -> bytes | None:
     """Steam's public library art for one app (no key); ``None`` when Steam has no image for it."""
     if not store_id.isascii() or not store_id.isdigit():
         return None
@@ -359,25 +391,16 @@ def cover(store_id: str, *, base_url: str = COVER_BASE_URL, client: httpx.Client
     client = client or httpx.Client(timeout=10.0, headers={"User-Agent": f"ludex/{__version__}"})
     try:
         for name in _COVER_FILES:
-            with client.stream("GET", f"{base_url}/{store_id}/{name}", headers=_RAW) as response:
-                if response.status_code in (403, 404):
-                    continue
-                if response.status_code != 200:
-                    raise SourceError("steam_unavailable", "Steam is unavailable")
-                body = bytearray()
-                if response.headers.get("content-encoding", "identity").lower() != "identity":
-                    raise _bad_response()
-                for chunk in response.iter_raw():
-                    body += chunk
-                    if len(body) > MAX_COVER_BYTES:
-                        raise _bad_response()
-                return bytes(body)
+            found = _image(client, f"{base_url}/{store_id}/{name}")
+            if found is not None:
+                return found
+        link = _store_header(client, store_id, details_url)
+        return _image(client, link) if link else None
     except httpx.HTTPError:
         raise SourceError("steam_unavailable", "Steam is unavailable") from None
     finally:
         if own:
             client.close()
-    return None
 
 
 def fetch(config: Mapping[str, str]) -> FetchResult:

@@ -9,6 +9,10 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 - **gui:** after a game that showed as "Running" quits, the launcher raises itself and takes the focus back (it stayed behind the store client or was left unfocused, so the pad did nothing).
 - **gui:** the status-bar message fades after 10 seconds (it stays while a refresh or download is running), and click or B on the pad dismisses it.
 
+### Fixed
+
+- **steam:** cover art for newer Steam apps and demos (for example Fart Together Demo) that have no image at the classic path: when the usual files are missing, the banner the app's store entry names (under Steam's own image hosts, over https) is used.
+
 ### Added
 
 - **gui, plugins:** games a store client runs show as "Running" on their card and page, whoever started them. A provider declares the optional `running(config)` (API version unchanged); Steam (the `reaper SteamLaunch AppId=` process) and Heroic sideloads (a process running the game's program) do. Heroic is a heuristic: Heroic keeps no record of what runs.
