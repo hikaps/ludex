@@ -1209,3 +1209,33 @@ def test_a_plugins_action_is_offered_on_the_game_page_and_runs_as_a_job(qapp, tm
     backend.openGame(2)
     assert backend.current["title"] == "Doom" and backend.current["actions"] == []
     backend.closeDown()
+
+
+def test_the_more_button_opens_the_actions_and_picking_one_runs_it(qapp, tmp_path):
+    from ludex.plugins import GameAction
+
+    paths = _paths(tmp_path)
+    marker = tmp_path / "ran"
+    conn = connect(paths.database)
+    import_account(conn, "m", [OwnedGame("steam", "7", "Hades"), OwnedGame("steam", "8", "Doom")], store="steam")
+    conn.close()
+    argv = [sys.executable, "-c", f"open({str(marker)!r}, 'w').write('x')"]
+    couch = Provider("couch", "c", (), actions=lambda store, store_id: [GameAction("split", "Play split-screen", argv)] if store_id == "7" else [])
+    launcher = _launcher(paths, {"steam": steam.PLUGIN, "couch": couch})
+    window = launcher.window
+    window.show()
+    launcher.backend.openGame(2)
+    _until(qapp, lambda: _find_item(window.contentItem(), "moreActions") is not None)
+    assert _find_item(window.contentItem(), "moreActions").isVisible() is False  # Doom has no actions
+    launcher.backend.openGame(1)
+    _until(qapp, lambda: _find_item(window.contentItem(), "moreActions").isVisible())
+    _click(window, "moreActions")
+    menu = window.findChild(QObject, "moreMenu")
+    _until(qapp, lambda: menu.property("opened"))
+    entries = menu.property("contentItem").childItems()
+    labels = [e.property("text") for e in entries if e.property("text")]
+    assert labels == ["Play split-screen"]
+    QMetaObject.invokeMethod(next(e for e in entries if e.property("text")), "click", Qt.ConnectionType.DirectConnection)
+    _until(qapp, lambda: marker.exists())
+    _until(qapp, lambda: not menu.property("opened"))
+    launcher.backend.closeDown()
