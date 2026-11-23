@@ -103,16 +103,16 @@ def _valid_settings(plugin: Provider) -> bool:
 
 
 def _bind_settings(provider: Provider) -> Provider:
-    """Give ``search``/``metadata``/``match``/``cover`` functions that declare ``settings`` the plugin's settings, read per call."""
+    """Give ``search``/``metadata``/``match``/``cover``/``actions`` functions that declare ``settings`` the plugin's settings, read per call."""
     bound = {}
-    for attr in ("search", "metadata", "match", "cover"):
+    for attr in ("search", "metadata", "match", "cover", "actions"):
         function = getattr(provider, attr)
         try:
             wants = function is not None and "settings" in inspect.signature(function).parameters
         except (TypeError, ValueError):
             wants = False
         if wants:
-            bound[attr] = lambda arg, _f=function, _n=provider.name: _f(arg, settings=get_values(state_paths(), _n))
+            bound[attr] = lambda *args, _f=function, _n=provider.name: _f(*args, settings=get_values(state_paths(), _n))
     return replace(provider, **bound) if bound else provider
 
 

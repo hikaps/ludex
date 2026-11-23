@@ -25,6 +25,7 @@ calls what is declared (``Provider.capabilities`` lists them):
 - ``metadata``: ``metadata``, below.
 - ``playtime``: ``playtime``, below.
 - ``running``: ``running``, below.
+- ``actions``: ``actions``, below.
 - ``acquire``: ``acquire``, below.
 - ``commands``: ``commands``, below.
 - ``views``: ``views``, below.
@@ -126,6 +127,16 @@ running on this machine now (for example by looking at the processes). It is rea
 seconds while a launcher is open: keep it cheap, local and free of network. Raise ``SourceError`` when
 it cannot be determined; the core then shows nothing running for that store. Games the core started
 itself are ``play`` jobs and do not need it.
+
+Actions (optional): ``actions(store, store_id)`` returns the ``GameAction``s the plugin offers for one owned
+copy of a game, whichever plugin owns the copy (a split-screen launcher offers one for Steam and Heroic
+games). A ``GameAction`` has an ``id`` (lowercase, ``[a-z][a-z0-9-]*``, unique within the plugin), a
+one-line ``label`` and an ``argv``: an absolute executable path and its arguments, run without a shell.
+Declare a ``settings`` parameter to receive the plugin's settings (as for ``search``). It runs when a game
+is shown, so keep it cheap, local and free of network. Return an empty sequence when nothing applies;
+an action or a call that is invalid or raises is skipped, never shown. The core runs the chosen action
+as a background job of kind ``action`` (see ``ludex.jobs``), with output in the job log, and never adds
+the game's credentials to it. The user starts it by hand: it is not run during import or refresh.
 
 Acquiring (optional): ``acquire(request, report)`` gets a ``AcquireRequest`` (store id, title, and a
 ``destination`` directory the core created) and does the whole job itself: download, unpack, or
@@ -311,6 +322,13 @@ class View:
 
 
 @dataclass(frozen=True, slots=True)
+class GameAction:
+    id: str
+    label: str
+    argv: Sequence[str]  # absolute executable first; run without a shell
+
+
+@dataclass(frozen=True, slots=True)
 class PlayRecord:
     minutes: int
     last_played: str | None = None  # ISO 8601 UTC, for example 2026-11-08T19:38:29Z
@@ -346,10 +364,11 @@ class Provider:
     running: Callable[[Mapping[str, str]], Iterable[str]] | None = None
     views: tuple[View, ...] = ()
     cover: Callable[..., bytes | None] | None = None
+    actions: Callable[..., Sequence[GameAction]] | None = None
 
     @property
     def capabilities(self) -> tuple[str, ...]:
-        found = (("owned", self.fetch), ("installed", self.installed), ("search", self.search), ("metadata", self.metadata), ("match", self.match), ("launch", self.launch_url or self.launch_command or self.game_folder), ("install", self.install_url or self.install_command), ("playtime", self.playtime), ("running", self.running), ("acquire", self.acquire), ("commands", self.commands or None), ("views", self.views or None), ("cover", self.cover))
+        found = (("owned", self.fetch), ("installed", self.installed), ("search", self.search), ("metadata", self.metadata), ("match", self.match), ("launch", self.launch_url or self.launch_command or self.game_folder), ("install", self.install_url or self.install_command), ("playtime", self.playtime), ("running", self.running), ("acquire", self.acquire), ("commands", self.commands or None), ("views", self.views or None), ("cover", self.cover), ("actions", self.actions))
         return tuple(name for name, value in found if value is not None)
 
 

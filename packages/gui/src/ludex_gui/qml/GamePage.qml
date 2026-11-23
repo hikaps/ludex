@@ -126,6 +126,15 @@ Item {
                         text: "Match…"
                         onClicked: matcher.openFor(game.gameId, game.title)
                     }
+                    Repeater {
+                        model: game.actions || []
+                        Btn {
+                            required property var modelData
+                            implicitHeight: 52
+                            text: modelData.label
+                            onClicked: backend.runAction(game.gameId, modelData.plugin, modelData.id, modelData.store)
+                        }
+                    }
                     Btn {
                         visible: page.running
                         implicitHeight: 52

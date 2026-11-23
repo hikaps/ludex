@@ -1187,3 +1187,25 @@ def test_the_launcher_takes_the_focus_back_when_a_game_it_showed_as_running_quit
     backend.pollJobs()
     assert exits == [1]
     backend.closeDown()
+
+
+def test_a_plugins_action_is_offered_on_the_game_page_and_runs_as_a_job(qapp, tmp_path):
+    from ludex.plugins import GameAction
+
+    paths = _paths(tmp_path)
+    marker = tmp_path / "ran"
+    conn = connect(paths.database)
+    import_account(conn, "m", [OwnedGame("steam", "7", "Hades"), OwnedGame("steam", "8", "Doom")], store="steam")
+    conn.close()
+    argv = [sys.executable, "-c", f"open({str(marker)!r}, 'w').write('x')"]
+    couch = Provider("couch", "c", (), actions=lambda store, store_id: [GameAction("split", "Play split-screen", argv)] if store_id == "7" else [])
+    launcher = _launcher(paths, {"steam": steam.PLUGIN, "couch": couch})
+    backend = launcher.backend
+    backend.openGame(1)
+    assert backend.current["title"] == "Hades"
+    assert backend.current["actions"] == [{"plugin": "couch", "id": "split", "label": "Play split-screen", "store": "steam"}]
+    backend.runAction(backend.current["gameId"], "couch", "split", "steam")
+    _until(qapp, lambda: marker.exists())
+    backend.openGame(2)
+    assert backend.current["title"] == "Doom" and backend.current["actions"] == []
+    backend.closeDown()
