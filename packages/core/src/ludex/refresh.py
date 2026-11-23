@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from .accounts import get_account, list_accounts
 from .library import run_import
+from .metadata import merge_matched
 from .paths import StatePaths
 from .plugins import Provider
 
@@ -35,6 +36,7 @@ def refresh_all(paths: StatePaths, conn: sqlite3.Connection, providers: Mapping[
             results.append(Refreshed(ref, error=getattr(exc, "message", f"failed ({type(exc).__name__})")))
             continue
         results.append(Refreshed(ref, summary.added, summary.restored, summary.removed))
+    merge_matched(conn)  # new copies may share a database entry with a game already matched
     return results
 
 

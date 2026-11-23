@@ -809,3 +809,21 @@ def test_details_for_every_game_feed_genres_and_the_genre_filter(world: World, c
     code, out, _ = run(capsys, "--json", "ls", "--genre", "puzzle")
     assert [g["title"] for g in json.loads(out)["data"]["games"]] == ["Portal"]
     assert run(capsys, "metadata", "Hades", "--all")[0] != 0
+
+
+def test_dedupe_previews_then_joins_games_matched_to_one_entry(world: World, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+    world.catalogs["alice"] = [("1", "hades-final"), ("2", "hades_old")]
+    add(capsys, monkeypatch, "main", "alice")
+    assert run(capsys, "import", "main")[0] == 0
+    conn = connect(state_paths().database)
+    for store_id in ("1", "2"):
+        conn.execute("INSERT INTO game_metadata(store, store_id, data) VALUES ('fake', ?, ?)", (store_id, json.dumps({"matched": {"plugin": "db", "id": "7", "title": "Hades", "url": "", "manual": False}})))
+    conn.commit()
+    conn.close()
+    code, out, _ = run(capsys, "dedupe", "--dry-run")
+    assert code == 0 and out.strip() == "would merge game 2 into 1"
+    assert len(json.loads(run(capsys, "--json", "ls")[1])["data"]["games"]) == 2
+    code, out, _ = run(capsys, "--json", "dedupe")
+    assert json.loads(out)["data"] == {"merged": [{"keep": 1, "drop": 2}], "dry_run": False}
+    assert len(json.loads(run(capsys, "--json", "ls")[1])["data"]["games"]) == 1
+    assert run(capsys, "dedupe")[1].strip() == "nothing to merge"

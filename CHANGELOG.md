@@ -4,6 +4,10 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+### Added
+
+- **core, cli:** `ludex dedupe` (with `--dry-run`) joins every group of games matched to one game-database entry, or matched to the Steam entry of a game you own: it catches matches made before games joined on a shared match. It also runs after every import and refresh.
+
 ### Changed
 
 - **gui:** after a game that showed as "Running" quits, the launcher raises itself and takes the focus back (it stayed behind the store client or was left unfocused, so the pad did nothing).

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 
 from ludex.errors import LudexError
 from ludex.library import get_game, import_account, list_games
 from ludex.loader import load_providers
-from ludex.metadata import cached_match, choose_match, clean_title, clear_match, default_query, game_metadata, get_auto_match, match_candidates, set_auto_match
+from ludex.metadata import cached_match, choose_match, clean_title, clear_match, default_query, game_metadata, get_auto_match, match_candidates, merge_matched, set_auto_match
 from ludex.plugins import ConfigField, Metadata, OwnedGame, Provider, SearchHit, SourceError
 from ludex.provider_settings import set_value
 from ludex.sources import rawg
@@ -248,3 +250,22 @@ def test_a_match_to_a_store_entry_joins_the_game_owned_in_that_store(tmp_path):
     choose_match(conn, sources, local_game, "steam", SearchHit("steam", "1145360", "Hades", "https://x"))
     assert [g["id"] for g in list_games(conn)] == [local_game]
     assert sorted(o["store"] for o in get_game(conn, local_game)["ownership"]) == ["local", "steam"]
+
+
+def test_merge_matched_joins_games_matched_earlier_and_can_preview(tmp_path):
+    conn = connect(tmp_path / "db.sqlite3")
+    import_account(conn, "s", [OwnedGame("steam", "1145360", "Hades")], store="steam")
+    import_account(conn, "m", [OwnedGame("local", n, t) for n, t in (("a", "hades-final"), ("b", "hades_old"), ("c", "celeste-old"), ("d", "celeste_new"), ("e", "hades-demo"), ("f", "Unmatched"))], store="local")
+    ids = {o["store_id"]: g["id"] for g in list_games(conn) for o in get_game(conn, g["id"])["ownership"]}
+    # matches kept by an older version, which never joined games: one row per copy
+    for store_id, plugin, entry in (("a", "db", "7"), ("b", "db", "7"), ("c", "db", "9"), ("d", "db", "9"), ("e", "steam", "1145360")):
+        conn.execute("INSERT INTO game_metadata(store, store_id, data) VALUES ('local', ?, ?)", (store_id, json.dumps({"matched": {"plugin": plugin, "id": entry, "title": "T", "url": "", "manual": False}})))
+    conn.commit()
+    before = [g["id"] for g in list_games(conn)]
+    expected = [(ids["1145360"], ids["e"]), (ids["a"], ids["b"]), (ids["c"], ids["d"])]
+    assert merge_matched(conn, dry_run=True) == expected
+    assert [g["id"] for g in list_games(conn)] == before  # a preview changes nothing
+    assert merge_matched(conn) == expected
+    assert sorted(g["id"] for g in list_games(conn)) == sorted([ids["1145360"], ids["a"], ids["c"], ids["f"]])
+    assert sorted(o["store_id"] for o in get_game(conn, ids["1145360"])["ownership"]) == ["1145360", "e"]
+    assert merge_matched(conn) == []

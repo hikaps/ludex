@@ -91,6 +91,43 @@ def _keep(conn: sqlite3.Connection, game_id: int, store: str, store_id: str, plu
         merge_games(conn, game_id, row["game_id"])
 
 
+def merge_matched(conn: sqlite3.Connection, dry_run: bool = False) -> list[tuple[int, int]]:
+    """Join every group of games that are matched to one database entry or own it as a store copy.
+
+    The same rule ``choose_match`` applies when a match is made, for the whole library (matches made
+    earlier, or by an older version). Returns ``(kept, dropped)`` game ids, the lowest id of a group
+    being kept; with ``dry_run`` nothing is changed.
+    """
+    parent: dict[int, int] = {}
+
+    def find(game: int) -> int:
+        while parent.setdefault(game, game) != game:
+            parent[game] = parent[parent[game]]
+            game = parent[game]
+        return game
+
+    first: dict[tuple[str, str], int] = {}
+    for row in conn.execute(
+        "SELECT o.game_id, o.store, o.store_id, json_extract(m.data, '$.matched.plugin') AS plugin, json_extract(m.data, '$.matched.id') AS entry "
+        "FROM ownership o LEFT JOIN game_metadata m ON m.store = o.store AND m.store_id = o.store_id WHERE o.removed = 0 ORDER BY o.game_id"
+    ):
+        find(row["game_id"])
+        keys = [(row["store"], str(row["store_id"]))]
+        if isinstance(row["plugin"], str) and row["entry"] not in (None, ""):
+            keys.append((row["plugin"], str(row["entry"])))
+        for key in keys:
+            other = first.setdefault(key, row["game_id"])
+            parent[find(row["game_id"])] = find(other)
+    groups: dict[int, list[int]] = {}
+    for game in sorted(parent):
+        groups.setdefault(find(game), []).append(game)
+    pairs = [(members[0], drop) for members in groups.values() for drop in members[1:]]
+    if not dry_run:
+        for keep, drop in pairs:
+            merge_games(conn, keep, drop)
+    return pairs
+
+
 def _live(conn: sqlite3.Connection, game_id: int) -> list[Any]:
     live = [o for o in get_game(conn, game_id)["ownership"] if not o["removed"]]
     if not live:
