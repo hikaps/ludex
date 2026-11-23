@@ -4,6 +4,34 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.64.0] - 2026-11-23
+
+### Added
+
+- **core, cli:** `ludex dedupe` (with `--dry-run`) joins every group of games matched to one game-database entry, or matched to the Steam entry of a game you own: it catches matches made before games joined on a shared match. It also runs after every import and refresh.
+- **gui, plugins:** games a store client runs show as "Running" on their card and page, whoever started them. A provider declares the optional `running(config)` (API version unchanged); Steam (the `reaper SteamLaunch AppId=` process) and Heroic sideloads (a process running the game's program) do. Heroic is a heuristic: Heroic keeps no record of what runs.
+- **core:** a game matched to a database entry that another game is matched to, or owns as a store copy (a Steam match is the Steam app), is now the same game: its copies join. This also covers a match you choose by hand.
+- **gui:** the ludex icon is shown beside the name in the sidebar and in the console tab row.
+- **gui:** a game owned in several stores shows a store chooser next to Play (or Install) on its page; without a choice a click uses the store with an installed copy, else the first alphabetically. "Review matches" on the library page settles the title matches an import was not sure about (join the game to a candidate, or keep them apart), as `ludex review` and `ludex merge` do.
+- **core:** `ludex.launch.usable_stores(conn, sources, game_id, verb)` lists the stores a game can be launched or installed from.
+
+### Changed
+
+- **gui:** after a game that showed as "Running" quits, the launcher raises itself and takes the focus back (it stayed behind the store client or was left unfocused, so the pad did nothing).
+- **gui:** the status-bar message fades after 10 seconds (it stays while a refresh or download is running), and click or B on the pad dismisses it.
+- **docs, packaging:** the tagline is now "Every game you own, in one local library" (README, docs home, site description, PyPI summaries and keywords). The README has a Launcher (GUI) section (controller, console mode, store chooser, match review) instead of one long bullet; the introduction and docs home mention the GUI.
+
+### Fixed
+
+- **steam:** cover art for newer Steam apps and demos (for example Fart Together Demo) that have no image at the classic path: when the usual files are missing, the banner the app's store entry names (under Steam's own image hosts, over https) is used.
+- **gui:** the controller can navigate Settings in console mode: a page you switch to takes the focus (it stayed on a hidden control of the previous page, so the D-pad went nowhere), and Up and Down walk the form's controls in reading order instead of skipping the text fields and menus that sit left of a button below them.
+- **gui:** the Library and Installed tabs are separate pages with their own search text, store, genre and sort (they shared one, so a search typed in one showed in the other).
+- **gui:** a controller can walk a dialog that opens with no control focused (the match dialog, among others): the first D-pad press lands on its first control, and Up and Down leave a one-line text field instead of getting stuck in it, so the results can be reached and picked.
+- **gui:** console mode can refresh the library: the Start menu has "Refresh library" (the Refresh button of the library page is hidden in console mode).
+- **gui:** the "refreshing accounts…" message no longer stays in the status bar after a start-up refresh that found nothing new.
+- **gui:** a controller that Steam shows twice (the real pad and its virtual copy) presses a button once instead of twice, and unplugging a pad releases whatever it was holding.
+- **gui:** console mode says so in the status bar when controller support is not installed (`ludex-gui[gamepad]`) instead of silently ignoring the pad.
+
 ## [0.63.0] - 2026-11-21
 
 ### Added

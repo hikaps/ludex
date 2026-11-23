@@ -36,6 +36,8 @@ _FORWARD = frozenset({Qt.Key.Key_Down, Qt.Key.Key_Right})
 _ARROW_CLASSES = frozenset({
     "QQuickItemView", "QQuickTextInput", "QQuickTextEdit", "QQuickComboBox", "QQuickSlider", "QQuickSpinBox", "QQuickTumbler",
 })
+_SIDEWAYS_ONLY = frozenset({"QQuickTextInput"})  # a one-line field moves its cursor with Left and Right, not Up and Down
+_VERTICAL = frozenset({Qt.Key.Key_Up, Qt.Key.Key_Down})
 REPEAT_DELAY_MS = 400
 REPEAT_INTERVAL_MS = 90
 POLL_MS = 16
@@ -78,19 +80,49 @@ def _scope(item: QQuickItem, content: QQuickItem) -> QQuickItem:
     return content
 
 
+def _form(item: QQuickItem | None) -> QQuickItem | None:
+    """The enclosing form (an item with ``padForm: true``), whose controls Up and Down walk in order."""
+    while item is not None:
+        if item.property("padForm") is True:
+            return item
+        item = item.parentItem()
+    return None
+
+
+def _walk_form(current: QQuickItem, key: Qt.Key) -> bool:
+    """Up and Down in a form go to the previous or next control in reading order, so none is skipped."""
+    form = _form(current)
+    if form is None:
+        return False
+    forward = key == Qt.Key.Key_Down
+    nxt = current.nextItemInFocusChain(forward)
+    node = nxt
+    while node is not None and node is not form:
+        node = node.parentItem()
+    if nxt is None or nxt is current or node is None:  # the end of the form: leave it by position
+        return False
+    nxt.forceActiveFocus(Qt.FocusReason.TabFocusReason if forward else Qt.FocusReason.BacktabFocusReason)
+    return True
+
+
 def move_focus(window: QQuickWindow, key: Qt.Key) -> bool:
     """Focus the nearest control in the pressed direction; False when there is none."""
     current = window.activeFocusItem()
     content = window.contentItem()
     if current is None:
         return False
+    if key in _VERTICAL and _walk_form(current, key):
+        return True
     here = _scene_rect(current)
+    scope = _scope(current, content)
     best: tuple[float, QQuickItem] | None = None
-    for item in _focusables(_scope(current, content), []):
+    for item in _focusables(scope, []):
         if item is current:
             continue
         there = _scene_rect(item)
-        if key == Qt.Key.Key_Right:
+        if current is scope:  # a dialog that has no control focused yet: start at its top left
+            along, across = there.top() - here.top(), there.left() - here.left()
+        elif key == Qt.Key.Key_Right:
             along, across = there.left() - here.right(), _gap(here.top(), here.bottom(), there.top(), there.bottom())
         elif key == Qt.Key.Key_Left:
             along, across = here.left() - there.right(), _gap(here.top(), here.bottom(), there.top(), there.bottom())
@@ -110,7 +142,7 @@ def move_focus(window: QQuickWindow, key: Qt.Key) -> bool:
     return True
 
 
-def _handles_arrows(item: QQuickItem | None) -> bool:
+def _handles_arrows(item: QQuickItem | None, key: Qt.Key) -> bool:
     """True when the focused item, or a list or grid around it, moves something with the arrows itself.
 
     A modal popup accepts every key that reaches it, so acceptance alone cannot tell a control from a popup.
@@ -118,7 +150,8 @@ def _handles_arrows(item: QQuickItem | None) -> bool:
     while item is not None:
         meta = item.metaObject()
         while meta is not None:
-            if meta.className() in _ARROW_CLASSES:
+            name = meta.className()
+            if name in _ARROW_CLASSES and not (name in _SIDEWAYS_ONLY and key in _VERTICAL):
                 return True
             meta = meta.superClass()
         item = item.parentItem()
@@ -136,7 +169,7 @@ def send_key(window: QQuickWindow, key: Qt.Key, modifiers: Qt.KeyboardModifier) 
     before = window.activeFocusItem()
     QGuiApplication.sendEvent(window, press)
     QGuiApplication.sendEvent(window, QKeyEvent(QEvent.Type.KeyRelease, key, modifiers, text))
-    if key in _ARROWS and not (press.isAccepted() and (window.activeFocusItem() is not before or _handles_arrows(before))):
+    if key in _ARROWS and not (press.isAccepted() and (window.activeFocusItem() is not before or _handles_arrows(before, key))):
         return move_focus(window, key)
     return press.isAccepted()
 
@@ -217,6 +250,7 @@ class _SdlSource:
         self._ctypes = ctypes
         self._pads: dict[int, object] = {}
         self._stick: dict[tuple[int, int], str | None] = {}
+        self._held: dict[str, set[int]] = {}  # control -> the devices holding it
         self._event = sdl2.SDL_Event()
 
     def poll(self) -> list[tuple[str, bool]]:
@@ -230,15 +264,31 @@ class _SdlSource:
                     joy = sdl.SDL_GameControllerGetJoystick(pad)
                     self._pads[sdl.SDL_JoystickInstanceID(joy)] = pad
             elif kind == sdl.SDL_CONTROLLERDEVICEREMOVED:
-                pad = self._pads.pop(ev.cdevice.which, None)
+                which = ev.cdevice.which
+                pad = self._pads.pop(which, None)
                 if pad:
                     sdl.SDL_GameControllerClose(pad)
+                for control in list(self._held):  # nothing stays pressed that the unplugged pad was holding
+                    self._hold(which, control, False, out)
+                for key in [k for k in self._stick if k[0] == which]:
+                    del self._stick[key]
             elif kind in (sdl.SDL_CONTROLLERBUTTONDOWN, sdl.SDL_CONTROLLERBUTTONUP):
                 name = sdl.SDL_GameControllerGetStringForButton(ev.cbutton.button)
-                out.append((name.decode(), kind == sdl.SDL_CONTROLLERBUTTONDOWN))
+                self._hold(ev.cbutton.which, name.decode(), kind == sdl.SDL_CONTROLLERBUTTONDOWN, out)
             elif kind == sdl.SDL_CONTROLLERAXISMOTION:
                 self._axis(ev.caxis.which, ev.caxis.axis, ev.caxis.value, out)
         return out
+
+    def _hold(self, which: int, control: str, pressed: bool, out: list[tuple[str, bool]]) -> None:
+        """Press or release ``control`` for one device. Steam shows a pad twice (the real one and its virtual copy), so a
+        control counts as pressed while any device holds it, and is reported once."""
+        holders = self._held.setdefault(control, set())
+        was = bool(holders)
+        holders.add(which) if pressed else holders.discard(which)
+        if bool(holders) != was:
+            out.append((control, bool(holders)))
+        if not holders:
+            del self._held[control]
 
     def _axis(self, which: int, axis: int, value: int, out: list[tuple[str, bool]]) -> None:
         sdl = self._sdl
@@ -261,9 +311,9 @@ class _SdlSource:
             new = None
         if new != current:
             if current is not None:
-                out.append((current, False))
+                self._hold(which, current, False, out)
             if new is not None:
-                out.append((new, True))
+                self._hold(which, new, True, out)
             self._stick[key] = new
 
     def close(self) -> None:

@@ -9,7 +9,7 @@ from dataclasses import asdict
 from typing import Any
 
 from .errors import LudexError
-from .library import get_game
+from .library import get_game, merge_games
 from .plugins import Metadata, Provider, SearchHit
 from .storage import normalize_title
 
@@ -73,10 +73,59 @@ def _match_by_title(conn: sqlite3.Connection, sources: Mapping[str, Provider], g
 
 
 def _keep(conn: sqlite3.Connection, game_id: int, store: str, store_id: str, plugin: str, hit: SearchHit, found: Metadata, manual: bool) -> None:
-    """Store the match's details under the copy and give the game the match's title."""
+    """Store the match's details under the copy and give the game the match's title.
+
+    Another game that is matched to the same database entry, or that owns it as a store copy (a
+    Steam match is the Steam app), is the same game: its copies join this one.
+    """
     _store(conn, store, store_id, found, {"matched": {"plugin": plugin, "id": hit.store_id, "title": hit.title, "url": hit.url, "manual": manual}})
     with conn:
         conn.execute("UPDATE games SET title = ?, normalized_title = ? WHERE id = ?", (hit.title, normalize_title(hit.title), game_id))
+    same = conn.execute(
+        "SELECT DISTINCT o.game_id FROM ownership o LEFT JOIN game_metadata m ON m.store = o.store AND m.store_id = o.store_id "
+        "WHERE o.removed = 0 AND o.game_id != ? AND ((o.store = ? AND o.store_id = ?) "
+        "OR (json_extract(m.data, '$.matched.plugin') = ? AND json_extract(m.data, '$.matched.id') = ?)) ORDER BY o.game_id",
+        (game_id, plugin, hit.store_id, plugin, hit.store_id),
+    ).fetchall()
+    for row in same:
+        merge_games(conn, game_id, row["game_id"])
+
+
+def merge_matched(conn: sqlite3.Connection, dry_run: bool = False) -> list[tuple[int, int]]:
+    """Join every group of games that are matched to one database entry or own it as a store copy.
+
+    The same rule ``choose_match`` applies when a match is made, for the whole library (matches made
+    earlier, or by an older version). Returns ``(kept, dropped)`` game ids, the lowest id of a group
+    being kept; with ``dry_run`` nothing is changed.
+    """
+    parent: dict[int, int] = {}
+
+    def find(game: int) -> int:
+        while parent.setdefault(game, game) != game:
+            parent[game] = parent[parent[game]]
+            game = parent[game]
+        return game
+
+    first: dict[tuple[str, str], int] = {}
+    for row in conn.execute(
+        "SELECT o.game_id, o.store, o.store_id, json_extract(m.data, '$.matched.plugin') AS plugin, json_extract(m.data, '$.matched.id') AS entry "
+        "FROM ownership o LEFT JOIN game_metadata m ON m.store = o.store AND m.store_id = o.store_id WHERE o.removed = 0 ORDER BY o.game_id"
+    ):
+        find(row["game_id"])
+        keys = [(row["store"], str(row["store_id"]))]
+        if isinstance(row["plugin"], str) and row["entry"] not in (None, ""):
+            keys.append((row["plugin"], str(row["entry"])))
+        for key in keys:
+            other = first.setdefault(key, row["game_id"])
+            parent[find(row["game_id"])] = find(other)
+    groups: dict[int, list[int]] = {}
+    for game in sorted(parent):
+        groups.setdefault(find(game), []).append(game)
+    pairs = [(members[0], drop) for members in groups.values() for drop in members[1:]]
+    if not dry_run:
+        for keep, drop in pairs:
+            merge_games(conn, keep, drop)
+    return pairs
 
 
 def _live(conn: sqlite3.Connection, game_id: int) -> list[Any]:

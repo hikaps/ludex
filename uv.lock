@@ -108,7 +108,7 @@ wheels = [
 
 [[package]]
 name = "ludex-cli"
-version = "0.63.0"
+version = "0.64.0"
 source = { editable = "packages/cli" }
 dependencies = [
     { name = "ludex-core" },
@@ -119,7 +119,7 @@ requires-dist = [{ name = "ludex-core", editable = "packages/core" }]
 
 [[package]]
 name = "ludex-core"
-version = "0.63.0"
+version = "0.64.0"
 source = { editable = "packages/core" }
 dependencies = [
     { name = "httpx" },
@@ -134,7 +134,7 @@ requires-dist = [
 
 [[package]]
 name = "ludex-games"
-version = "0.63.0"
+version = "0.64.0"
 source = { editable = "." }
 dependencies = [
     { name = "ludex-cli" },
@@ -158,7 +158,7 @@ provides-extras = ["test"]
 
 [[package]]
 name = "ludex-gui"
-version = "0.63.0"
+version = "0.64.0"
 source = { editable = "packages/gui" }
 dependencies = [
     { name = "ludex-core" },
@@ -182,7 +182,7 @@ provides-extras = ["gamepad"]
 
 [[package]]
 name = "ludex-tui"
-version = "0.63.0"
+version = "0.64.0"
 source = { editable = "packages/tui" }
 dependencies = [
     { name = "ludex-core" },

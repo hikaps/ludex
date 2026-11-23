@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 
 from ludex.errors import LudexError
-from ludex.library import get_game, import_account
+from ludex.library import get_game, import_account, list_games
 from ludex.loader import load_providers
-from ludex.metadata import cached_match, choose_match, clean_title, clear_match, default_query, game_metadata, get_auto_match, match_candidates, set_auto_match
+from ludex.metadata import cached_match, choose_match, clean_title, clear_match, default_query, game_metadata, get_auto_match, match_candidates, merge_matched, set_auto_match
 from ludex.plugins import ConfigField, Metadata, OwnedGame, Provider, SearchHit, SourceError
 from ludex.provider_settings import set_value
 from ludex.sources import rawg
@@ -224,3 +226,46 @@ def test_m_opens_the_picker_and_a_choice_sets_the_title_and_details(tmp_path):
             assert str(app.query_one("#owned-table").get_row_at(0)[1]) == "Hades_v1.2_(GOG)"
 
     asyncio.run(scenario())
+
+
+def test_games_matched_to_one_database_entry_become_one_game(tmp_path):
+    conn = connect(tmp_path / "db.sqlite3")
+    import_account(conn, "m", [OwnedGame("local", "a", "Hades_v1.2_(GOG)"), OwnedGame("local", "b", "hades-final-build")], store="local")
+    first, second = [g["id"] for g in list_games(conn)]
+    sources = {"db": db_provider([SearchHit("db", "7", "Hades", "https://x/hades")], calls=[])}
+    choose_match(conn, sources, first, "db", SearchHit("db", "7", "Hades", "https://x/hades"))
+    assert [g["id"] for g in list_games(conn)] == [first, second]  # one match alone proves nothing
+    choose_match(conn, sources, second, "db", SearchHit("db", "7", "Hades", "https://x/hades"))
+    games = list_games(conn)
+    assert [(g["id"], g["title"]) for g in games] == [(second, "Hades")]
+    assert sorted(o["store_id"] for o in get_game(conn, second)["ownership"]) == ["a", "b"]
+
+
+def test_a_match_to_a_store_entry_joins_the_game_owned_in_that_store(tmp_path):
+    conn = connect(tmp_path / "db.sqlite3")
+    import_account(conn, "s", [OwnedGame("steam", "1145360", "Hades")], store="steam")
+    import_account(conn, "m", [OwnedGame("local", "a", "hades-final-build")], store="local")
+    steam_game, local_game = [g["id"] for g in list_games(conn)]
+    sources = {"steam": Provider("steam", "s", (), metadata=lambda store_id: Metadata(), match=lambda q: [])}
+    choose_match(conn, sources, local_game, "steam", SearchHit("steam", "1145360", "Hades", "https://x"))
+    assert [g["id"] for g in list_games(conn)] == [local_game]
+    assert sorted(o["store"] for o in get_game(conn, local_game)["ownership"]) == ["local", "steam"]
+
+
+def test_merge_matched_joins_games_matched_earlier_and_can_preview(tmp_path):
+    conn = connect(tmp_path / "db.sqlite3")
+    import_account(conn, "s", [OwnedGame("steam", "1145360", "Hades")], store="steam")
+    import_account(conn, "m", [OwnedGame("local", n, t) for n, t in (("a", "hades-final"), ("b", "hades_old"), ("c", "celeste-old"), ("d", "celeste_new"), ("e", "hades-demo"), ("f", "Unmatched"))], store="local")
+    ids = {o["store_id"]: g["id"] for g in list_games(conn) for o in get_game(conn, g["id"])["ownership"]}
+    # matches kept by an older version, which never joined games: one row per copy
+    for store_id, plugin, entry in (("a", "db", "7"), ("b", "db", "7"), ("c", "db", "9"), ("d", "db", "9"), ("e", "steam", "1145360")):
+        conn.execute("INSERT INTO game_metadata(store, store_id, data) VALUES ('local', ?, ?)", (store_id, json.dumps({"matched": {"plugin": plugin, "id": entry, "title": "T", "url": "", "manual": False}})))
+    conn.commit()
+    before = [g["id"] for g in list_games(conn)]
+    expected = [(ids["1145360"], ids["e"]), (ids["a"], ids["b"]), (ids["c"], ids["d"])]
+    assert merge_matched(conn, dry_run=True) == expected
+    assert [g["id"] for g in list_games(conn)] == before  # a preview changes nothing
+    assert merge_matched(conn) == expected
+    assert sorted(g["id"] for g in list_games(conn)) == sorted([ids["1145360"], ids["a"], ids["c"], ids["f"]])
+    assert sorted(o["store_id"] for o in get_game(conn, ids["1145360"])["ownership"]) == ["1145360", "e"]
+    assert merge_matched(conn) == []

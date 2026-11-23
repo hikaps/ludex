@@ -11,12 +11,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
 
 import pytest
-from PySide6.QtCore import Q_ARG, QMetaObject, QObject, Qt
+from PySide6.QtCore import Q_ARG, QMetaObject, QObject, QPointF, Qt, QThread
 from PySide6.QtGui import QGuiApplication, QWindow
 
 from ludex import artwork
 from ludex import launch as launch_mod
 from ludex.errors import LudexError
+from ludex.accounts import add_account
 from ludex.library import import_account
 from ludex.metadata import set_auto_details
 from ludex.paths import StatePaths
@@ -831,19 +832,23 @@ def test_play_is_disabled_while_the_game_runs_and_a_second_click_is_ignored(qapp
     from ludex_gui import backend as backend_mod
 
     calls = []
-    job = Job(1, "play", 7, "steam:7", "Doom", 0, tmp_path / "log", "now", None, "running", None)
+    job = Job(1, "play", 1, "steam:7", "Doom", 0, tmp_path / "log", "now", None, "running", None)
     monkeypatch.setattr(backend_mod, "launch_game", lambda *a, **k: calls.append(a[2]) or ("steam:7", job))
-    launcher = _launcher(_paths(tmp_path), {})
+    paths = _paths(tmp_path)
+    conn = connect(paths.database)
+    import_account(conn, "m", [OwnedGame("steam", "7", "Doom")], store="steam")
+    conn.close()
+    launcher = _launcher(paths, {})
     backend = launcher.backend
     monkeypatch.setattr(backend, "openGame", lambda *a, **k: None)
-    backend.launch(7)
-    backend.launch(7)
-    assert calls == [7] and backend.activity == {"7": "Running"}
+    backend.launch(1)
+    backend.launch(1)
+    assert calls == [1] and backend.activity == {"1": "Running"}
     monkeypatch.setattr(backend_mod, "list_jobs", lambda *a, **k: [dataclasses.replace(job, state="exited")])
     backend.pollJobs()
     assert backend.activity == {}
-    backend.launch(7)
-    assert calls == [7, 7]
+    backend.launch(1)
+    assert calls == [1, 1]
     backend.closeDown()
 
 
@@ -853,12 +858,332 @@ def test_a_game_handed_to_a_store_client_is_busy_only_for_a_moment(qapp, tmp_pat
     calls = []
     monkeypatch.setattr(backend_mod, "launch_game", lambda *a, **k: calls.append(a[2]) or ("steam:7", None))
     monkeypatch.setattr(backend_mod, "HANDOFF_MS", 30)
+    paths = _paths(tmp_path)
+    conn = connect(paths.database)
+    import_account(conn, "m", [OwnedGame("steam", "7", "Doom")], store="steam")
+    conn.close()
+    launcher = _launcher(paths, {})
+    backend = launcher.backend
+    backend.launch(1)
+    backend.launch(1)
+    assert calls == [1] and backend.activity == {"1": "Starting"}
+    _until(qapp, lambda: backend.activity == {})
+    backend.launch(1)
+    assert calls == [1, 1]
+    backend.closeDown()
+
+
+def _two_stores(tmp_path, installed=frozenset()):
+    paths = _paths(tmp_path)
+    conn = connect(paths.database)
+    import_account(conn, "m", [OwnedGame("a", "1", "Hades")], store="a")
+    import_account(conn, "m", [OwnedGame("b", "1", "Hades")], store="b")
+    conn.close()
+    shop = lambda name: Provider(name, name, (), launch_url=lambda i: f"{name}://{i}", install_url=lambda i: f"{name}://install/{i}")
+    return _launcher(paths, {"a": shop("a"), "b": shop("b")}, installed)
+
+
+def test_a_game_in_two_stores_starts_from_the_installed_copy_unless_a_store_is_chosen(qapp, tmp_path, monkeypatch):
+    from ludex_gui import backend as backend_mod
+
+    stores = []
+    monkeypatch.setattr(backend_mod, "launch_game", lambda *a, **k: stores.append(a[3]) or ("x:1", None))
+    monkeypatch.setattr(backend_mod, "HANDOFF_MS", 20)
+    launcher = _two_stores(tmp_path, {("b", "1")})
+    backend = launcher.backend
+    backend.openGame(1)
+    assert backend.current["playStores"] == [{"store": "b", "installed": True}, {"store": "a", "installed": False}]
+    backend.launch(1)
+    _until(qapp, lambda: backend.activity == {})
+    backend.launchFrom(1, "a")
+    assert stores == ["b", "a"]
+    backend.closeDown()
+
+
+def test_the_game_page_offers_the_stores_only_when_there_are_several(qapp, tmp_path):
+    launcher = _two_stores(tmp_path)
+    backend, window = launcher.backend, launcher.window
+    backend.openGame(1)
+    box = _find_item(window.contentItem(), "storeBox")
+    _until(qapp, lambda: box is not None and box.isVisible())
+    assert box.property("count") == 2
+    backend.closeDown()
+
+
+def _doom_world(tmp_path):
+    paths = _paths(tmp_path)
+    conn = connect(paths.database)
+    import_account(conn, "m", [OwnedGame("a", "1", "Doom"), OwnedGame("a", "2", "Doom")], store="a")
+    import_account(conn, "m", [OwnedGame("b", "9", "Doom")], store="b")
+    conn.close()
+    return _launcher(paths, {})
+
+
+def test_a_queued_match_is_merged_into_the_chosen_candidate(qapp, tmp_path):
+    launcher = _doom_world(tmp_path)
+    backend = launcher.backend
+    assert len(backend.review) == 2  # the second Doom of store a, and Doom of store b
+    item = next(i for i in backend.review if i["store"] == "b")
+    assert [c["stores"] for c in item["candidates"]] == ["a", "a"]
+    chosen = item["candidates"][1]["id"]
+    backend.mergeReview(item["gameId"], chosen)
+    assert [i["store"] for i in backend.review] == ["a"] and backend.count == 2
+    backend.openGame(chosen)
+    assert backend.current["stores"] == "a, b"
+    backend.closeDown()
+
+
+def test_a_queued_match_can_be_kept_separate_and_the_dialog_lists_it(qapp, tmp_path):
+    launcher = _doom_world(tmp_path)
+    backend, window = launcher.backend, launcher.window
+    button = _find_item(window.contentItem(), "reviewButton")
+    _until(qapp, lambda: button.isVisible())
+    assert "(2)" in button.property("text")
+    backend.keepSeparate(backend.review[0]["id"])
+    assert len(backend.review) == 1 and backend.count == 3
+    backend.keepSeparate(backend.review[0]["id"])
+    assert backend.review == []
+    _until(qapp, lambda: not button.isVisible())
+    backend.closeDown()
+
+
+def test_the_review_dialog_merges_with_a_click_and_lands_on_the_first_answer(qapp, tmp_path):
+    launcher = _doom_world(tmp_path)
+    backend, window = launcher.backend, launcher.window
+    root = window.contentItem()
+    _until(qapp, lambda: _find_item(root, "reviewButton").isVisible())
+    _click(window, "reviewButton")
+    dialog = window.findChild(QObject, "reviewDialog")
+    _until(qapp, lambda: dialog.property("visible"))
+    first = backend.review[0]
+    target = first["candidates"][0]["id"]
+    _until(qapp, lambda: _find_item(dialog.property("contentItem"), f"mergeInto-{target}") is not None)
+    _until(qapp, lambda: window.activeFocusItem() is _find_item(dialog.property("contentItem"), f"mergeInto-{target}"))
+    QMetaObject.invokeMethod(_find_item(dialog.property("contentItem"), f"mergeInto-{target}"), "click", Qt.ConnectionType.DirectConnection)
+    _until(qapp, lambda: len(backend.review) < 2)
+    backend.closeDown()
+
+
+def _logos(item):
+    found = [item] if item.objectName() == "logo" else []
+    for child in item.childItems():
+        found += _logos(child)
+    return found
+
+
+def test_the_logo_is_drawn_in_the_sidebar_and_in_the_console_tab_row(qapp, tmp_path, monkeypatch):
+    for name, console in (("d", False), ("c", True)):
+        (tmp_path / name).mkdir()
+        launcher, window, pad = _padded(qapp, tmp_path / name, monkeypatch, console=console)
+        shown = [i for i in _logos(window.contentItem()) if i.isVisible()]
+        assert len(shown) == 1 and shown[0].width() > 0
+        _until(qapp, lambda: shown[0].property("progress") == 1)  # the file was found and decoded
+        launcher.backend.closeDown()
+
+
+def test_a_pad_and_its_steam_copy_press_a_button_once_and_an_unplugged_pad_releases_what_it_held():
+    class _Sdl:
+        SDL_CONTROLLER_AXIS_LEFTX, SDL_CONTROLLER_AXIS_LEFTY = 0, 1
+
+        def SDL_Event(self):
+            return None
+
+    source = gamepad_mod._SdlSource(_Sdl())
+    out: list[tuple[str, bool]] = []
+    source._hold(1, "a", True, out)
+    source._hold(2, "a", True, out)  # the virtual copy of the same pad
+    source._hold(1, "a", False, out)
+    assert out == [("a", True)]  # still held by the other device
+    source._hold(2, "a", False, out)
+    assert out == [("a", True), ("a", False)]
+    out.clear()
+    source._axis(3, 0, 20000, out)  # a stick held right, then the pad is unplugged
+    source._hold(3, "dpright", False, out)
+    assert out == [("dpright", True), ("dpright", False)]
+
+
+def test_a_start_up_refresh_that_finds_nothing_does_not_leave_its_message_in_the_status_bar(qapp, tmp_path):
     launcher = _launcher(_paths(tmp_path), {})
     backend = launcher.backend
-    backend.launch(7)
-    backend.launch(7)
-    assert calls == [7] and backend.activity == {"7": "Starting"}
-    _until(qapp, lambda: backend.activity == {})
-    backend.launch(7)
-    assert calls == [7, 7]
+    backend.startRefresh(True)
+    assert backend.status == "refreshing accounts…"
+    _until(qapp, lambda: not backend.refreshing)
+    assert backend.status == ""
+    backend.startRefresh(False)
+    _until(qapp, lambda: not backend.refreshing)
+    assert backend.status == "refreshed: no changes"
+    backend.closeDown()
+
+
+def test_the_pad_walks_a_dialog_that_opens_with_no_control_focused_and_picks_a_result(qapp, tmp_path, monkeypatch):
+    from ludex.plugins import Metadata
+
+    paths = _paths(tmp_path)
+    conn = connect(paths.database)
+    import_account(conn, "m", [OwnedGame("local", "1", "hades_v1.2")], store="local")
+    conn.close()
+    db = Provider(
+        "db", "A database", (), match=lambda q: [SearchHit("db", str(i), f"Hades {i}", "https://x") for i in range(5)],
+        metadata=lambda store_id: Metadata("d"),
+    )
+    launcher = _launcher(paths, {"local": Provider("local", "l", ()), "db": db})
+    window, backend = launcher.window, launcher.backend
+    monkeypatch.setattr(gamepad_mod.QGuiApplication, "focusWindow", staticmethod(lambda: window))
+    pad = gamepad_mod.Gamepad(window, _FakeSource())
+    backend.openGame(1)
+    qapp.processEvents()
+    button = next(b for b in _items(window.contentItem()) if str(b.property("text")).startswith("Match") and b.isVisible())
+    QMetaObject.invokeMethod(button, "click", Qt.ConnectionType.DirectConnection)
+    dialog = window.findChild(QObject, "matchDialog")
+    _until(qapp, lambda: dialog.property("visible") and len(backend.matches) == 5)
+    matches = _find_item(window.contentItem(), "matchList")
+
+    def down():
+        pad.press("dpdown")
+        pad.release("dpdown")
+        qapp.processEvents()
+
+    down()  # from the dialog itself to its first control, the search field
+    assert window.activeFocusItem().property("text") == "hades"
+    down()  # then into the results
+    assert matches.property("activeFocus") and matches.property("currentIndex") == 0
+    down()
+    down()
+    assert matches.property("currentIndex") == 2
+    pad.press("a")
+    pad.release("a")
+    _until(qapp, lambda: backend.current.get("title") == "Hades 2")
+    backend.closeDown()
+
+
+def _items(item):
+    yield item
+    for child in item.childItems():
+        yield from _items(child)
+
+
+def test_the_start_menu_refreshes_the_library_so_console_mode_can_do_it(qapp, tmp_path, monkeypatch):
+    launcher, window, pad = _padded(qapp, tmp_path, monkeypatch, console=True)
+    refreshed = []
+    monkeypatch.setattr(launcher.backend, "startRefresh", lambda quiet=False: refreshed.append(quiet))
+    pad.press("start")
+    pad.release("start")
+    menu = window.findChild(QObject, "menu")
+    _until(qapp, lambda: menu.property("visible"))
+    _click(window, "refreshAll")
+    assert refreshed == [False]
+    _until(qapp, lambda: not menu.property("visible"))
+    launcher.backend.closeDown()
+
+
+def test_the_library_and_installed_tabs_keep_their_own_search_text(qapp, tmp_path, monkeypatch):
+    launcher, window, pad = _padded(qapp, tmp_path, monkeypatch, {("steam", "1")})
+    backend = launcher.backend
+    pad.press("rightshoulder")  # Installed
+    pad.release("rightshoulder")
+    assert window.property("section") == "installed"
+    boxes = [i for i in _items(window.contentItem()) if i.objectName() == "librarySearch" and i.isVisible()]
+    assert len(boxes) == 1
+    boxes[0].setProperty("text", "hades")
+    _until(qapp, lambda: backend.count == 1)
+    pad.press("leftshoulder")  # back to Library: its box is empty and every game shows
+    pad.release("leftshoulder")
+    shown = [i for i in _items(window.contentItem()) if i.objectName() == "librarySearch" and i.isVisible()]
+    assert len(shown) == 1 and shown[0] is not boxes[0] and shown[0].property("text") == ""
+    _until(qapp, lambda: backend.count == 2)
+    backend.closeDown()
+
+
+def test_a_game_its_store_client_runs_shows_as_running_even_if_ludex_did_not_start_it(qapp, tmp_path):
+    paths = _paths(tmp_path)
+    conn = connect(paths.database)
+    import_account(conn, "m", [OwnedGame("shop", "7", "Doom"), OwnedGame("shop", "8", "Hades")], store="shop")
+    conn.close()
+    add_account(paths, "main", "shop", {})
+    alive = ["7"]
+    launcher = _launcher(paths, {"shop": Provider("shop", "s", (), launch_url=lambda i: f"shop://{i}", running=lambda c: list(alive))})
+    backend = launcher.backend
+    backend.pollJobs()
+    assert backend.activity == {"1": "Running"}
+    backend.launch(1)  # already running: no second start
+    assert backend.activity == {"1": "Running"}
+    alive.clear()
+    backend.pollJobs()
+    assert backend.activity == {}
+    backend.closeDown()
+
+def test_the_pad_enters_settings_and_walks_every_control_in_order(qapp, tmp_path, monkeypatch):
+    paths = _paths(tmp_path)
+    conn = connect(paths.database)
+    import_account(conn, "m", [OwnedGame("steam", "1", "Hades")], store="steam")
+    conn.close()
+    add_account(paths, "main", "steam", {})
+    launcher = _launcher(paths, {"steam": steam.PLUGIN}, frozenset(), True)
+    window = launcher.window
+    monkeypatch.setattr(gamepad_mod.QGuiApplication, "focusWindow", staticmethod(lambda: window))
+    pad = gamepad_mod.Gamepad(window, _FakeSource())
+    qapp.processEvents()
+    for _ in range(4):  # Library, Installed, Search, Jobs, Settings
+        pad.press("rightshoulder")
+        pad.release("rightshoulder")
+    page = next(i for i in _items(window.contentItem()) if i.property("padForm") is True)
+    controls = gamepad_mod._focusables(page, [])
+    _until(qapp, lambda: window.activeFocusItem() is controls[0])  # focus came into the page, not left on a hidden control
+    walked = [controls[0]]
+    for _ in range(len(controls) + 2):
+        pad.press("dpdown")
+        pad.release("dpdown")
+        qapp.processEvents()
+        if window.activeFocusItem() is not walked[-1]:
+            walked.append(window.activeFocusItem())
+    assert walked == controls  # none skipped, and the form's last control ends the walk
+    assert 0 <= walked[-1].mapToItem(page, QPointF(0, 0)).y() < page.height()  # it scrolled into view
+    for control in reversed(controls[:-1]):
+        pad.press("dpup")
+        pad.release("dpup")
+        qapp.processEvents()
+        assert window.activeFocusItem() is control
+    launcher.backend.closeDown()
+
+
+def test_a_status_message_can_be_dismissed_and_fades_unless_work_is_going_on(qapp, tmp_path, monkeypatch):
+    from ludex_gui import backend as backend_mod
+
+    monkeypatch.setattr(backend_mod, "STATUS_MS", 20)
+    launcher = _launcher(_paths(tmp_path), {})
+    backend = launcher.backend
+    backend.notify("hello")
+    backend.clearStatus()
+    assert backend.status == ""
+    backend.notify("hello again")
+    _until(qapp, lambda: backend.status == "")
+    backend._refreshing = True
+    backend.notify("refreshing")
+    for _ in range(10):
+        qapp.processEvents()
+        QThread.msleep(10)
+    assert backend.status == "refreshing"  # still working: the message stays
+    backend._refreshing = False
+    _until(qapp, lambda: backend.status == "")
+    backend.closeDown()
+
+
+def test_the_launcher_takes_the_focus_back_when_a_game_it_showed_as_running_quits(qapp, tmp_path):
+    paths = _paths(tmp_path)
+    conn = connect(paths.database)
+    import_account(conn, "m", [OwnedGame("shop", "7", "Doom")], store="shop")
+    conn.close()
+    add_account(paths, "main", "shop", {})
+    alive = ["7"]
+    launcher = _launcher(paths, {"shop": Provider("shop", "s", (), launch_url=lambda i: f"shop://{i}", running=lambda c: list(alive))})
+    backend = launcher.backend
+    exits = []
+    backend.gameExited.connect(lambda: exits.append(1))
+    backend.pollJobs()
+    assert exits == []
+    alive.clear()
+    backend.pollJobs()
+    assert exits == [1]
+    backend.pollJobs()
+    assert exits == [1]
     backend.closeDown()

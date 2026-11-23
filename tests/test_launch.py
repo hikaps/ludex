@@ -51,6 +51,15 @@ def test_several_launchable_stores_need_a_choice_and_local_is_not_launchable(con
     assert info.value.code == "not_launchable"
 
 
+def test_usable_stores_lists_the_stores_a_game_can_be_started_or_installed_from(conn):
+    import_account(conn, "main", [OwnedGame("steam", "1", "Hades")], store="steam")
+    import_account(conn, "main", [OwnedGame("epic", "h", "Hades")], store="epic")
+    import_account(conn, "main", [OwnedGame("local", "x", "Hades")], store="local")
+    sources = {"steam": steam.PLUGIN, "epic": epic.PLUGIN, "local": Provider("local", "l", (), lambda c: None)}
+    assert launch_mod.usable_stores(conn, sources, 1, "launch") == ["epic", "steam"]
+    assert launch_mod.usable_stores(conn, {"local": sources["local"]}, 1, "install") == []
+
+
 def test_failed_open_is_reported_without_the_url(conn, monkeypatch):
     import_account(conn, "main", [OwnedGame("steam", "220", "HL2")], store="steam")
 

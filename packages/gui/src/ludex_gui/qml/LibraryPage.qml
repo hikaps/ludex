@@ -5,12 +5,17 @@ import QtQuick.Layouts
 Item {
     id: page
     property bool installedOnly: false
+    property bool active: false  // set by Main: the tab being shown
     property string store: ""
     property string genre: ""
     readonly property var genreNames: backend.genres.map(g => g.genre)
     readonly property var sortKeys: ["title", "recent", "playtime", "installed"]
 
+    ReviewDialog { id: reviewer }
+
+    // Only the tab on screen sets the filter; the other keeps its settings until it is shown again.
     function apply() {
+        if (!active) return
         backend.setFilter(search.text, page.store, page.installedOnly, sortKeys[sortBox.currentIndex], page.genre)
     }
     function playCurrent() {
@@ -28,7 +33,7 @@ Item {
     onInstalledOnlyChanged: apply()
     onStoreChanged: apply()
     onGenreChanged: apply()
-    onVisibleChanged: if (visible) {
+    onActiveChanged: if (active) {
         apply()
         grid.forceActiveFocus()
     }
@@ -53,6 +58,7 @@ Item {
             Item { Layout.fillWidth: true; Layout.minimumWidth: 0 }
             TextField {
                 id: search
+                objectName: "librarySearch"
                 Layout.fillWidth: true
                 Layout.maximumWidth: 280
                 Layout.minimumWidth: 120
@@ -94,7 +100,7 @@ Item {
         RowLayout {
             Layout.fillWidth: true
             spacing: 12
-            visible: backend.stores.length > 1 || backend.genres.length > 0 || backend.missingDetails > 0
+            visible: backend.stores.length > 1 || backend.genres.length > 0 || backend.missingDetails > 0 || backend.review.length > 0
             Flow {
                 Layout.fillWidth: true
                 spacing: 8
@@ -114,6 +120,14 @@ Item {
                 model: ["All genres"].concat(backend.genres.map(g => g.genre + " (" + g.games + ")"))
                 currentIndex: page.genreNames.indexOf(page.genre) + 1
                 onActivated: page.genre = currentIndex > 0 ? page.genreNames[currentIndex - 1] : ""
+            }
+            Btn {
+                objectName: "reviewButton"
+                visible: backend.review.length > 0
+                text: "Review matches (" + backend.review.length + ")"
+                ToolTip.visible: hovered
+                ToolTip.text: "Games from different stores whose titles are close: say whether they are the same game."
+                onClicked: reviewer.open()
             }
             Btn {
                 visible: backend.missingDetails > 0 || backend.fetchingDetails !== ""

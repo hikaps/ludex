@@ -15,8 +15,12 @@ Item {
         (consoleMode ? playButton : backButton).forceActiveFocus(Qt.TabFocusReason)
     }
     onVisibleChanged: if (visible) Qt.callLater(focusDefault)
+    readonly property var stores: game.playStores || []
+    // The store a click uses: the one picked next to the button, else the first (an installed copy comes first).
+    readonly property string chosenStore: stores.length > 1 && storeBox.currentIndex >= 0 ? stores[storeBox.currentIndex].store : ""
     function playOrInstall() {
-        installed ? backend.launch(game.gameId) : backend.install(game.gameId)
+        if (installed) backend.launchFrom(game.gameId, chosenStore)
+        else backend.installFrom(game.gameId, chosenStore)
     }
 
     Rectangle { anchors.fill: parent; color: Theme.bg }
@@ -100,6 +104,16 @@ Item {
                         text: activity !== "" ? activity + "…" : page.installed ? "▶  Play" : "⇩  Install"
                         enabled: activity === ""
                         onClicked: page.playOrInstall()
+                    }
+                    Combo {
+                        id: storeBox
+                        objectName: "storeBox"
+                        visible: page.stores.length > 1
+                        implicitHeight: 52
+                        Layout.preferredWidth: 190
+                        model: page.stores.map(s => s.store + (s.installed ? " (installed)" : ""))
+                        // Back to the first (an installed copy) whenever another game is shown.
+                        Connections { target: page; function onGameChanged() { storeBox.currentIndex = 0 } }
                     }
                     Btn {
                         implicitHeight: 52
