@@ -179,3 +179,29 @@ def test_a_compressed_cover_response_is_refused_before_it_can_inflate():
     with httpx.Client(transport=httpx.MockTransport(lambda r: gzip)) as client:
         with pytest.raises(SourceError):
             steam.cover("570", base_url="https://x", client=client)
+
+
+def test_steam_cover_falls_back_to_the_hashed_banner_a_newer_app_names_in_its_store_entry():
+    seen = []
+
+    def handler(request):
+        seen.append(request.url.host + request.url.path)
+        if request.url.path == "/api/appdetails":
+            assert request.url.params["appids"] == "10"
+            return httpx.Response(200, json={"10": {"success": True, "data": {"header_image": "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/10/abc/header.jpg?t=1"}}})
+        if request.url.host == "shared.akamai.steamstatic.com":
+            return httpx.Response(200, stream=httpx.ByteStream(JPEG))
+        return httpx.Response(404)
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        assert steam.cover("10", client=client) == JPEG
+    assert seen[-1] == "shared.akamai.steamstatic.com/store_item_assets/steam/apps/10/abc/header.jpg"
+
+    def elsewhere(request):  # a banner link on another host is never followed
+        if request.url.path == "/api/appdetails":
+            return httpx.Response(200, json={"10": {"success": True, "data": {"header_image": "https://evil.example/h.jpg"}}})
+        assert request.url.host != "evil.example"
+        return httpx.Response(404)
+
+    with httpx.Client(transport=httpx.MockTransport(elsewhere)) as client:
+        assert steam.cover("10", client=client) is None
