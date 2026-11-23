@@ -4,7 +4,7 @@ import httpx
 import pytest
 
 from ludex.errors import LudexError
-from ludex.library import get_game, import_account
+from ludex.library import get_game, import_account, list_games
 from ludex.loader import load_providers
 from ludex.metadata import cached_match, choose_match, clean_title, clear_match, default_query, game_metadata, get_auto_match, match_candidates, set_auto_match
 from ludex.plugins import ConfigField, Metadata, OwnedGame, Provider, SearchHit, SourceError
@@ -224,3 +224,27 @@ def test_m_opens_the_picker_and_a_choice_sets_the_title_and_details(tmp_path):
             assert str(app.query_one("#owned-table").get_row_at(0)[1]) == "Hades_v1.2_(GOG)"
 
     asyncio.run(scenario())
+
+
+def test_games_matched_to_one_database_entry_become_one_game(tmp_path):
+    conn = connect(tmp_path / "db.sqlite3")
+    import_account(conn, "m", [OwnedGame("local", "a", "Hades_v1.2_(GOG)"), OwnedGame("local", "b", "hades-final-build")], store="local")
+    first, second = [g["id"] for g in list_games(conn)]
+    sources = {"db": db_provider([SearchHit("db", "7", "Hades", "https://x/hades")], calls=[])}
+    choose_match(conn, sources, first, "db", SearchHit("db", "7", "Hades", "https://x/hades"))
+    assert [g["id"] for g in list_games(conn)] == [first, second]  # one match alone proves nothing
+    choose_match(conn, sources, second, "db", SearchHit("db", "7", "Hades", "https://x/hades"))
+    games = list_games(conn)
+    assert [(g["id"], g["title"]) for g in games] == [(second, "Hades")]
+    assert sorted(o["store_id"] for o in get_game(conn, second)["ownership"]) == ["a", "b"]
+
+
+def test_a_match_to_a_store_entry_joins_the_game_owned_in_that_store(tmp_path):
+    conn = connect(tmp_path / "db.sqlite3")
+    import_account(conn, "s", [OwnedGame("steam", "1145360", "Hades")], store="steam")
+    import_account(conn, "m", [OwnedGame("local", "a", "hades-final-build")], store="local")
+    steam_game, local_game = [g["id"] for g in list_games(conn)]
+    sources = {"steam": Provider("steam", "s", (), metadata=lambda store_id: Metadata(), match=lambda q: [])}
+    choose_match(conn, sources, local_game, "steam", SearchHit("steam", "1145360", "Hades", "https://x"))
+    assert [g["id"] for g in list_games(conn)] == [local_game]
+    assert sorted(o["store"] for o in get_game(conn, local_game)["ownership"]) == ["local", "steam"]

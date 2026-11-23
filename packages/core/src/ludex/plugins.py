@@ -24,6 +24,7 @@ calls what is declared (``Provider.capabilities`` lists them):
 - ``search``: ``search``, below.
 - ``metadata``: ``metadata``, below.
 - ``playtime``: ``playtime``, below.
+- ``running``: ``running``, below.
 - ``acquire``: ``acquire``, below.
 - ``commands``: ``commands``, below.
 - ``views``: ``views``, below.
@@ -119,6 +120,12 @@ client has recorded on this machine, for example from its local files. It is rea
 provider that declares it is trusted for its games: the core then does not add the sessions it timed
 itself, so nothing counts twice; a provider without it falls back to the core's own timing of the
 games it started (``launch_command``).
+
+Running (optional): ``running(config)`` returns the store ids of the games the store's own client has
+running on this machine now (for example by looking at the processes). It is read live, about every two
+seconds while a launcher is open: keep it cheap, local and free of network. Raise ``SourceError`` when
+it cannot be determined; the core then shows nothing running for that store. Games the core started
+itself are ``play`` jobs and do not need it.
 
 Acquiring (optional): ``acquire(request, report)`` gets a ``AcquireRequest`` (store id, title, and a
 ``destination`` directory the core created) and does the whole job itself: download, unpack, or
@@ -336,12 +343,13 @@ class Provider:
     match: Callable[..., Sequence[SearchHit]] | None = None
     install_command: Callable[[Mapping[str, str], str], Sequence[str]] | None = None
     playtime: Callable[[Mapping[str, str]], Mapping[str, PlayRecord]] | None = None
+    running: Callable[[Mapping[str, str]], Iterable[str]] | None = None
     views: tuple[View, ...] = ()
     cover: Callable[..., bytes | None] | None = None
 
     @property
     def capabilities(self) -> tuple[str, ...]:
-        found = (("owned", self.fetch), ("installed", self.installed), ("search", self.search), ("metadata", self.metadata), ("match", self.match), ("launch", self.launch_url or self.launch_command or self.game_folder), ("install", self.install_url or self.install_command), ("playtime", self.playtime), ("acquire", self.acquire), ("commands", self.commands or None), ("views", self.views or None), ("cover", self.cover))
+        found = (("owned", self.fetch), ("installed", self.installed), ("search", self.search), ("metadata", self.metadata), ("match", self.match), ("launch", self.launch_url or self.launch_command or self.game_folder), ("install", self.install_url or self.install_command), ("playtime", self.playtime), ("running", self.running), ("acquire", self.acquire), ("commands", self.commands or None), ("views", self.views or None), ("cover", self.cover))
         return tuple(name for name, value in found if value is not None)
 
 

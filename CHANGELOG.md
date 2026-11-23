@@ -4,6 +4,11 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+### Added
+
+- **gui, plugins:** games a store client runs show as "Running" on their card and page, whoever started them. A provider declares the optional `running(config)` (API version unchanged); Steam (the `reaper SteamLaunch AppId=` process) and Heroic sideloads (a process running the game's program) do. Heroic is a heuristic: Heroic keeps no record of what runs.
+- **core:** a game matched to a database entry that another game is matched to, or owns as a store copy (a Steam match is the Steam app), is now the same game: its copies join. This also covers a match you choose by hand.
+
 ### Fixed
 
 - **gui:** the Library and Installed tabs are separate pages with their own search text, store, genre and sort (they shared one, so a search typed in one showed in the other).

@@ -9,12 +9,14 @@ Heroic. ponytail: name and install state only (no executable, prefix or artwork)
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+from .procs import command_lines
 from ..plugins import ConfigField, FetchResult, OwnedGame, PlayRecord, Provider, SourceError
 
 _DIRS = (
@@ -22,6 +24,7 @@ _DIRS = (
     "~/.var/app/com.heroicgameslauncher.hgl/config/heroic",
 )
 _MAX_BYTES = 8 * 1024 * 1024
+_DRIVE = re.compile(r"^[A-Za-z]:(?=/)")
 
 
 def _entries(config: Mapping[str, str]) -> list[dict[str, Any]]:
@@ -101,6 +104,29 @@ def installed(config: Mapping[str, str]) -> list[str]:
     return [g["app_name"] for g in _entries(config) if g.get("is_installed") is True]
 
 
+def _unixy(arg: str) -> str:
+    """A Windows path as Wine shows it (``Z:\\mnt\\games\\x.exe``) as the Linux path it points at."""
+    return _DRIVE.sub("", arg.replace("\\", "/"))
+
+
+def running(config: Mapping[str, str]) -> list[str]:
+    """The sideloaded games with a program of theirs running: a process whose command line names the game's
+    executable, or any ``.exe`` inside its folder (Heroic starts a Windows game through Wine or Proton with
+    the program's path as an argument). A heuristic: Heroic itself keeps no record of what is running."""
+    games = [
+        (g["app_name"], str(g["folder_name"]).rstrip("/") + "/", g.get("install", {}).get("executable"))
+        for g in _entries(config)
+        if g.get("is_installed") is True and isinstance(g.get("folder_name"), str) and g["folder_name"].strip("/")
+    ]
+    found: list[str] = []
+    for argv in command_lines():
+        args = [_unixy(a) for a in argv[1:]] + [argv[0]]
+        for app_name, folder, executable in games:
+            if app_name not in found and any(a == executable or (a.startswith(folder) and a.lower().endswith(".exe")) for a in args):
+                found.append(app_name)
+    return found
+
+
 PLUGIN = Provider(
     name="heroic",
     help="Games sideloaded into Heroic (read from its config folder on this machine)",
@@ -108,5 +134,6 @@ PLUGIN = Provider(
     fetch=fetch,
     installed=installed,
     playtime=playtime,
+    running=running,
     launch_url=lambda store_id: f"heroic://launch?appName={quote(store_id, safe='')}&runner=sideload",
 )

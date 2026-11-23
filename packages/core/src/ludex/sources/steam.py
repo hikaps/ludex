@@ -28,6 +28,7 @@ import vdf
 
 from .. import __version__
 from ..plugins import MAX_COVER_BYTES, ConfigField, FetchResult, Metadata, OwnedGame, PlayRecord, Provider, SearchHit, SourceError
+from .procs import command_lines
 from .steam_cache import cached_games
 
 DEFAULT_BASE_URL = "https://api.steampowered.com"
@@ -391,6 +392,15 @@ def fetch(config: Mapping[str, str]) -> FetchResult:
     return FetchResult(_local(_steam_dir(config)), False, "local")
 
 
+def running(config: Mapping[str, str]) -> set[str]:
+    """The app ids Steam is running: every game runs under ``reaper SteamLaunch AppId=<id> -- ...``."""
+    found: set[str] = set()
+    for argv in command_lines():
+        if "SteamLaunch" in argv:
+            found.update(arg[6:] for arg in argv if arg.startswith("AppId=") and arg[6:].isdigit())
+    return found
+
+
 PLUGIN = Provider(
     name="steam",
     help="Steam library: Web API with a key (full, needs public game details), otherwise the local Steam folder (installed and cached licensed games)",
@@ -402,6 +412,7 @@ PLUGIN = Provider(
     fetch=fetch,
     installed=installed,
     playtime=playtime,
+    running=running,
     search=search,
     metadata=metadata,
     cover=cover,
