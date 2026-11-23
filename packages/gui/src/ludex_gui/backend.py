@@ -25,6 +25,7 @@ from ludex.game_settings import (
     parse_environment, set_download_dir, update_settings,
 )
 from ludex.jobs import Job, list_jobs, progress_line, stop_job
+from ludex.actions import list_actions, run_action
 from ludex.launch import install_game, launch_game, open_url, usable_stores
 from ludex.library import dismiss_review, get_game, list_games, list_genres, list_review, merge_games
 from ludex.metadata import (
@@ -432,6 +433,7 @@ class Backend(QObject):
             "ownership": [{"store": o["store"], "storeId": str(o["store_id"]), "account": str(o["account"]), "removed": bool(o["removed"])} for o in game["ownership"]],
             "stores": ", ".join(sorted({o["store"] for o in live})),
             "installed": any(c in self._keys for c in copies),
+            "actions": [{"plugin": a.plugin, "id": a.id, "label": a.label, "store": a.store} for a in list_actions(self._conn, self._sources, game_id)],
             "playStores": self._play_stores(game_id, any(c in self._keys for c in copies), game["ownership"]),
             "played": describe_played(self._played.get(game_id)),
             "coverUrl": self._covers.get(game_id, ""),
@@ -616,6 +618,17 @@ class Backend(QObject):
     @Slot(int, str)
     def installFrom(self, game_id: int, store: str) -> None:  # noqa: N802 (Qt)
         self._start_game(game_id, install_game, "install", store or None)
+
+    @Slot(int, str, str, str)
+    def runAction(self, game_id: int, plugin: str, action_id: str, store: str) -> None:  # noqa: N802 (Qt)
+        """Run an action a plugin offers for the game (a button on its page); the job log keeps its output."""
+        try:
+            info, _, job = run_action(self._conn, self._sources, game_id, plugin, action_id, store or None, self._paths.database.parent / "logs")
+        except LudexError as exc:
+            self.notify(exc.message, True)
+            return
+        assert job is not None
+        self.notify(f"started {info.label}")
 
     def _play_stores(self, game_id: int, installed: bool, ownership: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """The stores a game can be played (or, when none has it installed, installed) from; the first one is what a click uses."""

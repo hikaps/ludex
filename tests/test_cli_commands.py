@@ -827,3 +827,25 @@ def test_dedupe_previews_then_joins_games_matched_to_one_entry(world: World, cap
     assert json.loads(out)["data"] == {"merged": [{"keep": 1, "drop": 2}], "dry_run": False}
     assert len(json.loads(run(capsys, "--json", "ls")[1])["data"]["games"]) == 1
     assert run(capsys, "dedupe")[1].strip() == "nothing to merge"
+
+
+def test_action_lists_then_runs_what_a_plugin_offers_for_a_game(world: World, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    from ludex.plugins import GameAction
+
+    world.catalogs["alice"] = [("1", "Portal")]
+    add(capsys, monkeypatch, "main", "alice")
+    assert run(capsys, "import", "main")[0] == 0
+    couch = Provider("couch", "Split-screen", (), actions=lambda store, store_id: [GameAction("split", "Play split-screen", [sys.executable, "-c", "print('hi')"])])
+    fake = Provider("fake", "Fake store", (), fetch=lambda config: FetchResult([], True, "fake"))
+    monkeypatch.setattr("ludex_cli.cli.load_providers", lambda: ({"fake": fake, "couch": couch}, {}))
+    code, out, _ = run(capsys, "--json", "action", "Portal")
+    assert code == 0 and json.loads(out)["data"]["actions"] == [{"action": "couch:split", "label": "Play split-screen", "store": "fake"}]
+    code, out, _ = run(capsys, "--json", "action", "Portal", "couch:split", "--dry-run")
+    data = json.loads(out)["data"]
+    assert code == 0 and data["job"] is None and data["argv"][0] == sys.executable
+    code, out, _ = run(capsys, "--json", "action", "Portal", "couch:split")
+    assert code == 0 and json.loads(out)["data"]["job"]["target"] == "couch:split:fake:1"
+    code, _, err = run(capsys, "--json", "action", "Portal", "couch:nope")
+    assert code != 0 and json.loads(err)["error"]["code"] == "unknown_action"
