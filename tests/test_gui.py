@@ -11,7 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
 
 import pytest
-from PySide6.QtCore import Q_ARG, QMetaObject, QObject, QPointF, Qt
+from PySide6.QtCore import Q_ARG, QMetaObject, QObject, QPointF, Qt, QThread
 from PySide6.QtGui import QGuiApplication, QWindow
 
 from ludex import artwork
@@ -1144,3 +1144,46 @@ def test_the_pad_enters_settings_and_walks_every_control_in_order(qapp, tmp_path
         qapp.processEvents()
         assert window.activeFocusItem() is control
     launcher.backend.closeDown()
+
+
+def test_a_status_message_can_be_dismissed_and_fades_unless_work_is_going_on(qapp, tmp_path, monkeypatch):
+    from ludex_gui import backend as backend_mod
+
+    monkeypatch.setattr(backend_mod, "STATUS_MS", 20)
+    launcher = _launcher(_paths(tmp_path), {})
+    backend = launcher.backend
+    backend.notify("hello")
+    backend.clearStatus()
+    assert backend.status == ""
+    backend.notify("hello again")
+    _until(qapp, lambda: backend.status == "")
+    backend._refreshing = True
+    backend.notify("refreshing")
+    for _ in range(10):
+        qapp.processEvents()
+        QThread.msleep(10)
+    assert backend.status == "refreshing"  # still working: the message stays
+    backend._refreshing = False
+    _until(qapp, lambda: backend.status == "")
+    backend.closeDown()
+
+
+def test_the_launcher_takes_the_focus_back_when_a_game_it_showed_as_running_quits(qapp, tmp_path):
+    paths = _paths(tmp_path)
+    conn = connect(paths.database)
+    import_account(conn, "m", [OwnedGame("shop", "7", "Doom")], store="shop")
+    conn.close()
+    add_account(paths, "main", "shop", {})
+    alive = ["7"]
+    launcher = _launcher(paths, {"shop": Provider("shop", "s", (), launch_url=lambda i: f"shop://{i}", running=lambda c: list(alive))})
+    backend = launcher.backend
+    exits = []
+    backend.gameExited.connect(lambda: exits.append(1))
+    backend.pollJobs()
+    assert exits == []
+    alive.clear()
+    backend.pollJobs()
+    assert exits == [1]
+    backend.pollJobs()
+    assert exits == [1]
+    backend.closeDown()

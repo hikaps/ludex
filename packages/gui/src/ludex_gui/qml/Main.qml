@@ -64,6 +64,15 @@ ApplicationWindow {
     }
     function goBack() {
         if (gameOpen) backend.closeGame()
+        else backend.clearStatus()
+    }
+    // The game that was running has quit: bring the launcher back in front and give it the keyboard and pad.
+    Connections {
+        target: backend
+        function onGameExited() {
+            win.raise()
+            win.requestActivate()
+        }
     }
     function playCurrent() {
         if (inPopup(activeFocusItem)) return
@@ -119,7 +128,7 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+5"; onActivated: win.go("settings") }
     Shortcut {
         sequence: "Escape"
-        enabled: win.gameOpen && !win.inPopup(win.activeFocusItem)
+        enabled: (win.gameOpen || backend.status !== "") && !win.inPopup(win.activeFocusItem)
         onActivated: win.goBack()
     }
     Shortcut { sequence: "Ctrl+PgDown"; onActivated: win.cycle(1) }
@@ -354,6 +363,8 @@ ApplicationWindow {
                     anchors.rightMargin: 16
                     objectName: "status"
                     text: backend.status
+                    // Click, or B on the pad, dismisses it; it also fades after a few seconds.
+                    MouseArea { anchors.fill: parent; enabled: backend.status !== ""; onClicked: backend.clearStatus() }
                     elide: Text.ElideRight
                     font.pixelSize: Theme.small
                     color: backend.statusError ? Theme.bad : Theme.muted
