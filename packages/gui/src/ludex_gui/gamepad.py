@@ -80,12 +80,39 @@ def _scope(item: QQuickItem, content: QQuickItem) -> QQuickItem:
     return content
 
 
+def _form(item: QQuickItem | None) -> QQuickItem | None:
+    """The enclosing form (an item with ``padForm: true``), whose controls Up and Down walk in order."""
+    while item is not None:
+        if item.property("padForm") is True:
+            return item
+        item = item.parentItem()
+    return None
+
+
+def _walk_form(current: QQuickItem, key: Qt.Key) -> bool:
+    """Up and Down in a form go to the previous or next control in reading order, so none is skipped."""
+    form = _form(current)
+    if form is None:
+        return False
+    forward = key == Qt.Key.Key_Down
+    nxt = current.nextItemInFocusChain(forward)
+    node = nxt
+    while node is not None and node is not form:
+        node = node.parentItem()
+    if nxt is None or nxt is current or node is None:  # the end of the form: leave it by position
+        return False
+    nxt.forceActiveFocus(Qt.FocusReason.TabFocusReason if forward else Qt.FocusReason.BacktabFocusReason)
+    return True
+
+
 def move_focus(window: QQuickWindow, key: Qt.Key) -> bool:
     """Focus the nearest control in the pressed direction; False when there is none."""
     current = window.activeFocusItem()
     content = window.contentItem()
     if current is None:
         return False
+    if key in _VERTICAL and _walk_form(current, key):
+        return True
     here = _scene_rect(current)
     scope = _scope(current, content)
     best: tuple[float, QQuickItem] | None = None
