@@ -48,6 +48,7 @@ PAGE = 500  # the core's page size
 MAX_GAMES = 20000
 COVERS_AT_A_TIME = 2
 REFRESHING = "refreshing accounts…"
+STATUS_MS = 10000  # a message in the status bar goes away after this long (unless work is still going on)
 HANDOFF_MS = 4000  # a store client was asked to start the game (no job to follow): ignore repeats this long
 SORTS = ("title", "recent", "playtime", "installed")
 _DOING = {"play": "Running", "install": "Installing"}
@@ -101,6 +102,7 @@ class Backend(QObject):
     matchesChanged = Signal()
     detailsChanged = Signal()
     activityChanged = Signal()
+    gameExited = Signal()  # a game that was running has quit: the launcher should take the focus back
     reviewChanged = Signal()
 
     def __init__(
@@ -122,6 +124,9 @@ class Backend(QObject):
         self._played: Mapping[int, Played] = {}
         self._filter = ("", "", False, "title", "")
         self._status, self._status_error = "", False
+        self._status_timer = QTimer(self)
+        self._status_timer.setSingleShot(True)
+        self._status_timer.timeout.connect(self._expire_status)
         self._stores: list[str] = []
         self._genres: list[dict[str, Any]] = []
         self._missing = 0
@@ -262,6 +267,21 @@ class Backend(QObject):
     def notify(self, text: str, error: bool = False) -> None:
         self._status, self._status_error = plain(text), error
         self.statusChanged.emit()
+        if self._status:
+            self._status_timer.start(STATUS_MS)
+        else:
+            self._status_timer.stop()
+
+    @Slot()
+    def clearStatus(self) -> None:
+        if self._status:
+            self.notify("")
+
+    def _expire_status(self) -> None:
+        if self._refreshing or self._matching or self._fetching:  # the message still describes work in progress
+            self._status_timer.start(STATUS_MS)
+        else:
+            self.clearStatus()
 
     # --- library --------------------------------------------------------------------------------------------
 
@@ -609,8 +629,11 @@ class Backend(QObject):
         shown.update({str(game): "Running" for game in self._by_client})
         shown.update({str(game): what for game, what in self._by_job.items()})
         if shown != self._activity:
+            quit_ = any(what == "Running" and shown.get(game) != "Running" for game, what in self._activity.items())
             self._activity = shown
             self.activityChanged.emit()
+            if quit_:
+                self.gameExited.emit()
 
     def _handoff_done(self, game_id: int) -> None:
         self._handoff.discard(game_id)
