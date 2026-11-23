@@ -17,6 +17,7 @@ from PySide6.QtGui import QGuiApplication, QWindow
 from ludex import artwork
 from ludex import launch as launch_mod
 from ludex.errors import LudexError
+from ludex.accounts import add_account
 from ludex.library import import_account
 from ludex.metadata import set_auto_details
 from ludex.paths import StatePaths
@@ -1090,4 +1091,23 @@ def test_the_library_and_installed_tabs_keep_their_own_search_text(qapp, tmp_pat
     shown = [i for i in _items(window.contentItem()) if i.objectName() == "librarySearch" and i.isVisible()]
     assert len(shown) == 1 and shown[0] is not boxes[0] and shown[0].property("text") == ""
     _until(qapp, lambda: backend.count == 2)
+    backend.closeDown()
+
+
+def test_a_game_its_store_client_runs_shows_as_running_even_if_ludex_did_not_start_it(qapp, tmp_path):
+    paths = _paths(tmp_path)
+    conn = connect(paths.database)
+    import_account(conn, "m", [OwnedGame("shop", "7", "Doom"), OwnedGame("shop", "8", "Hades")], store="shop")
+    conn.close()
+    add_account(paths, "main", "shop", {})
+    alive = ["7"]
+    launcher = _launcher(paths, {"shop": Provider("shop", "s", (), launch_url=lambda i: f"shop://{i}", running=lambda c: list(alive))})
+    backend = launcher.backend
+    backend.pollJobs()
+    assert backend.activity == {"1": "Running"}
+    backend.launch(1)  # already running: no second start
+    assert backend.activity == {"1": "Running"}
+    alive.clear()
+    backend.pollJobs()
+    assert backend.activity == {}
     backend.closeDown()

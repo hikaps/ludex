@@ -33,6 +33,7 @@ from ludex.metadata import (
 )
 from ludex.paths import StatePaths
 from ludex.playtime import Played, describe_played, epoch
+from ludex.running import running_games
 from ludex.plugin_views import list_views
 from ludex.plugins import Provider
 from ludex.refresh import get_auto_refresh, refresh_all
@@ -140,6 +141,7 @@ class Backend(QObject):
         self._handoff: set[int] = set()  # games a store client was asked to start a moment ago
         self._review: list[dict[str, Any]] = []
         self._by_job: dict[int, str] = {}  # game id -> what its running job is doing
+        self._by_client: set[int] = set()  # games a store client has running (Steam, Heroic), whoever started them
         self._activity: dict[str, str] = {}
         self._jobs_seen: dict[int, str] = {}
         self._covers: dict[int, str] = {}
@@ -602,8 +604,9 @@ class Backend(QObject):
         return [{"store": store, "installed": store in has} for store in sorted(stores, key=lambda st: (st not in has, st))]
 
     def _show_activity(self) -> None:
-        """What each game is doing now, for the cards and game pages: its running job, or a client being asked to start it."""
+        """What each game is doing now, for the cards and game pages: its running job, a game its store client runs, or a client being asked to start it."""
         shown = {str(game): "Starting" for game in self._handoff}
+        shown.update({str(game): "Running" for game in self._by_client})
         shown.update({str(game): what for game, what in self._by_job.items()})
         if shown != self._activity:
             self._activity = shown
@@ -883,6 +886,7 @@ class Backend(QObject):
         ]
         self._running_jobs = sum(j.state == "running" for j in jobs)
         self._by_job = {j.game_id: _DOING[j.kind] for j in jobs if j.state == "running" and j.kind in _DOING}
+        self._by_client = running_games(self._paths, self._sources, self._conn)
         self._show_activity()
         self.jobsChanged.emit()
         if changed:
