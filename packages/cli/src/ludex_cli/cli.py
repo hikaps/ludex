@@ -34,7 +34,7 @@ from ludex.loader import load_providers
 from ludex.plugin_commands import run_command
 from ludex.plugin_views import fetch_view, get_view, list_views
 from ludex.refresh import get_auto_refresh, set_auto_refresh
-from ludex.metadata import cached_match, choose_match, clear_match, default_query, game_metadata, match_candidates, get_auto_details, get_auto_match, set_auto_details, set_auto_match
+from ludex.metadata import cached_match, choose_match, clear_match, default_query, game_metadata, match_candidates, merge_matched, get_auto_details, get_auto_match, set_auto_details, set_auto_match
 from ludex.paths import state_paths
 from ludex.plugins import Provider, ViewTable
 from ludex.storage import connect, writer_lock
@@ -198,6 +198,8 @@ def _parser() -> argparse.ArgumentParser:
     merge = commands.add_parser("merge", help="merge game DROP into game KEEP")
     merge.add_argument("keep", type=int)
     merge.add_argument("drop", type=int)
+    dedupe = commands.add_parser("dedupe", help="merge games that are matched to the same game-database entry")
+    dedupe.add_argument("--dry-run", action="store_true", help="list what would be merged and change nothing")
     return parser
 
 
@@ -343,6 +345,7 @@ def _import_one(conn: Any, paths: Any, sources: dict[str, Provider], problems: d
     account = get_account(paths, name)
     plugin = _plugin(sources, problems, account.source)
     summary = run_import(conn, account.name, plugin, account.config)
+    merge_matched(conn)
     return {"account": account.name, "source": account.source, "ok": True, **summary.as_dict()}
 
 
@@ -965,6 +968,19 @@ def _cmd_merge(args: argparse.Namespace) -> tuple[object, str]:
     return {"keep": args.keep, "drop": args.drop, "moved": moved}, f"merged game {args.drop} into {args.keep} ({moved} records)"
 
 
+def _cmd_dedupe(args: argparse.Namespace) -> tuple[object, str]:
+    paths = state_paths()
+    with writer_lock(paths.import_lock):
+        conn = connect(paths.database)
+        try:
+            pairs = merge_matched(conn, args.dry_run)
+        finally:
+            conn.close()
+    merged = [{"keep": keep, "drop": drop} for keep, drop in pairs]
+    verb = "would merge" if args.dry_run else "merged"
+    return {"merged": merged, "dry_run": args.dry_run}, "\n".join(f"{verb} game {drop} into {keep}" for keep, drop in pairs) or "nothing to merge"
+
+
 _CSV_FIELDS = ("game_id", "title", "store", "store_id", "account", "removed", "first_seen", "last_seen")
 
 
@@ -989,6 +1005,7 @@ _HANDLERS = {
     ("export", None): _cmd_export,
     ("review", None): _cmd_review,
     ("merge", None): _cmd_merge,
+    ("dedupe", None): _cmd_dedupe,
     ("providers", None): _cmd_providers,
     ("setup", None): _cmd_setup,
     ("account", "add"): _cmd_account_add,
