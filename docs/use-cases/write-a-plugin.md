@@ -4,7 +4,7 @@ To add a store, a metadata service or new commands to ludex, write a plugin: a P
 
 ## Summary of the contract
 
-- A `Provider` declares capabilities by filling fields; at least one is required and the core calls only what is declared: `owned` (`fetch`), `launch`, `install`, `installed`, `search`, `metadata`, `acquire`, `commands`, `views`, `cover`, `actions` (extra buttons on a game: a label and an absolute `argv` per owned copy, for example "Play split-screen"; they run as `action` jobs).
+- A `Provider` declares capabilities by filling fields; at least one is required and the core calls only what is declared: `owned` (`fetch`), `launch`, `install`, `installed`, `search`, `metadata`, `acquire`, `commands`, `views`, `cover`, `actions` (extra actions for a game, under "More" in the GUI: a label and an absolute `argv` per owned copy, for example "Play split-screen"; they run as `action` jobs).
 - Do not declare ludex as a dependency. A provider whose `api_version` differs from the core's is skipped with a reported reason.
 - `fetch(config)` returns a `FetchResult`. `complete` must be True only when the result is every game the account owns; only then are missing games marked removed. If the result may be partial, return `complete=False`, or raise `SourceError` when you cannot tell. Games carry the plugin's own name as `store`.
 - Plugin-wide `settings` and per-account `config_fields` are `ConfigField`s (kinds `text`, `yes_no`, `choice`; `secret` and `path` for text).

@@ -126,13 +126,34 @@ Item {
                         text: "Match…"
                         onClicked: matcher.openFor(game.gameId, game.title)
                     }
-                    Repeater {
-                        model: game.actions || []
-                        Btn {
-                            required property var modelData
-                            implicitHeight: 52
-                            text: modelData.label
-                            onClicked: backend.runAction(game.gameId, modelData.plugin, modelData.id, modelData.store)
+                    Btn {
+                        id: moreButton
+                        objectName: "moreActions"
+                        visible: (game.actions || []).length > 0
+                        implicitHeight: 52
+                        text: "More  ▾"
+                        onClicked: moreMenu.open()
+                        Popup {
+                            id: moreMenu
+                            objectName: "moreMenu"
+                            y: moreButton.height + 4
+                            padding: 6
+                            closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+                            onOpened: if (moreItems.count > 0) moreItems.itemAt(0).forceActiveFocus(Qt.TabFocusReason)
+                            background: Rectangle { radius: Theme.radius; color: Theme.surface2; border.width: 1; border.color: Theme.border }
+                            contentItem: Column {
+                                spacing: 4
+                                Repeater {
+                                    id: moreItems
+                                    model: game.actions || []
+                                    delegate: Btn {
+                                        required property var modelData
+                                        width: 280
+                                        text: modelData.label
+                                        onClicked: { moreMenu.close(); backend.runAction(game.gameId, modelData.plugin, modelData.id, modelData.store) }
+                                    }
+                                }
+                            }
                         }
                     }
                     Btn {
