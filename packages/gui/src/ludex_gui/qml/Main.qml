@@ -23,6 +23,15 @@ ApplicationWindow {
         backend.closeGame()
         section = name
     }
+    // A page just opened: take the focus into it. The control that had it sits on a page that is hidden now,
+    // and the pad moves from the focused control, so it would go nowhere. The library pages focus their own grid.
+    onSectionChanged: Qt.callLater(function () {
+        if (section === "library" || section === "installed" || gameOpen) return
+        var first = stack.nextItemInFocusChain(true)
+        for (var p = first; p; p = p.parent) {
+            if (p === stack) { first.forceActiveFocus(Qt.TabFocusReason); return }
+        }
+    })
     // Y on the controller and "/" on the keyboard: jump to the search field of the current page.
     function focusSearch() {
         if (inPopup(activeFocusItem)) return

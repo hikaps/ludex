@@ -11,7 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
 
 import pytest
-from PySide6.QtCore import Q_ARG, QMetaObject, QObject, Qt
+from PySide6.QtCore import Q_ARG, QMetaObject, QObject, QPointF, Qt
 from PySide6.QtGui import QGuiApplication, QWindow
 
 from ludex import artwork
@@ -1111,3 +1111,36 @@ def test_a_game_its_store_client_runs_shows_as_running_even_if_ludex_did_not_sta
     backend.pollJobs()
     assert backend.activity == {}
     backend.closeDown()
+
+def test_the_pad_enters_settings_and_walks_every_control_in_order(qapp, tmp_path, monkeypatch):
+    paths = _paths(tmp_path)
+    conn = connect(paths.database)
+    import_account(conn, "m", [OwnedGame("steam", "1", "Hades")], store="steam")
+    conn.close()
+    add_account(paths, "main", "steam", {})
+    launcher = _launcher(paths, {"steam": steam.PLUGIN}, frozenset(), True)
+    window = launcher.window
+    monkeypatch.setattr(gamepad_mod.QGuiApplication, "focusWindow", staticmethod(lambda: window))
+    pad = gamepad_mod.Gamepad(window, _FakeSource())
+    qapp.processEvents()
+    for _ in range(4):  # Library, Installed, Search, Jobs, Settings
+        pad.press("rightshoulder")
+        pad.release("rightshoulder")
+    page = next(i for i in _items(window.contentItem()) if i.property("padForm") is True)
+    controls = gamepad_mod._focusables(page, [])
+    _until(qapp, lambda: window.activeFocusItem() is controls[0])  # focus came into the page, not left on a hidden control
+    walked = [controls[0]]
+    for _ in range(len(controls) + 2):
+        pad.press("dpdown")
+        pad.release("dpdown")
+        qapp.processEvents()
+        if window.activeFocusItem() is not walked[-1]:
+            walked.append(window.activeFocusItem())
+    assert walked == controls  # none skipped, and the form's last control ends the walk
+    assert 0 <= walked[-1].mapToItem(page, QPointF(0, 0)).y() < page.height()  # it scrolled into view
+    for control in reversed(controls[:-1]):
+        pad.press("dpup")
+        pad.release("dpup")
+        qapp.processEvents()
+        assert window.activeFocusItem() is control
+    launcher.backend.closeDown()

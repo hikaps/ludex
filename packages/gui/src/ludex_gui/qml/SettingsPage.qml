@@ -125,6 +125,7 @@ Item {
     }
 
     Flickable {
+        property bool padForm: true  // the controller walks the controls with Up and Down in order; Left and Right go sideways
         anchors.fill: parent
         contentHeight: column.implicitHeight + 48
         clip: true
