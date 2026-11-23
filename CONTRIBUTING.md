@@ -21,7 +21,7 @@ Setup, code conventions and testing are in [AGENTS.md](AGENTS.md).
 
 ## Releases
 
-1. In a feature PR on `develop`, bump `version` in the root and the four `packages/*/pyproject.toml` (with the exact `==` pins between them) and `__version__` in `packages/core/src/ludex/__init__.py` together, then run `uv lock`. All must be plain `X.Y.Z` and equal; `.github/scripts/build_distributions.py` checks it.
+1. In a feature PR on `develop`, bump `version` in the root and the three `packages/*/pyproject.toml` (with the exact `==` pins between them) and `__version__` in `packages/core/src/ludex/__init__.py` together, then run `uv lock`. All must be plain `X.Y.Z` and equal; `.github/scripts/build_distributions.py` checks it.
 2. Open a PR from `develop` to `main` and merge it with a merge commit (never squash, or the branches diverge).
 3. That merge releases the version: `.github/workflows/pypi.yml` publishes to PyPI (trusted publishing, no token), publishing `ludex-core`, `ludex-cli` and then `ludex-games`, then creates tag `vX.Y.Z` and a GitHub Release with all eight files, and finally publishes `ludex-gui` (not in the bundle; a failure there leaves the release intact and a re-run skips what PyPI has). A push to `main` whose tag already exists only builds.
 
