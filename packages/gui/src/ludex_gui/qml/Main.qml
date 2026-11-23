@@ -16,6 +16,7 @@ ApplicationWindow {
     font.family: Theme.family
 
     property string section: "library"
+    readonly property var libraryPage: section === "installed" ? installedPage : library
     readonly property bool gameOpen: backend.current.gameId !== undefined
 
     function go(name) {
@@ -29,7 +30,7 @@ ApplicationWindow {
             search.focusSearch()
         } else if (section === "library" || section === "installed") {
             go(section)
-            library.focusSearch()
+            libraryPage.focusSearch()
         }
     }
     // Start on the controller: resume or quit.
@@ -60,7 +61,7 @@ ApplicationWindow {
         if (gameOpen) {
             gamePage.playOrInstall()
         } else if (section === "library" || section === "installed") {
-            library.playCurrent()
+            libraryPage.playCurrent()
         }
     }
     // True while the focus sits inside a dialog or popup, which owns Escape and page keys.
@@ -85,18 +86,19 @@ ApplicationWindow {
     }
     onActiveFocusItemChanged: ensureVisible(activeFocusItem)
     function pageIndex(name) {
-        if (name === "library" || name === "installed") return 0
-        if (name === "search") return 1
-        if (name === "jobs") return 2
-        if (name === "settings") return 3
-        return 4 + parseInt(name.split(":")[1])
+        if (name === "library") return 0
+        if (name === "installed") return 1
+        if (name === "search") return 2
+        if (name === "jobs") return 3
+        if (name === "settings") return 4
+        return 5 + parseInt(name.split(":")[1])
     }
 
     onGameOpenChanged: {
         if (gameOpen) {
             gamePage.forceActiveFocus()
         } else {
-            library.focusGrid()
+            libraryPage.focusGrid()
         }
     }
 
@@ -130,6 +132,13 @@ ApplicationWindow {
         contentItem: Column {
             spacing: 8
             Btn { id: resume; width: 240; text: "Resume"; onClicked: menu.close() }
+            Btn {
+                objectName: "refreshAll"
+                width: 240
+                text: backend.refreshing ? "Refreshing…" : "Refresh library"
+                enabled: !backend.refreshing
+                onClicked: { menu.close(); backend.reload(); backend.startRefresh(false) }
+            }
             Btn {
                 objectName: "switchMode"
                 width: 240
@@ -293,7 +302,9 @@ ApplicationWindow {
                     enabled: !win.gameOpen
                     currentIndex: win.pageIndex(win.section)
 
-                    LibraryPage { id: library; installedOnly: win.section === "installed" }
+                    // Two pages, so each keeps its own search text, store, genre and sort.
+                    LibraryPage { id: library; active: win.section === "library" }
+                    LibraryPage { id: installedPage; installedOnly: true; active: win.section === "installed" }
                     SearchPage { id: search }
                     JobsPage { }
                     SettingsPage { }

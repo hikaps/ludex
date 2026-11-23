@@ -1012,3 +1012,82 @@ def test_a_start_up_refresh_that_finds_nothing_does_not_leave_its_message_in_the
     _until(qapp, lambda: not backend.refreshing)
     assert backend.status == "refreshed: no changes"
     backend.closeDown()
+
+
+def test_the_pad_walks_a_dialog_that_opens_with_no_control_focused_and_picks_a_result(qapp, tmp_path, monkeypatch):
+    from ludex.plugins import Metadata
+
+    paths = _paths(tmp_path)
+    conn = connect(paths.database)
+    import_account(conn, "m", [OwnedGame("local", "1", "hades_v1.2")], store="local")
+    conn.close()
+    db = Provider(
+        "db", "A database", (), match=lambda q: [SearchHit("db", str(i), f"Hades {i}", "https://x") for i in range(5)],
+        metadata=lambda store_id: Metadata("d"),
+    )
+    launcher = _launcher(paths, {"local": Provider("local", "l", ()), "db": db})
+    window, backend = launcher.window, launcher.backend
+    monkeypatch.setattr(gamepad_mod.QGuiApplication, "focusWindow", staticmethod(lambda: window))
+    pad = gamepad_mod.Gamepad(window, _FakeSource())
+    backend.openGame(1)
+    qapp.processEvents()
+    button = next(b for b in _items(window.contentItem()) if str(b.property("text")).startswith("Match") and b.isVisible())
+    QMetaObject.invokeMethod(button, "click", Qt.ConnectionType.DirectConnection)
+    dialog = window.findChild(QObject, "matchDialog")
+    _until(qapp, lambda: dialog.property("visible") and len(backend.matches) == 5)
+    matches = _find_item(window.contentItem(), "matchList")
+
+    def down():
+        pad.press("dpdown")
+        pad.release("dpdown")
+        qapp.processEvents()
+
+    down()  # from the dialog itself to its first control, the search field
+    assert window.activeFocusItem().property("text") == "hades"
+    down()  # then into the results
+    assert matches.property("activeFocus") and matches.property("currentIndex") == 0
+    down()
+    down()
+    assert matches.property("currentIndex") == 2
+    pad.press("a")
+    pad.release("a")
+    _until(qapp, lambda: backend.current.get("title") == "Hades 2")
+    backend.closeDown()
+
+
+def _items(item):
+    yield item
+    for child in item.childItems():
+        yield from _items(child)
+
+
+def test_the_start_menu_refreshes_the_library_so_console_mode_can_do_it(qapp, tmp_path, monkeypatch):
+    launcher, window, pad = _padded(qapp, tmp_path, monkeypatch, console=True)
+    refreshed = []
+    monkeypatch.setattr(launcher.backend, "startRefresh", lambda quiet=False: refreshed.append(quiet))
+    pad.press("start")
+    pad.release("start")
+    menu = window.findChild(QObject, "menu")
+    _until(qapp, lambda: menu.property("visible"))
+    _click(window, "refreshAll")
+    assert refreshed == [False]
+    _until(qapp, lambda: not menu.property("visible"))
+    launcher.backend.closeDown()
+
+
+def test_the_library_and_installed_tabs_keep_their_own_search_text(qapp, tmp_path, monkeypatch):
+    launcher, window, pad = _padded(qapp, tmp_path, monkeypatch, {("steam", "1")})
+    backend = launcher.backend
+    pad.press("rightshoulder")  # Installed
+    pad.release("rightshoulder")
+    assert window.property("section") == "installed"
+    boxes = [i for i in _items(window.contentItem()) if i.objectName() == "librarySearch" and i.isVisible()]
+    assert len(boxes) == 1
+    boxes[0].setProperty("text", "hades")
+    _until(qapp, lambda: backend.count == 1)
+    pad.press("leftshoulder")  # back to Library: its box is empty and every game shows
+    pad.release("leftshoulder")
+    shown = [i for i in _items(window.contentItem()) if i.objectName() == "librarySearch" and i.isVisible()]
+    assert len(shown) == 1 and shown[0] is not boxes[0] and shown[0].property("text") == ""
+    _until(qapp, lambda: backend.count == 2)
+    backend.closeDown()

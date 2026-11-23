@@ -5,6 +5,7 @@ import QtQuick.Layouts
 Item {
     id: page
     property bool installedOnly: false
+    property bool active: false  // set by Main: the tab being shown
     property string store: ""
     property string genre: ""
     readonly property var genreNames: backend.genres.map(g => g.genre)
@@ -12,7 +13,9 @@ Item {
 
     ReviewDialog { id: reviewer }
 
+    // Only the tab on screen sets the filter; the other keeps its settings until it is shown again.
     function apply() {
+        if (!active) return
         backend.setFilter(search.text, page.store, page.installedOnly, sortKeys[sortBox.currentIndex], page.genre)
     }
     function playCurrent() {
@@ -30,7 +33,7 @@ Item {
     onInstalledOnlyChanged: apply()
     onStoreChanged: apply()
     onGenreChanged: apply()
-    onVisibleChanged: if (visible) {
+    onActiveChanged: if (active) {
         apply()
         grid.forceActiveFocus()
     }
@@ -55,6 +58,7 @@ Item {
             Item { Layout.fillWidth: true; Layout.minimumWidth: 0 }
             TextField {
                 id: search
+                objectName: "librarySearch"
                 Layout.fillWidth: true
                 Layout.maximumWidth: 280
                 Layout.minimumWidth: 120
