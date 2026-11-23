@@ -10,7 +10,6 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ### Added
 
-- **docs:** a Community plugins page listing plugins outside ludex (ludex-emulators first), marked as unreviewed.
 - **plugins, cli, gui:** a plugin can offer extra actions for a game with the optional `actions(store, store_id)` (API version unchanged), for example a split-screen launcher. Each `GameAction` has an id, a label and an `argv` (absolute executable, no shell). The game page lists them under a "More" button next to Play, `ludex action GAME` lists them and `ludex action GAME PLUGIN:ID [--store S] [--dry-run]` runs one as a background `action` job with its output in the job log. An `actions` function that declares `settings` receives the plugin's settings, as `search` does.
 
 ## [0.64.0] - 2026-11-23

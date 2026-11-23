@@ -11,4 +11,3 @@ nav:
       - List games across stores: use-cases/list-games-across-stores.md
       - Import Steam library: use-cases/import-steam-library.md
       - Write a plugin: use-cases/write-a-plugin.md
-      - Community plugins: use-cases/community-plugins.md
