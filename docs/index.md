@@ -37,5 +37,6 @@ ludex ls             # list your games
 - [List the games you own across stores on Linux](use-cases/list-games-across-stores.md)
 - [Import your Steam library](use-cases/import-steam-library.md)
 - [Write a ludex plugin](use-cases/write-a-plugin.md)
+- [Community plugins](use-cases/community-plugins.md)
 
 Source code and issues: <https://github.com/hikaps/ludex>.
