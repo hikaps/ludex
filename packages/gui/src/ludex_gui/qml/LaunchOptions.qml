@@ -46,51 +46,88 @@ Dialog {
         background: Rectangle { radius: 6; color: Theme.surface; border.width: parent.activeFocus ? 2 : 1; border.color: parent.activeFocus ? Theme.accent : Theme.border }
     }
 
-    contentItem: ColumnLayout {
-        spacing: 8
-        Txt {
-            visible: !dialog.info.available
-            Layout.fillWidth: true
-            wrapMode: Text.Wrap
-            color: Theme.muted
-            text: dialog.info.reason || ""
+    // The form scrolls when the window is shorter than it (console mode is scaled up), so the buttons below never get squeezed.
+    height: Math.min(implicitHeight, (Overlay.overlay ? Overlay.overlay.height : 10000) - 32)
+
+    contentItem: Flickable {
+        id: flick
+        property bool padForm: true  // the controller walks the fields with Up and Down in order
+        implicitHeight: form.implicitHeight
+        contentHeight: form.implicitHeight
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        ScrollBar.vertical: ScrollBar {}
+
+        // Keep the focused field on screen: the page-level helper leaves popups alone.
+        function reveal(item) {
+            for (var p = item; p; p = p.parent) {
+                if (p === flick.contentItem) break
+                if (!p.parent) return
+            }
+            var y = item.mapToItem(flick.contentItem, 0, 0).y
+            if (y < flick.contentY) {
+                flick.contentY = Math.max(0, y - 24)
+            } else if (y + item.height > flick.contentY + flick.height) {
+                flick.contentY = Math.min(flick.contentHeight - flick.height, y + item.height - flick.height + 16)
+            }
         }
+        Connections {
+            target: flick.Window.window
+            function onActiveFocusItemChanged() {
+                var item = flick.Window.window.activeFocusItem
+                if (item && flick.contentHeight > flick.height) flick.reveal(item)
+            }
+        }
+
         ColumnLayout {
-            visible: dialog.info.available === true
-            Layout.fillWidth: true
-            spacing: 6
-            Txt { text: "Runner (Proton build; Native runs the executable directly)"; color: Theme.muted; font.pixelSize: Theme.small }
-            Combo {
-                id: runner
+            id: form
+            width: flick.width
+            spacing: 8
+            Txt {
+                visible: !dialog.info.available
                 Layout.fillWidth: true
-                model: ["Native"].concat(dialog.info.runners || [])
+                wrapMode: Text.Wrap
+                color: Theme.muted
+                text: dialog.info.reason || ""
             }
-            Txt { text: "Prefix folder (blank: " + (dialog.info.defaultPrefix || "") + "/<game>)"; color: Theme.muted; font.pixelSize: Theme.small; Layout.topMargin: 6 }
-            RowLayout {
+            ColumnLayout {
+                visible: dialog.info.available === true
                 Layout.fillWidth: true
-                Field { id: prefix }
-                Btn { text: "Browse…"; onClicked: folders.open() }
-            }
-            Txt { text: "Executable (relative to the game folder or absolute; blank: automatic)"; color: Theme.muted; font.pixelSize: Theme.small; Layout.topMargin: 6 }
-            Field { id: executable }
-            Combo {
-                visible: (dialog.info.candidates || []).length > 0
-                Layout.fillWidth: true
-                model: ["Pick one found in the game folder"].concat(dialog.info.candidates || [])
-                onActivated: if (currentIndex > 0) { executable.text = currentText; currentIndex = 0 }
-            }
-            Txt { text: "Arguments"; color: Theme.muted; font.pixelSize: Theme.small; Layout.topMargin: 6 }
-            Field { id: args }
-            Txt { text: "Environment variables, one NAME=VALUE per line"; color: Theme.muted; font.pixelSize: Theme.small; Layout.topMargin: 6 }
-            ScrollView {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 100
-                TextArea {
-                    id: env
-                    color: Theme.text
-                    font.family: Theme.family
-                    selectByMouse: true
-                    background: Rectangle { radius: 6; color: Theme.surface; border.width: env.activeFocus ? 2 : 1; border.color: env.activeFocus ? Theme.accent : Theme.border }
+                spacing: 6
+                Txt { text: "Runner (Proton build; Native runs the executable directly)"; color: Theme.muted; font.pixelSize: Theme.small }
+                Combo {
+                    id: runner
+                    Layout.fillWidth: true
+                    model: ["Native"].concat(dialog.info.runners || [])
+                }
+                Txt { text: "Prefix folder (blank: " + (dialog.info.defaultPrefix || "") + "/<game>)"; color: Theme.muted; font.pixelSize: Theme.small; Layout.topMargin: 6 }
+                RowLayout {
+                    Layout.fillWidth: true
+                    Field { id: prefix }
+                    Btn { text: "Browse…"; onClicked: folders.open() }
+                }
+                Txt { text: "Executable (relative to the game folder or absolute; blank: automatic)"; color: Theme.muted; font.pixelSize: Theme.small; Layout.topMargin: 6 }
+                Field { id: executable }
+                Combo {
+                    visible: (dialog.info.candidates || []).length > 0
+                    Layout.fillWidth: true
+                    model: ["Pick one found in the game folder"].concat(dialog.info.candidates || [])
+                    onActivated: if (currentIndex > 0) { executable.text = currentText; currentIndex = 0 }
+                }
+                Txt { text: "Arguments"; color: Theme.muted; font.pixelSize: Theme.small; Layout.topMargin: 6 }
+                Field { id: args; objectName: "launchArgs" }
+                Txt { text: "Environment variables, one NAME=VALUE per line"; color: Theme.muted; font.pixelSize: Theme.small; Layout.topMargin: 6 }
+                ScrollView {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 100
+                    TextArea {
+                        id: env
+                    objectName: "launchEnv"
+                        color: Theme.text
+                        font.family: Theme.family
+                        selectByMouse: true
+                        background: Rectangle { radius: 6; color: Theme.surface; border.width: env.activeFocus ? 2 : 1; border.color: env.activeFocus ? Theme.accent : Theme.border }
+                    }
                 }
             }
         }

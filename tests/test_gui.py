@@ -895,6 +895,67 @@ def test_a_game_handed_to_a_store_client_is_busy_only_for_a_moment(qapp, tmp_pat
     backend.closeDown()
 
 
+def _handed_off(tmp_path, monkeypatch, limit_ms):
+    from ludex_gui import backend as backend_mod
+
+    live: set[int] = set()
+    monkeypatch.setattr(backend_mod, "launch_game", lambda *a, **k: ("heroic:7", None))
+    monkeypatch.setattr(backend_mod, "running_games", lambda *a, **k: set(live))
+    monkeypatch.setattr(backend_mod, "HANDOFF_MS", limit_ms)
+    paths = _paths(tmp_path)
+    conn = connect(paths.database)
+    import_account(conn, "m", [OwnedGame("heroic", "7", "Doom")], store="heroic")
+    conn.close()
+    return _launcher(paths, {}), live
+
+
+def test_a_game_handed_to_a_client_shows_starting_until_it_is_seen_running_and_then_runs_then_quits(qapp, tmp_path, monkeypatch):
+    launcher, live = _handed_off(tmp_path, monkeypatch, 60000)
+    backend = launcher.backend
+    backend.launch(1)
+    backend.pollJobs()  # polls before the game shows up must not end Starting
+    backend.pollJobs()
+    assert backend.activity == {"1": "Starting"}
+    live.add(1)
+    backend.pollJobs()
+    assert backend.activity == {"1": "Running"}
+    exited = []
+    backend.gameExited.connect(lambda: exited.append(True))
+    live.clear()
+    backend.pollJobs()
+    assert backend.activity == {} and exited == [True]  # it quit: not back to Starting
+    backend.closeDown()
+
+
+def test_a_game_that_never_shows_up_stops_starting_with_a_notice(qapp, tmp_path, monkeypatch):
+    launcher, _ = _handed_off(tmp_path, monkeypatch, 30)
+    backend = launcher.backend
+    backend.launch(1)
+    assert backend.activity == {"1": "Starting"}
+    _until(qapp, lambda: backend.activity == {})
+    assert backend.statusError and "Doom did not start" in backend.status
+    backend.closeDown()
+
+
+def test_cancel_clears_starting_and_the_old_timer_cannot_end_a_newer_launch(qapp, tmp_path, monkeypatch):
+    launcher, _ = _handed_off(tmp_path, monkeypatch, 120)
+    backend = launcher.backend
+    window = launcher.window
+    window.show()
+    backend.openGame(1)
+    backend.launch(1)
+    _until(qapp, lambda: _find_item(window.contentItem(), "cancelStart") is not None and _find_item(window.contentItem(), "cancelStart").isVisible())
+    _click(window, "cancelStart")
+    assert backend.activity == {} and not backend.statusError and "stopped waiting for Doom" in backend.status
+    assert not _find_item(window.contentItem(), "cancelStart").isVisible()
+    backend.launch(1)  # asked again; the first launch's timer must not end this one early
+    time.sleep(0.15)
+    _until(qapp, lambda: backend.activity == {"1": "Starting"} or backend.statusError, 2.0)
+    assert backend.activity == {} or backend.activity == {"1": "Starting"}
+    _until(qapp, lambda: backend.activity == {})  # and the second one expires on its own timer
+    backend.closeDown()
+
+
 def _two_stores(tmp_path, installed=frozenset()):
     paths = _paths(tmp_path)
     conn = connect(paths.database)
@@ -1260,4 +1321,77 @@ def test_the_more_button_opens_the_actions_and_picking_one_runs_it(qapp, tmp_pat
     QMetaObject.invokeMethod(next(e for e in entries if e.property("text")), "click", Qt.ConnectionType.DirectConnection)
     _until(qapp, lambda: marker.exists())
     _until(qapp, lambda: not menu.property("opened"))
+    launcher.backend.closeDown()
+
+
+def test_walking_up_a_long_page_ends_at_its_top_so_no_heading_stays_scrolled_away(qapp, tmp_path, monkeypatch):
+    launcher, window, pad = _padded(qapp, tmp_path, monkeypatch, console=True)
+    window.show()
+    window.resize(1280, 720)
+    qapp.processEvents()
+    window.setProperty("section", "settings")
+    qapp.processEvents()
+
+    def form(item):
+        for child in item.childItems():
+            found = child if child.property("padForm") is True and child.isVisible() and child.height() > 0 else form(child)
+            if found is not None:
+                return found
+
+    flick = form(window.contentItem())
+    assert flick.property("contentHeight") > flick.height()  # the page scrolls
+    content = flick.property("contentItem")
+
+    def inside(item):
+        while item is not None and item is not content:
+            item = item.parentItem()
+        return item is not None
+
+    def walk(forward):
+        reason = Qt.FocusReason.TabFocusReason if forward else Qt.FocusReason.BacktabFocusReason
+        while inside(nxt := window.activeFocusItem().nextItemInFocusChain(forward)):
+            nxt.forceActiveFocus(reason)
+            qapp.processEvents()
+
+    _until(qapp, lambda: len({c.mapToItem(content, 0, 0).y() for c in _focus_chain(content)}) > 5)  # the layout has run
+    next(_focus_chain(content)).forceActiveFocus(Qt.FocusReason.TabFocusReason)
+    walk(True)  # down to the last control of the form
+    assert flick.property("contentY") > 0
+    walk(False)  # and back up to its first one
+    assert flick.property("contentY") == 0  # the "Settings" title and the first section's heading are on screen
+    launcher.backend.closeDown()
+
+
+def _focus_chain(root):
+    for child in root.childItems():
+        if child.property("activeFocusOnTab") and child.isVisible() and child.isEnabled():
+            yield child
+        yield from _focus_chain(child)
+
+
+def test_launch_options_scroll_in_a_short_window_and_the_pad_can_leave_the_environment_box(qapp, tmp_path):
+    paths = _paths(tmp_path)
+    folder = tmp_path / "game"
+    folder.mkdir()
+    conn = connect(paths.database)
+    import_account(conn, "m", [OwnedGame("shop", "1", "Hades")], store="shop")
+    conn.close()
+    launcher = _launcher(paths, {"shop": Provider("shop", "s", (), game_folder=lambda config, store_id: folder)})
+    window = launcher.window
+    window.show()
+    window.resize(853, 480)
+    qapp.processEvents()
+    dialog = window.findChild(QObject, "launchOptions")
+    QMetaObject.invokeMethod(dialog, "openFor", Qt.ConnectionType.DirectConnection, Q_ARG("QVariant", 1))
+    _until(qapp, lambda: dialog.property("opened"))
+    assert dialog.property("height") <= window.height() - 32  # it fits the window, its form scrolls
+    env = window.findChild(QObject, "launchEnv")
+    args = window.findChild(QObject, "launchArgs")
+    env.forceActiveFocus(Qt.FocusReason.TabFocusReason)
+    qapp.processEvents()
+    flick = dialog.property("contentItem")
+    assert flick.property("contentY") > 0  # focusing the last field scrolled it into view
+    gamepad_mod.send_key(window, Qt.Key.Key_Up, Qt.KeyboardModifier.NoModifier)  # an empty box: nowhere to go up inside it
+    qapp.processEvents()
+    assert window.activeFocusItem() is args
     launcher.backend.closeDown()
