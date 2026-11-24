@@ -4,6 +4,14 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+### Added
+
+- **gui:** a game a store client was asked to start (Steam, Heroic) shows Starting until it is seen running, for up to 90 seconds, instead of falling back to Play after 4 seconds while a slow game was still starting. A Cancel button beside Play stops the waiting; after the limit the launcher says the game did not start.
+
+### Fixed
+
+- **gui:** walking up a long page with the controller (Settings in console mode) no longer leaves its heading scrolled out of sight under the tab bar: the page scrolls to its top, and leaves room for a section's title above the control.
+
 ## [0.65.0] - 2026-11-23
 
 ### Added

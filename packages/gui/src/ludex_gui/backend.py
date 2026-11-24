@@ -50,7 +50,7 @@ MAX_GAMES = 20000
 COVERS_AT_A_TIME = 2
 REFRESHING = "refreshing accounts…"
 STATUS_MS = 10000  # a message in the status bar goes away after this long (unless work is still going on)
-HANDOFF_MS = 4000  # a store client was asked to start the game (no job to follow): ignore repeats this long
+HANDOFF_MS = 90000  # a store client was asked to start the game (no job to follow): it shows Starting until the game is seen running, cancelled, or this long
 SORTS = ("title", "recent", "playtime", "installed")
 _DOING = {"play": "Running", "install": "Installing"}
 _ROLES = ("gameId", "title", "stores", "installed", "played", "coverUrl")
@@ -144,7 +144,8 @@ class Backend(QObject):
         self._refreshing = False
         self._jobs: list[dict[str, Any]] = []
         self._running_jobs = 0
-        self._handoff: set[int] = set()  # games a store client was asked to start a moment ago
+        self._handoff: dict[int, int] = {}  # game id -> launch number, for games a store client was asked to start and that are not yet seen running
+        self._launches = 0
         self._review: list[dict[str, Any]] = []
         self._by_job: dict[int, str] = {}  # game id -> what its running job is doing
         self._by_client: set[int] = set()  # games a store client has running (Steam, Heroic), whoever started them
@@ -639,6 +640,8 @@ class Backend(QObject):
 
     def _show_activity(self) -> None:
         """What each game is doing now, for the cards and game pages: its running job, a game its store client runs, or a client being asked to start it."""
+        for game in self._by_client:
+            self._handoff.pop(game, None)  # seen running: the client has it, so it is no longer only asked to start it
         shown = {str(game): "Starting" for game in self._handoff}
         shown.update({str(game): "Running" for game in self._by_client})
         shown.update({str(game): what for game, what in self._by_job.items()})
@@ -649,9 +652,26 @@ class Backend(QObject):
             if quit_:
                 self.gameExited.emit()
 
-    def _handoff_done(self, game_id: int) -> None:
-        self._handoff.discard(game_id)
+    def _handoff_expired(self, game_id: int, launch: int) -> None:
+        """The client was asked to start the game and nothing ever showed it running."""
+        if self._handoff.get(game_id) != launch:  # seen running, cancelled, or asked again since
+            return
+        del self._handoff[game_id]
         self._show_activity()
+        self.notify(f"{self._title_of(game_id)} did not start: no sign of it running", True)
+
+    def _title_of(self, game_id: int) -> str:
+        try:
+            return str(get_game(self._conn, game_id)["title"])
+        except LudexError:
+            return "the game"
+
+    @Slot(int)
+    def cancelStart(self, game_id: int) -> None:  # noqa: N802 (Qt)
+        """Stop waiting for a game a store client was asked to start (the client keeps whatever it is doing)."""
+        if self._handoff.pop(game_id, None) is not None:
+            self._show_activity()
+            self.notify(f"stopped waiting for {self._title_of(game_id)}")
 
     def _start_game(self, game_id: int, call: Callable, verb: str, store: str | None) -> None:
         if str(game_id) in self._activity:  # a repeated click while the game is already starting, running or installing
@@ -668,8 +688,10 @@ class Backend(QObject):
             return
         self.notify(f"{verb}ing {target}" if job is None else f"{verb}ing {target} in the background")
         if job is None:
-            self._handoff.add(game_id)
-            QTimer.singleShot(HANDOFF_MS, self, lambda: self._handoff_done(game_id))
+            self._launches += 1
+            launch = self._launches
+            self._handoff[game_id] = launch
+            QTimer.singleShot(HANDOFF_MS, self, lambda: self._handoff_expired(game_id, launch))
         else:
             self._by_job[game_id] = _DOING[job.kind]
             self._jobs_seen[job.id] = job.state

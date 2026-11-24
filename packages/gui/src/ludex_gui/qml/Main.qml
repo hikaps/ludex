@@ -97,7 +97,9 @@ ApplicationWindow {
         if (!p || p.contentHeight <= p.height) return
         var y = item.mapToItem(p.contentItem, 0, 0).y
         if (y < p.contentY) {
-            p.contentY = Math.max(p.originY, y - 16)
+            // Going up: leave room for what sits above the control (a section title, its hint) and, near the top of the
+            // page, show the page from its very top, so nothing of the heading stays scrolled away.
+            p.contentY = y < p.height / 2 ? p.originY : Math.max(p.originY, y - 96)
         } else if (y + item.height > p.contentY + p.height) {
             p.contentY = Math.min(p.originY + p.contentHeight - p.height, y + item.height - p.height + 16)
         }
