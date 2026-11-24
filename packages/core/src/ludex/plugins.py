@@ -30,6 +30,7 @@ calls what is declared (``Provider.capabilities`` lists them):
 - ``commands``: ``commands``, below.
 - ``views``: ``views``, below.
 - ``cover``: ``cover``, below.
+- ``cover_by_title``: ``cover_by_title``, below.
 
 An owned-only provider needs nothing else. ``API_VERSION`` changes only when an existing field
 changes meaning; adding a capability field is compatible and does not change it. A provider whose
@@ -72,6 +73,14 @@ allowed contacting the stores (``auto_details``); the core checks the size and t
 never decodes the image, and keeps the file in the state folder. Plugins that offer ``cover`` and
 ``match`` serve games a title match attached (their ``store_id`` is the match's).
 
+Cover art by title (optional): ``cover_by_title(title)`` returns the same kind of bytes for a game
+that no store supplies a cover for (a Heroic or local game), found by its cleaned title. It is asked
+only after every ``cover`` of the game's own copies had none, and only when the user has filled in
+all the plugin's required ``settings`` (for example an API key): configuring the plugin is the
+consent to send titles to its service. Return a cover only for a game whose title equals ``title``
+(case and punctuation aside), never for a merely similar one: wrong art is worse than none. Same
+network rules and same ``settings`` keyword as ``cover``; the core keeps the answer per title.
+
 Match (optional): ``match(title)`` returns ``SearchHit`` records for catalog games with a similar
 title, best first, so the core can attach a proper title and details to a game whose own store
 supplies none (a folder of local games). Same network rules as ``search``. A provider that offers
@@ -79,7 +88,7 @@ supplies none (a folder of local games). Same network rules as ``search``. A pro
 cleaned folder name (case and punctuation aside), asks the same provider for its ``metadata``, and
 does so only when the user has turned ``auto_match`` on, since it sends the title to that service.
 
-Settings in ``search``, ``metadata``, ``match`` and ``cover``: when one of these functions declares a
+Settings in ``search``, ``metadata``, ``match``, ``cover`` and ``cover_by_title``: when one of these functions declares a
 parameter named ``settings``, the core passes the plugin's ``Provider.settings`` values (a mapping
 of strings, read at call time) as that keyword argument; functions without it are called as before.
 
@@ -365,10 +374,11 @@ class Provider:
     views: tuple[View, ...] = ()
     cover: Callable[..., bytes | None] | None = None
     actions: Callable[..., Sequence[GameAction]] | None = None
+    cover_by_title: Callable[..., bytes | None] | None = None
 
     @property
     def capabilities(self) -> tuple[str, ...]:
-        found = (("owned", self.fetch), ("installed", self.installed), ("search", self.search), ("metadata", self.metadata), ("match", self.match), ("launch", self.launch_url or self.launch_command or self.game_folder), ("install", self.install_url or self.install_command), ("playtime", self.playtime), ("running", self.running), ("acquire", self.acquire), ("commands", self.commands or None), ("views", self.views or None), ("cover", self.cover), ("actions", self.actions))
+        found = (("owned", self.fetch), ("installed", self.installed), ("search", self.search), ("metadata", self.metadata), ("match", self.match), ("launch", self.launch_url or self.launch_command or self.game_folder), ("install", self.install_url or self.install_command), ("playtime", self.playtime), ("running", self.running), ("acquire", self.acquire), ("commands", self.commands or None), ("views", self.views or None), ("cover", self.cover), ("actions", self.actions), ("cover_by_title", self.cover_by_title))
         return tuple(name for name, value in found if value is not None)
 
 

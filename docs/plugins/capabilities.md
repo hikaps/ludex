@@ -7,7 +7,7 @@ Provider(
     "demo", "A demo store", (ConfigField("token", "API token", secret=True),),
     fetch,                                   # owned
     installed=installed, launch_url=launch_url, install_url=install_url,
-    search=search, metadata=metadata, cover=cover,
+    search=search, metadata=metadata, cover=cover, cover_by_title=cover_by_title,
     playtime=playtime, running=running, actions=actions,
     acquire=acquire,
     settings=(ConfigField("api_key", "Catalog API key", secret=True),),
@@ -50,6 +50,7 @@ Searches the store's catalog (any game, owned or not): `SearchHit(store, store_i
 - `metadata(store_id) -> Metadata | None`: `Metadata(description, genres, developers, released)` for one game, or `None` if the store does not know it. Called only when the user asks (`ludex metadata`, the GUI) and cached. Several providers may offer it; the first that owns a copy wins.
 - `match(title) -> Sequence[SearchHit]`: catalog games with a similar title, best first, for games whose own store supplies no details (a folder of local games). The core accepts only a hit whose title equals the cleaned folder name, then asks the same provider for `metadata`, and only when `auto_match` is on, since it sends the title to that service. Offer `metadata` too. If the service has terms that require attribution, the hit's `url` is what the GUI links.
 - `cover(store_id) -> bytes | None`: the bytes of the cover image (PNG, JPEG or WebP, at most 4 MiB), or `None`. You do the request; the core validates the size and file signature, never decodes the image, and caches the file. A graphical frontend asks only for games on screen, and only after the user allowed contacting the stores (`auto_details`). Needs `ludex-core>=0.62.0`.
+- `cover_by_title(title) -> bytes | None`: the same kind of bytes for a game that no store has a cover for (a Heroic or local game), found by its cleaned title. It is asked only after the game's own copies had none, and only when the user has filled in all your required `settings` (an API key, say): configuring the plugin is the consent to send titles to its service, so say so in its `help`. Return a cover only when the service's game name equals `title` (case and punctuation aside), never a merely similar one: wrong art is worse than none. It receives `settings` like `cover` does, and the core keeps the answer per title and remembers a miss for a week, per plugin. Needs `ludex-core>=0.66.0`.
 
 ## Play time and running
 

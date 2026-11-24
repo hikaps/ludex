@@ -30,7 +30,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from build_distributions import BUNDLE, BUNDLED, ROOT, metadata_of  # noqa: E402
 
-BUILTINS = {"steam", "epic", "local", "shortcuts", "heroic", "rawg"}
+BUILTINS = {"steam", "epic", "local", "shortcuts", "heroic", "rawg", "steamgriddb"}
 
 
 def run(args, *, env=None, check=True, timeout=300, cwd=None):
