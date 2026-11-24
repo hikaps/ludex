@@ -127,6 +127,36 @@ Item {
                         onClicked: matcher.openFor(game.gameId, game.title)
                     }
                     Btn {
+                        id: moreButton
+                        objectName: "moreActions"
+                        visible: (game.actions || []).length > 0
+                        implicitHeight: 52
+                        text: "More  ▾"
+                        onClicked: moreMenu.open()
+                        Popup {
+                            id: moreMenu
+                            objectName: "moreMenu"
+                            y: moreButton.height + 4
+                            padding: 6
+                            closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+                            onOpened: if (moreItems.count > 0) moreItems.itemAt(0).forceActiveFocus(Qt.TabFocusReason)
+                            background: Rectangle { radius: Theme.radius; color: Theme.surface2; border.width: 1; border.color: Theme.border }
+                            contentItem: Column {
+                                spacing: 4
+                                Repeater {
+                                    id: moreItems
+                                    model: game.actions || []
+                                    delegate: Btn {
+                                        required property var modelData
+                                        width: 280
+                                        text: modelData.label
+                                        onClicked: { moreMenu.close(); backend.runAction(game.gameId, modelData.plugin, modelData.id, modelData.store) }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Btn {
                         visible: page.running
                         implicitHeight: 52
                         text: "Stop"
@@ -157,6 +187,12 @@ Item {
                         Txt { text: modelData.label; color: Theme.muted; Layout.preferredWidth: 100 }
                         Txt { text: modelData.value; Layout.fillWidth: true; wrapMode: Text.Wrap }
                     }
+                }
+                Btn {
+                    objectName: "matchLink"
+                    visible: (game.matchedUrl || "") !== ""
+                    text: "Open " + (game.matched || "") + "  \u2197"
+                    onClicked: Qt.openUrlExternally(game.matchedUrl)
                 }
                 Txt {
                     visible: (game.description || "") === "" && (game.genres || "") === ""

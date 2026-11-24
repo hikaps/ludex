@@ -11,8 +11,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
 
 import pytest
-from PySide6.QtCore import Q_ARG, QMetaObject, QObject, QPointF, Qt, QThread
-from PySide6.QtGui import QGuiApplication, QWindow
+from PySide6.QtCore import Q_ARG, QMetaObject, QObject, QPointF, Qt, QThread, QUrl, Slot
+from PySide6.QtGui import QDesktopServices, QGuiApplication, QWindow
 
 from ludex import artwork
 from ludex import launch as launch_mod
@@ -354,6 +354,16 @@ def test_an_account_is_added_imported_and_removed_from_settings(qapp, tmp_path):
     backend.closeDown()
 
 
+class _UrlRecorder(QObject):
+    def __init__(self) -> None:
+        super().__init__()
+        self.urls: list[str] = []
+
+    @Slot(QUrl)
+    def open(self, url: QUrl) -> None:
+        self.urls.append(url.toString())
+
+
 def test_a_match_is_chosen_off_the_ui_thread_then_cleared(qapp, tmp_path):
     paths = _paths(tmp_path)
     conn = connect(paths.database)
@@ -372,8 +382,20 @@ def test_a_match_is_chosen_off_the_ui_thread_then_cleared(qapp, tmp_path):
     backend.chooseMatch(1, 0)
     _until(qapp, lambda: backend.current.get("matched"))
     assert backend.current["title"] == "Hades" and backend.current["genres"] == "Roguelike"
+    assert backend.current["matchedUrl"] == "https://x/hades"
+    window = launcher.window
+    window.show()
+    _until(qapp, lambda: _find_item(window.contentItem(), "matchLink") is not None)
+    opener = _UrlRecorder()
+    QDesktopServices.setUrlHandler("https", opener, "open")
+    try:
+        _click(window, "matchLink")
+    finally:
+        QDesktopServices.unsetUrlHandler("https")
+    assert opener.urls == ["https://x/hades"]
     backend.chooseMatch(1, -1)
     _until(qapp, lambda: not backend.current.get("matched"))
+    assert backend.current["matchedUrl"] == ""
     assert backend.current["title"] == "hades_v1.2"
 
 
@@ -1187,3 +1209,55 @@ def test_the_launcher_takes_the_focus_back_when_a_game_it_showed_as_running_quit
     backend.pollJobs()
     assert exits == [1]
     backend.closeDown()
+
+
+def test_a_plugins_action_is_offered_on_the_game_page_and_runs_as_a_job(qapp, tmp_path):
+    from ludex.plugins import GameAction
+
+    paths = _paths(tmp_path)
+    marker = tmp_path / "ran"
+    conn = connect(paths.database)
+    import_account(conn, "m", [OwnedGame("steam", "7", "Hades"), OwnedGame("steam", "8", "Doom")], store="steam")
+    conn.close()
+    argv = [sys.executable, "-c", f"open({str(marker)!r}, 'w').write('x')"]
+    couch = Provider("couch", "c", (), actions=lambda store, store_id: [GameAction("split", "Play split-screen", argv)] if store_id == "7" else [])
+    launcher = _launcher(paths, {"steam": steam.PLUGIN, "couch": couch})
+    backend = launcher.backend
+    backend.openGame(1)
+    assert backend.current["title"] == "Hades"
+    assert backend.current["actions"] == [{"plugin": "couch", "id": "split", "label": "Play split-screen", "store": "steam"}]
+    backend.runAction(backend.current["gameId"], "couch", "split", "steam")
+    _until(qapp, lambda: marker.exists())
+    backend.openGame(2)
+    assert backend.current["title"] == "Doom" and backend.current["actions"] == []
+    backend.closeDown()
+
+
+def test_the_more_button_opens_the_actions_and_picking_one_runs_it(qapp, tmp_path):
+    from ludex.plugins import GameAction
+
+    paths = _paths(tmp_path)
+    marker = tmp_path / "ran"
+    conn = connect(paths.database)
+    import_account(conn, "m", [OwnedGame("steam", "7", "Hades"), OwnedGame("steam", "8", "Doom")], store="steam")
+    conn.close()
+    argv = [sys.executable, "-c", f"open({str(marker)!r}, 'w').write('x')"]
+    couch = Provider("couch", "c", (), actions=lambda store, store_id: [GameAction("split", "Play split-screen", argv)] if store_id == "7" else [])
+    launcher = _launcher(paths, {"steam": steam.PLUGIN, "couch": couch})
+    window = launcher.window
+    window.show()
+    launcher.backend.openGame(2)
+    _until(qapp, lambda: _find_item(window.contentItem(), "moreActions") is not None)
+    assert _find_item(window.contentItem(), "moreActions").isVisible() is False  # Doom has no actions
+    launcher.backend.openGame(1)
+    _until(qapp, lambda: _find_item(window.contentItem(), "moreActions").isVisible())
+    _click(window, "moreActions")
+    menu = window.findChild(QObject, "moreMenu")
+    _until(qapp, lambda: menu.property("opened"))
+    entries = menu.property("contentItem").childItems()
+    labels = [e.property("text") for e in entries if e.property("text")]
+    assert labels == ["Play split-screen"]
+    QMetaObject.invokeMethod(next(e for e in entries if e.property("text")), "click", Qt.ConnectionType.DirectConnection)
+    _until(qapp, lambda: marker.exists())
+    _until(qapp, lambda: not menu.property("opened"))
+    launcher.backend.closeDown()

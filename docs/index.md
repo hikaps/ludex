@@ -2,7 +2,7 @@
 
 ludex is a headless, scriptable catalog of the games you own on Steam, Epic/Heroic and in local folders, for Linux. It stores everything in a local SQLite database, has a plugin API for stores and metadata, sends no telemetry and has no hosted component. The core never provides or endorses content; store access lives in plugins.
 
-Use it from the command line, the terminal UI (`ludex tui`) or the desktop launcher (`ludex gui`, installed separately), which a game controller can drive and which has a fullscreen console mode for a TV or handheld.
+Use it from the command line or the desktop launcher (`ludex gui`, installed separately), which a game controller can drive and which has a fullscreen console mode for a TV or handheld.
 
 Requires Python 3.11 or newer.
 
@@ -32,10 +32,20 @@ ludex setup          # guided: add an account for a source and import it
 ludex ls             # list your games
 ```
 
+## Guides
+
+- [Library and command line](guide/library.md): accounts, importing, searching, scripting, settings
+- [Launching, installing and jobs](guide/launching.md)
+- [Details, matching and covers](guide/metadata.md)
+- [Launcher (GUI)](guide/launcher.md): controller and console mode
+
+## Plugin SDK
+
+Stores, metadata services and extra commands are plugins, and you can write one: start with the [Plugin SDK](plugins/index.md) and its [quick start](plugins/quickstart.md).
+
 ## Use cases
 
 - [List the games you own across stores on Linux](use-cases/list-games-across-stores.md)
 - [Import your Steam library](use-cases/import-steam-library.md)
-- [Write a ludex plugin](use-cases/write-a-plugin.md)
 
 Source code and issues: <https://github.com/hikaps/ludex>.

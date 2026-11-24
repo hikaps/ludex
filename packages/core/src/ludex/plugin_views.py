@@ -1,6 +1,6 @@
 """Discover, fetch and act on the views providers contribute (see ``ludex.plugins``).
 
-Frontends (the CLI, the TUI, a future GUI) call these functions; none renders anything here.
+Frontends (the CLI, the GUI) call these functions; none renders anything here.
 """
 from __future__ import annotations
 

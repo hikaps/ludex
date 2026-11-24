@@ -1,5 +1,5 @@
 site_name: ludex
-site_description: Every game you own, in one local library: scriptable, with a CLI, a TUI and a controller-friendly launcher.
+site_description: "Every game you own, in one local library: scriptable, with a CLI and a controller-friendly launcher."
 site_url: https://hikaps.github.io/ludex/
 repo_url: https://github.com/hikaps/ludex
 theme:
@@ -7,7 +7,17 @@ theme:
 strict: true
 nav:
   - Home: index.md
+  - Guides:
+      - Library and command line: guide/library.md
+      - Launching, installing and jobs: guide/launching.md
+      - Details, matching and covers: guide/metadata.md
+      - Launcher (GUI): guide/launcher.md
+  - Plugin SDK:
+      - Overview: plugins/index.md
+      - Quick start: plugins/quickstart.md
+      - Capabilities: plugins/capabilities.md
+      - Commands and views: plugins/commands-and-views.md
+      - Packaging and testing: plugins/packaging.md
   - Use cases:
       - List games across stores: use-cases/list-games-across-stores.md
       - Import Steam library: use-cases/import-steam-library.md
-      - Write a plugin: use-cases/write-a-plugin.md

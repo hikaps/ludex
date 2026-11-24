@@ -212,7 +212,7 @@ def game_metadata(conn: sqlite3.Connection, sources: Mapping[str, Provider], gam
 
 
 def get_auto_details(conn: sqlite3.Connection) -> bool:
-    """Whether the TUI fetches details for the highlighted game by itself (default yes)."""
+    """Whether frontends fetch details and covers for games on screen by themselves (default yes)."""
     row = conn.execute("SELECT value FROM meta WHERE key = 'auto_details'").fetchone()
     return row is None or row["value"] != "0"
 

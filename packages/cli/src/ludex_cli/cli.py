@@ -27,6 +27,7 @@ from ludex.executables import find_executables
 from ludex.acquire import acquire_game, download_game, format_acquired, job_reporter
 from ludex.jobs import Job, eta_seconds, list_jobs, progress, progress_line, stop_job
 from ludex.playtime import Played, describe_played, epoch, play_stats
+from ludex.actions import list_actions, run_action
 from ludex.launch import install_game, launch_game, prepare_install, prepare_launch
 from ludex.details import fetch_missing_details, games_without_details
 from ludex.library import resolve_game, export_games, dismiss_review, get_game, list_games, list_genres, list_review, merge_games, run_import
@@ -117,6 +118,12 @@ def _parser() -> argparse.ArgumentParser:
     launch.add_argument("--status", action="store_true", help="list the games ludex started itself (of the game, when one is named) and whether they still run")
     launch.add_argument("--stop", action="store_true", help="stop the game ludex started")
 
+    action = commands.add_parser("action", help="list or run the extra actions plugins offer for a game")
+    action.add_argument("game", help="game id or title")
+    action.add_argument("action", nargs="?", help="PLUGIN:ID of the action to run (omit to list them)")
+    action.add_argument("--store", help="store whose copy to use when the action is offered for several")
+    action.add_argument("--dry-run", action="store_true", help="show the command and do not start it")
+
     install = commands.add_parser("install", help="ask the owning store's client to install a game you own")
     install.add_argument("game", nargs="?", help="game id or title")
     install.add_argument("--store", help="store to install from when several can")
@@ -182,7 +189,6 @@ def _parser() -> argparse.ArgumentParser:
     game_set.add_argument("--unset-env", action="append", default=[], metavar="NAME", help="remove an environment variable (repeatable)")
     game_set.add_argument("--clear", action="store_true", help="reset all settings first")
 
-    commands.add_parser("tui", help="browse, search and launch games in the terminal")
     gui = commands.add_parser("gui", help="open the desktop window (needs ludex-gui)")
     gui.add_argument("--console", action="store_true", help="fullscreen and larger, for a controller on a TV or a handheld")
     gui.add_argument("--install-desktop", action="store_true", help="add Ludex and Ludex Console to the application menu instead of opening the window")
@@ -911,15 +917,23 @@ def _cmd_launch(args: argparse.Namespace) -> tuple[object, str]:
     return {"id": game_id, "launched": target, "job": _job_data(job)}, f"launching {target} (job {job.id}); 'ludex launch --status' shows whether it runs, '--stop' ends it; log: {job.log}"
 
 
-def _cmd_tui(args: argparse.Namespace) -> tuple[object, str]:
+def _cmd_action(args: argparse.Namespace) -> tuple[object, str]:
+    sources, _ = load_providers()
+    paths = state_paths()
+    conn = connect(paths.database)
     try:
-        from ludex_tui.app import main as run_tui
-    except ModuleNotFoundError as exc:
-        if exc.name != "ludex_tui":
-            raise
-        raise LudexError("tui_missing", "install ludex-tui alongside ludex-cli, or install ludex-games") from None
-    run_tui()
-    return {}, ""
+        game_id = resolve_game(conn, args.game)
+        if args.action is None:
+            items = [{"action": f"{i.plugin}:{i.id}", "label": i.label, "store": i.store} for i in list_actions(conn, sources, game_id)]
+            return {"id": game_id, "actions": items}, "\n".join(f"{i['action']}  {i['label']}" for i in items) or "no actions for this game"
+        plugin, _, action_id = args.action.partition(":")
+        info, argv, job = run_action(conn, sources, game_id, plugin, action_id, args.store, paths.root / "logs", args.dry_run)
+    finally:
+        conn.close()
+    data = {"id": game_id, "action": f"{info.plugin}:{info.id}", "store": info.store, "argv": argv, "job": None if job is None else _job_data(job)}
+    if job is None:
+        return data, f"would run {info.label}: {shlex.join(argv)}"
+    return data, f"started {info.label} (job {job.id}); log: {job.log}"
 
 
 def _cmd_gui(args: argparse.Namespace) -> tuple[object, str]:
@@ -1036,7 +1050,7 @@ _HANDLERS = {
     ("game", "exes"): _cmd_game_exes,
     ("game", "set"): _cmd_game_set,
     ("launch", None): _cmd_launch,
-    ("tui", None): _cmd_tui,
+    ("action", None): _cmd_action,
     ("gui", None): _cmd_gui,
 }
 

@@ -25,6 +25,7 @@ calls what is declared (``Provider.capabilities`` lists them):
 - ``metadata``: ``metadata``, below.
 - ``playtime``: ``playtime``, below.
 - ``running``: ``running``, below.
+- ``actions``: ``actions``, below.
 - ``acquire``: ``acquire``, below.
 - ``commands``: ``commands``, below.
 - ``views``: ``views``, below.
@@ -58,7 +59,7 @@ results across providers; a failing provider is reported and skipped.
 
 Metadata (optional): ``metadata(store_id)`` returns a ``Metadata`` record (description, genres,
 developers, release date) for one game, or ``None`` when the store does not know it. The core calls
-it only when the user asks (``ludex metadata``, the TUI ``m`` key) and caches the answer in the
+it only when the user asks (``ludex metadata``, the GUI match dialog) and caches the answer in the
 library database. It may use the network under the same rules as ``search``. Several providers
 may offer it; the core uses the first one that owns a copy of the game.
 
@@ -127,6 +128,16 @@ seconds while a launcher is open: keep it cheap, local and free of network. Rais
 it cannot be determined; the core then shows nothing running for that store. Games the core started
 itself are ``play`` jobs and do not need it.
 
+Actions (optional): ``actions(store, store_id)`` returns the ``GameAction``s the plugin offers for one owned
+copy of a game, whichever plugin owns the copy (a split-screen launcher offers one for Steam and Heroic
+games). A ``GameAction`` has an ``id`` (lowercase, ``[a-z][a-z0-9-]*``, unique within the plugin), a
+one-line ``label`` and an ``argv``: an absolute executable path and its arguments, run without a shell.
+Declare a ``settings`` parameter to receive the plugin's settings (as for ``search``). It runs when a game
+is shown, so keep it cheap, local and free of network. Return an empty sequence when nothing applies;
+an action or a call that is invalid or raises is skipped, never shown. The core runs the chosen action
+as a background job of kind ``action`` (see ``ludex.jobs``), with output in the job log, and never adds
+the game's credentials to it. The user starts it by hand: it is not run during import or refresh.
+
 Acquiring (optional): ``acquire(request, report)`` gets a ``AcquireRequest`` (store id, title, and a
 ``destination`` directory the core created) and does the whole job itself: download, unpack, or
 drive an official client. It calls ``report(message, done=None, total=None)`` with short progress lines
@@ -152,14 +163,14 @@ SQL. The core holds the writer lock for the whole run, so commands are serialize
 Services: a command may start a long-running background process with
 ``ludex.services.start_service(ctx.conn, provider, name, argv, cwd=..., settle=...)``, and later
 ``stop_service`` / ``service_status``. ludex runs it as a ``service`` job: detached, in its own session,
-with output in a private log under the state directory, and visible in the TUI Jobs tab. Stopping ends
+with output in a private log under the state directory, and visible on the GUI Jobs page. Stopping ends
 its whole process group. One service of a given name runs at a time.
 Raise ``LudexError`` with a fixed, secret-free message for expected failures; any other exception
 is reported as ``command_failed`` without its text. Commands alone do not add tabs; see Views.
 
 Views (optional): ``views`` is a tuple of ``View(id, title, fetch)``; ids are lowercase letters, digits
 and ``-``, unique within the provider, and ``title`` is a single line. A frontend lists them as
-navigation entries (a TUI tab, a GUI drawer item) identified by ``(provider name, view id)``.
+navigation entries (a GUI sidebar page, ``ludex plugin view``) identified by ``(provider name, view id)``.
 ``fetch(settings)`` receives the plugin-wide settings (read at call time, never account settings) and
 returns either a ``ViewTable(columns, rows)`` or a ``ViewDetail(fields)``. A ``ViewRow`` has a string
 ``id`` (unique in the table), one string cell per column and optional ``ViewAction(label, command,
@@ -311,6 +322,13 @@ class View:
 
 
 @dataclass(frozen=True, slots=True)
+class GameAction:
+    id: str
+    label: str
+    argv: Sequence[str]  # absolute executable first; run without a shell
+
+
+@dataclass(frozen=True, slots=True)
 class PlayRecord:
     minutes: int
     last_played: str | None = None  # ISO 8601 UTC, for example 2026-11-08T19:38:29Z
@@ -346,10 +364,11 @@ class Provider:
     running: Callable[[Mapping[str, str]], Iterable[str]] | None = None
     views: tuple[View, ...] = ()
     cover: Callable[..., bytes | None] | None = None
+    actions: Callable[..., Sequence[GameAction]] | None = None
 
     @property
     def capabilities(self) -> tuple[str, ...]:
-        found = (("owned", self.fetch), ("installed", self.installed), ("search", self.search), ("metadata", self.metadata), ("match", self.match), ("launch", self.launch_url or self.launch_command or self.game_folder), ("install", self.install_url or self.install_command), ("playtime", self.playtime), ("running", self.running), ("acquire", self.acquire), ("commands", self.commands or None), ("views", self.views or None), ("cover", self.cover))
+        found = (("owned", self.fetch), ("installed", self.installed), ("search", self.search), ("metadata", self.metadata), ("match", self.match), ("launch", self.launch_url or self.launch_command or self.game_folder), ("install", self.install_url or self.install_command), ("playtime", self.playtime), ("running", self.running), ("acquire", self.acquire), ("commands", self.commands or None), ("views", self.views or None), ("cover", self.cover), ("actions", self.actions))
         return tuple(name for name, value in found if value is not None)
 
 

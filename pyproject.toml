@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ludex-games"
-version = "0.64.0"
-description = "Every game you own, in one local library: scriptable CLI, TUI and a controller-friendly launcher"
+version = "0.65.0"
+description = "Every game you own, in one local library: scriptable CLI and a controller-friendly launcher"
 readme = "README.md"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
-dependencies = ["ludex-core==0.64.0", "ludex-cli==0.64.0", "ludex-tui==0.64.0"]
-keywords = ["game-library", "steam", "epic-games", "gog", "linux-gaming", "cli", "tui", "gui", "gamepad", "plugins", "sqlite"]
+dependencies = ["ludex-core==0.65.0", "ludex-cli==0.65.0"]
+keywords = ["game-library", "steam", "epic-games", "gog", "linux-gaming", "cli", "gui", "gamepad", "plugins", "sqlite"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
@@ -41,12 +41,11 @@ ludex = "ludex_cli.cli:main"
 packages = []
 
 [tool.uv.workspace]
-members = ["packages/core", "packages/cli", "packages/tui", "packages/gui"]
+members = ["packages/core", "packages/cli", "packages/gui"]
 
 [tool.uv.sources]
 ludex-core = { workspace = true }
 ludex-cli = { workspace = true }
-ludex-tui = { workspace = true }
 ludex-gui = { workspace = true }
 
 [tool.pytest.ini_options]
