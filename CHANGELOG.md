@@ -8,6 +8,7 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ### Added
 
+- **docs:** a Plugin SDK section (overview, a tested quick start, every capability, commands and views, packaging and offline testing) and user guides (library and command line, launching and jobs, details and matching, the launcher with controller and console mode).
 - **gui:** a game matched to a database entry shows an "Open ..." button on its page that opens the entry's page in the browser: the active hyperlink credit the database's terms ask for, which only the terminal UI showed.
 - **plugins, cli, gui:** a plugin can offer extra actions for a game with the optional `actions(store, store_id)` (API version unchanged), for example a split-screen launcher. Each `GameAction` has an id, a label and an `argv` (absolute executable, no shell). The game page lists them under a "More" button next to Play, `ludex action GAME` lists them and `ludex action GAME PLUGIN:ID [--store S] [--dry-run]` runs one as a background `action` job with its output in the job log. An `actions` function that declares `settings` receives the plugin's settings, as `search` does.
 
@@ -17,6 +18,7 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ### Fixed
 
+- **docs:** the README no longer describes the removed terminal UI's keys (Search `i`, Jobs `x`) and says the GUI launcher exists.
 - **docs:** the site description in `mkdocs.yml` is quoted: its colon made the file invalid YAML, so the docs site failed to build.
 
 ## [0.64.0] - 2026-11-23
