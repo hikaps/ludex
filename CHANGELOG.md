@@ -4,6 +4,8 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.66.0] - 2026-11-24
+
 ### Added
 
 - **gui:** a game a store client was asked to start (Steam, Heroic) shows Starting until it is seen running, for up to 90 seconds, instead of falling back to Play after 4 seconds while a slow game was still starting. A Cancel button beside Play stops the waiting; after the limit the launcher says the game did not start.
