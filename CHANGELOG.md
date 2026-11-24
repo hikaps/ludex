@@ -10,6 +10,7 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ### Fixed
 
+- **gui:** the Launch options dialog scrolls when the window is shorter than it (console mode is scaled up), so Cancel and Save are no longer squeezed over the environment box; with a controller, Up and Down now leave the environment box (a multi-line field) instead of trapping the focus in it, and the focused field scrolls into view.
 - **gui:** walking up a long page with the controller (Settings in console mode) no longer leaves its heading scrolled out of sight under the tab bar: the page scrolls to its top, and leaves room for a section's title above the control.
 
 ## [0.65.0] - 2026-11-23

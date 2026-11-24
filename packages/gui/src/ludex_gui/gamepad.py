@@ -158,6 +158,15 @@ def _handles_arrows(item: QQuickItem | None, key: Qt.Key) -> bool:
     return False
 
 
+def _is_text_area(item: QQuickItem | None) -> bool:
+    meta = item.metaObject() if item is not None else None
+    while meta is not None:
+        if meta.className() == "QQuickTextEdit":
+            return True
+        meta = meta.superClass()
+    return False
+
+
 def send_key(window: QQuickWindow, key: Qt.Key, modifiers: Qt.KeyboardModifier) -> bool:
     """Deliver a key press and release to the window; True when something used it.
 
@@ -167,9 +176,13 @@ def send_key(window: QQuickWindow, key: Qt.Key, modifiers: Qt.KeyboardModifier) 
     press = QKeyEvent(QEvent.Type.KeyPress, key, modifiers, text)
     press.setAccepted(False)
     before = window.activeFocusItem()
+    cursor = before.property("cursorPosition") if _is_text_area(before) else None
     QGuiApplication.sendEvent(window, press)
     QGuiApplication.sendEvent(window, QKeyEvent(QEvent.Type.KeyRelease, key, modifiers, text))
-    if key in _ARROWS and not (press.isAccepted() and (window.activeFocusItem() is not before or _handles_arrows(before, key))):
+    # A multi-line field uses Up and Down to move its cursor; on its first or last line the cursor cannot move, and the
+    # arrow leaves the field instead of trapping the focus there.
+    stuck = cursor is not None and key in _VERTICAL and before.property("cursorPosition") == cursor
+    if key in _ARROWS and not (press.isAccepted() and (window.activeFocusItem() is not before or (_handles_arrows(before, key) and not stuck))):
         return move_focus(window, key)
     return press.isAccepted()
 

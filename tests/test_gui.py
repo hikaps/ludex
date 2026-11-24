@@ -1367,3 +1367,31 @@ def _focus_chain(root):
         if child.property("activeFocusOnTab") and child.isVisible() and child.isEnabled():
             yield child
         yield from _focus_chain(child)
+
+
+def test_launch_options_scroll_in_a_short_window_and_the_pad_can_leave_the_environment_box(qapp, tmp_path):
+    paths = _paths(tmp_path)
+    folder = tmp_path / "game"
+    folder.mkdir()
+    conn = connect(paths.database)
+    import_account(conn, "m", [OwnedGame("shop", "1", "Hades")], store="shop")
+    conn.close()
+    launcher = _launcher(paths, {"shop": Provider("shop", "s", (), game_folder=lambda config, store_id: folder)})
+    window = launcher.window
+    window.show()
+    window.resize(853, 480)
+    qapp.processEvents()
+    dialog = window.findChild(QObject, "launchOptions")
+    QMetaObject.invokeMethod(dialog, "openFor", Qt.ConnectionType.DirectConnection, Q_ARG("QVariant", 1))
+    _until(qapp, lambda: dialog.property("opened"))
+    assert dialog.property("height") <= window.height() - 32  # it fits the window, its form scrolls
+    env = window.findChild(QObject, "launchEnv")
+    args = window.findChild(QObject, "launchArgs")
+    env.forceActiveFocus(Qt.FocusReason.TabFocusReason)
+    qapp.processEvents()
+    flick = dialog.property("contentItem")
+    assert flick.property("contentY") > 0  # focusing the last field scrolled it into view
+    gamepad_mod.send_key(window, Qt.Key.Key_Up, Qt.KeyboardModifier.NoModifier)  # an empty box: nowhere to go up inside it
+    qapp.processEvents()
+    assert window.activeFocusItem() is args
+    launcher.backend.closeDown()
