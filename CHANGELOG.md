@@ -4,6 +4,14 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+### Added
+
+- **docs:** a Plugin SDK section (overview, a tested quick start, every capability, commands and views, packaging and offline testing) and user guides (library and command line, launching and jobs, details and matching, the launcher with controller and console mode).
+
+### Fixed
+
+- **docs:** the README no longer describes the removed terminal UI's keys (Search `i`, Jobs `x`) and says the GUI launcher exists.
+
 ## [0.65.0] - 2026-11-23
 
 ### Added

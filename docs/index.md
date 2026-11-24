@@ -32,10 +32,20 @@ ludex setup          # guided: add an account for a source and import it
 ludex ls             # list your games
 ```
 
+## Guides
+
+- [Library and command line](guide/library.md): accounts, importing, searching, scripting, settings
+- [Launching, installing and jobs](guide/launching.md)
+- [Details, matching and covers](guide/metadata.md)
+- [Launcher (GUI)](guide/launcher.md): controller and console mode
+
+## Plugin SDK
+
+Stores, metadata services and extra commands are plugins, and you can write one: start with the [Plugin SDK](plugins/index.md) and its [quick start](plugins/quickstart.md).
+
 ## Use cases
 
 - [List the games you own across stores on Linux](use-cases/list-games-across-stores.md)
 - [Import your Steam library](use-cases/import-steam-library.md)
-- [Write a ludex plugin](use-cases/write-a-plugin.md)
 
 Source code and issues: <https://github.com/hikaps/ludex>.
