@@ -26,6 +26,7 @@ Bundled sources:
 | `heroic` | Heroic sideloaded games |
 | `local` | Every subfolder of a directory (or glob such as `/mnt/games/*`) is a game |
 | `rawg` | A game database used for matching and details; needs your own API key |
+| `steamgriddb` | Portrait cover art for games no store has art for; needs your own API key |
 
 An import is one transaction. Games missing from a *complete* result are marked removed (kept, and restored if they come back); a source that can only see part of a library never removes anything. Re-importing is idempotent. Games several stores share are one entry with all its stores.
 

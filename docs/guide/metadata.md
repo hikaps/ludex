@@ -27,3 +27,11 @@ Games matched to the same database entry, or to the Steam entry of a game you ow
 ## Covers
 
 Cover art is fetched by the plugin that has it (Steam, RAWG) and only for games on screen, and only while `auto_details` is on (`ludex config auto_details no` stops it). The core validates and caches the file and never decodes the image.
+
+A game no store has art for (a Heroic or local game) can get a portrait cover from SteamGridDB, which is looked up by the game's name:
+
+```sh
+ludex config steamgriddb.api_key --secret   # your own key: steamgriddb.com/profile/preferences/api
+```
+
+Setting the key is the consent: from then on the cleaned title of each such game on screen is sent to SteamGridDB, once (the answer, or a miss for a week, is kept). Only a game whose name equals the title is used, never a similar one, so a game it does not know keeps the placeholder. Remove the key and nothing is sent.

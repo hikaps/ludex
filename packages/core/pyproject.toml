@@ -37,6 +37,7 @@ local = "ludex.sources.local:PLUGIN"
 shortcuts = "ludex.sources.shortcuts:PLUGIN"
 heroic = "ludex.sources.heroic:PLUGIN"
 rawg = "ludex.sources.rawg:PLUGIN"
+steamgriddb = "ludex.sources.steamgriddb:PLUGIN"
 
 [tool.setuptools.packages.find]
 where = ["src"]

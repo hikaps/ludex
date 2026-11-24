@@ -8,8 +8,9 @@ from ludex.errors import LudexError
 from ludex.library import get_game, import_account
 from ludex.metadata import game_metadata
 from ludex.paths import state_paths
-from ludex.plugins import MAX_COVER_BYTES, Metadata, OwnedGame, Provider, SearchHit, SourceError
-from ludex.sources import rawg, steam
+from ludex.plugins import MAX_COVER_BYTES, ConfigField, Metadata, OwnedGame, Provider, SearchHit, SourceError
+from ludex.provider_settings import set_value
+from ludex.sources import rawg, steam, steamgriddb
 from ludex.storage import connect
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 32
@@ -205,3 +206,67 @@ def test_steam_cover_falls_back_to_the_hashed_banner_a_newer_app_names_in_its_st
 
     with httpx.Client(transport=httpx.MockTransport(elsewhere)) as client:
         assert steam.cover("10", client=client) is None
+
+
+def test_a_game_no_store_has_a_cover_for_is_looked_up_by_title_once_the_plugin_is_configured(state):
+    paths, conn = state
+    game = owned(conn, "heroic", "app1", "Hades")
+    asked = []
+    art = Provider("art", "x", (), cover_by_title=lambda title: asked.append(title) or PNG, settings=(ConfigField("api_key", "k", secret=True),))
+    sources = {"art": art}
+    assert fetch_cover(paths, conn, sources, game) is None and asked == []  # no key yet: nothing is sent
+    set_value(paths, art, "api_key", "k3y")
+    file = fetch_cover(paths, conn, sources, game)
+    assert file.read_bytes() == PNG and asked == ["Hades"]
+    assert cached_cover(paths, conn, game) == file and fetch_cover(paths, conn, {}, game) == file and asked == ["Hades"]
+
+
+def test_a_stores_own_cover_wins_and_a_title_miss_is_remembered_per_plugin(state):
+    paths, conn = state
+    game = owned(conn, "heroic", "app1", "Hades")
+    asked = []
+    none = Provider("none", "x", (), cover_by_title=lambda title: asked.append("none"))
+    late = Provider("late", "x", (), cover_by_title=lambda title: asked.append("late") or JPEG)
+    store = Provider("heroic", "x", (), cover=lambda store_id: PNG)
+    assert fetch_cover(paths, conn, {"heroic": store, "none": none}, game).read_bytes() == PNG and asked == []
+    second = owned(conn, "local", "x", "Doom")
+    assert fetch_cover(paths, conn, {"none": none}, second) is None
+    assert fetch_cover(paths, conn, {"none": none}, second) is None and asked == ["none"]  # not asked again
+    assert fetch_cover(paths, conn, {"none": none, "late": late}, second).read_bytes() == JPEG and asked == ["none", "late"]
+
+
+def test_steamgriddb_takes_a_portrait_grid_of_the_exactly_named_game_and_keeps_the_key_to_its_api():
+    key = "k3y-secret"
+    seen = []
+
+    def handler(request):
+        seen.append((request.url.host, request.headers.get("authorization")))
+        if request.url.path.startswith("/api/v2/search/autocomplete/"):
+            return httpx.Response(200, json={"success": True, "data": [{"id": 1, "name": "Hades II"}, {"id": 2, "name": "hades"}]})
+        if request.url.path == "/api/v2/grids/game/2":
+            assert request.url.params["dimensions"] == steamgriddb.PORTRAIT and request.url.params["nsfw"] == "false"
+            return httpx.Response(200, json={"data": [{"url": "http://cdn2.steamgriddb.com/a.png"}, {"url": "https://evil.example/b.png"}, {"url": "https://cdn2.steamgriddb.com/c.png"}]})
+        return httpx.Response(200, stream=httpx.ByteStream(PNG))
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        assert steamgriddb.cover_by_title("Hades", settings={"api_key": key}, client=client) == PNG
+    assert ("cdn2.steamgriddb.com", None) in seen and all(auth == f"Bearer {key}" for host, auth in seen if host == "www.steamgriddb.com")
+    assert not any(host == "evil.example" for host, _ in seen)  # only SteamGridDB's hosts, over https
+
+
+def test_steamgriddb_never_guesses_a_similar_title_and_its_errors_hide_the_key():
+    key = "k3y-secret"
+    similar = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json={"data": [{"id": 1, "name": "Hades II"}]})))
+    with similar:
+        assert steamgriddb.cover_by_title("Hades", settings={"api_key": key}, client=similar) is None
+    with pytest.raises(SourceError) as caught:
+        steamgriddb.cover_by_title("Hades", settings={})
+    assert caught.value.code == "steamgriddb_no_key"
+
+    def boom(request):
+        raise httpx.ConnectError(f"cannot reach {request.url} with {request.headers['authorization']}")
+
+    for handler, code in ((boom, "steamgriddb_unavailable"), (lambda r: httpx.Response(401), "steamgriddb_auth_failed"), (lambda r: httpx.Response(429), "steamgriddb_rate_limited")):
+        with httpx.Client(transport=httpx.MockTransport(handler)) as client, pytest.raises(SourceError) as caught:
+            steamgriddb.cover_by_title("Hades", settings={"api_key": key}, client=client)
+        assert caught.value.code == code and key not in caught.value.message
