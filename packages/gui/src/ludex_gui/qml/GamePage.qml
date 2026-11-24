@@ -105,6 +105,13 @@ Item {
                         enabled: activity === ""
                         onClicked: page.playOrInstall()
                     }
+                    Btn {
+                        objectName: "cancelStart"
+                        visible: playButton.activity === "Starting"
+                        implicitHeight: 52
+                        text: "Cancel"
+                        onClicked: backend.cancelStart(game.gameId)
+                    }
                     Combo {
                         id: storeBox
                         objectName: "storeBox"

@@ -4,6 +4,18 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+## [0.66.0] - 2026-11-24
+
+### Added
+
+- **gui:** a game a store client was asked to start (Steam, Heroic) shows Starting until it is seen running, for up to 90 seconds, instead of falling back to Play after 4 seconds while a slow game was still starting. A Cancel button beside Play stops the waiting; after the limit the launcher says the game did not start.
+- **plugins, artwork:** a provider can contribute `cover_by_title(title)`: a cover for a game no store has one for (a Heroic or local game), found by its cleaned title. It is asked after the game's own copies had none, and only once all the plugin's required settings are filled in (that is the consent to send titles); the answer is kept per title and a miss is remembered for a week per plugin. `API_VERSION` stays 3. The bundled `steamgriddb` plugin uses it: with your own SteamGridDB key (`ludex config steamgriddb.api_key --secret`) a game gets a portrait grid when SteamGridDB has a game of exactly that name, and never art of a similar title.
+
+### Fixed
+
+- **gui:** the Launch options dialog scrolls when the window is shorter than it (console mode is scaled up), so Cancel and Save are no longer squeezed over the environment box; with a controller, Up and Down now leave the environment box (a multi-line field) instead of trapping the focus in it, and the focused field scrolls into view.
+- **gui:** walking up a long page with the controller (Settings in console mode) no longer leaves its heading scrolled out of sight under the tab bar: the page scrolls to its top, and leaves room for a section's title above the control.
+
 ## [0.65.0] - 2026-11-23
 
 ### Added
