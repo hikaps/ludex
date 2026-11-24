@@ -4,9 +4,7 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
-### Fixed
-
-- **docs:** the site description in `mkdocs.yml` is quoted: its colon made the file invalid YAML, so the docs site failed to build.
+## [0.65.0] - 2026-11-23
 
 ### Added
 
@@ -16,6 +14,10 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 ### Removed
 
 - **BREAKING: tui, packaging:** the terminal UI is gone: `ludex tui` is no longer a command and the `ludex-tui` distribution is no longer built, bundled or published (the 0.64.0 release stays on PyPI and works only with its own 0.64.0 core). `ludex-games` now bundles `ludex-core` and `ludex-cli`. Use the CLI or `ludex gui` (`ludex-gui`) instead. The `auto_details` and `auto_refresh` settings stay: the GUI uses them. `ludex-tui` remains a reserved name that `ludex plugin add` refuses.
+
+### Fixed
+
+- **docs:** the site description in `mkdocs.yml` is quoted: its colon made the file invalid YAML, so the docs site failed to build.
 
 ## [0.64.0] - 2026-11-23
 
