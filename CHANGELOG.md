@@ -4,6 +4,10 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+### Fixed
+
+- **update:** `ludex update` keeps controller support when reinstalling a GUI that already has it.
+
 ## [0.66.0] - 2026-11-24
 
 ### Added

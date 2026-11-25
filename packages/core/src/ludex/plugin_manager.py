@@ -223,16 +223,16 @@ def _is_editable() -> bool:
         return False
 
 
-def _gui_installed() -> bool:
+def _installed(name: str) -> bool:
     try:
-        version(_GUI)
+        version(name)
     except PackageNotFoundError:
         return False
     return True
 
 
 def update_core(channel: str | None, dry_run: bool) -> dict[str, Any]:
-    """Reinstall ludex-games from PyPI (``stable``) or the rolling beta release, keeping ludex-gui if it is installed."""
+    """Reinstall ludex-games from PyPI or beta, keeping the GUI and its controller support if installed."""
     try:
         current = version(_DIST)
     except PackageNotFoundError:
@@ -242,7 +242,11 @@ def update_core(channel: str | None, dry_run: bool) -> dict[str, Any]:
     if channel is None:
         channel = "beta" if ".dev" in current else "stable"
     core, gui = (_BETA + "ludex.tar.gz", _BETA + "ludex-gui.tar.gz") if channel == "beta" else (_DIST, _GUI)
-    with_gui = _gui_installed()
+    with_gui = _installed(_GUI)
+    # Check the binding's metadata without importing SDL or needing a connected controller.
+    if with_gui and _installed("PySDL2"):
+        gamepad = f"{_GUI}[gamepad]"
+        gui = f"{gamepad} @ {gui}" if channel == "beta" else gamepad
     prefix = Path(sys.prefix).as_posix()
     if "/uv/tools/" in prefix and shutil.which("uv"):
         uv = shutil.which("uv") or "uv"
