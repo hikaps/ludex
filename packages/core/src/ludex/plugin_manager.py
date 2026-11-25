@@ -21,7 +21,8 @@ import secrets
 import shutil
 import subprocess
 import sys
-from importlib.metadata import PackageNotFoundError, distributions, version
+import tomllib
+from importlib.metadata import PackageNotFoundError, distribution, distributions
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +39,8 @@ _CREDENTIALS = re.compile(r"://[^/@\s]*:[^/@\s]*@")
 _BETA = "https://github.com/hikaps/ludex/releases/download/beta/"
 _DIST = "ludex-games"
 _GUI = "ludex-gui"
+_BETA_SOURCES = {_DIST: _BETA + "ludex.tar.gz", _GUI: _BETA + "ludex-gui.tar.gz"}
+_SPECIFIER = re.compile(r"(?:(?:===|==|!=|~=|<=|>=|<|>)\s*[a-zA-Z0-9.*!+_-]+(?:\s*,\s*|$))+")
 CHANNELS = ("stable", "beta")
 
 
@@ -45,7 +48,7 @@ def _canonical(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
-def _run(command: list[str]) -> None:
+def _run(command: list[str], *, show_stderr: bool = True) -> None:
     try:
         done = subprocess.run(command, capture_output=True, text=True, timeout=900, stdin=subprocess.DEVNULL)
     except FileNotFoundError:
@@ -53,6 +56,8 @@ def _run(command: list[str]) -> None:
     except subprocess.TimeoutExpired:
         raise LudexError("install_failed", "the installer took longer than 15 minutes") from None
     if done.returncode != 0:
+        if not show_stderr:  # The package manager may print private URLs from the recorded install spec.
+            raise LudexError("install_failed", "update failed; use ludex update --dry-run to see the installer command")
         tail = " | ".join(line.strip() for line in done.stderr.strip().splitlines()[-3:])
         raise LudexError("install_failed", f"{Path(command[0]).name} failed: {tail[:400] or 'no output'}")
 
@@ -214,70 +219,163 @@ def update_plugins(name: str | None = None) -> list[dict[str, Any]]:
     return results
 
 
-def _is_editable() -> bool:
+def _unknown_install() -> LudexError:
+    return LudexError(
+        "install_spec_unknown",
+        "no usable uv or pipx install record; repeat your original installer command, including extras and add-ons",
+    )
+
+
+def _manual_switch() -> LudexError:
+    return LudexError(
+        "channel_switch_unsupported",
+        "cannot safely replay this install on another channel; repeat your original installer command "
+        "with the target Ludex package sources, keeping extras, add-ons and installer options",
+    )
+
+
+def _uv_switch(tool: dict[str, Any], installed_channel: str, target: str, exposed: list[str]) -> list[str]:
+    """Replay requirements we can express faithfully; leave complex receipts to the original installer command."""
+    if installed_channel not in CHANNELS or any(
+        value for key, value in tool.items() if key not in {"requirements", "entrypoints", "python"}
+    ):
+        raise _manual_switch()
+    python = tool.get("python", sys._base_executable)
+    if not isinstance(python, str) or not python:
+        raise _manual_switch()
+    requirements = tool.get("requirements")
+    if not isinstance(requirements, list) or not requirements:
+        raise _manual_switch()
+    # uv records --with-executables-from as a bare requirement and adds it again when replayed.
+    implicit = set(exposed) - {_DIST}
+    specs: list[str] = []
+    has_gui = False
+    for req in requirements:
+        if not isinstance(req, dict) or req.keys() - {"name", "extras", "specifier", "marker", "url"}:
+            raise _manual_switch()
+        name = req.get("name", "")
+        extras = req.get("extras", [])
+        specifier, marker = req.get("specifier", ""), req.get("marker", "")
+        if (
+            not isinstance(name, str) or not _NAME.fullmatch(name)
+            or not isinstance(extras, list) or any(not isinstance(e, str) or not _NAME.fullmatch(e) for e in extras)
+            or not isinstance(specifier, str) or not isinstance(marker, str)
+        ):
+            raise _manual_switch()
+        if req.keys() == {"name"} and name in implicit:
+            implicit.remove(name)
+            continue
+        spec = f"{name}[{','.join(extras)}]" if extras else name
+        if name in _BETA_SOURCES:
+            has_gui |= name == _GUI
+            expected = _BETA_SOURCES[name] if installed_channel == "beta" else None
+            if req.get("url") != expected or specifier:
+                raise _manual_switch()
+            if target == "beta":
+                spec += f" @ {_BETA_SOURCES[name]}"
+        elif (
+            "url" in req or name in {"ludex-core", "ludex-cli"}
+            or (specifier and not _SPECIFIER.fullmatch(specifier))
+        ):
+            raise _manual_switch()
+        else:
+            spec += specifier
+        specs.append(f"{spec} ; {marker}" if marker else spec)
+    if requirements[0]["name"] != _DIST or requirements[0].get("marker"):
+        raise _manual_switch()
+    if _GUI in exposed and not has_gui and target == "beta":
+        specs.append(f"{_GUI} @ {_BETA_SOURCES[_GUI]}")
+    return [
+        "tool", "install", "--force", "--reinstall-package", _DIST, "--reinstall-package", _GUI, "--python", python,
+        *(arg for spec in specs[1:] for arg in ("--with", spec)),
+        *(arg for name in exposed if name != _DIST for arg in ("--with-executables-from", name)),
+        specs[0],
+    ]
+
+
+def _uv_update(prefix: Path, receipt: Path, installed_channel: str, target: str) -> list[str]:
     try:
-        from importlib.metadata import distribution
+        with receipt.open("rb") as f:
+            tool = tomllib.load(f)["tool"]
+        entries = tool["entrypoints"]
+        dirs = {Path(entry["install-path"]).parent for entry in entries}
+        if len(dirs) != 1 or not any(entry.get("name") == "ludex" for entry in entries):
+            raise ValueError
+        bin_dir = dirs.pop()
+        if not bin_dir.is_absolute() or prefix.name != _DIST:
+            raise ValueError
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        raise _unknown_install() from None
+    uv = shutil.which("uv")
+    if uv is None:
+        raise LudexError("installer_missing", "uv was not found on PATH")
+    command = ["env", f"UV_TOOL_DIR={prefix.parent}", f"UV_TOOL_BIN_DIR={bin_dir}", uv]
+    if target != installed_channel:
+        exposed = {entry.get("from", _DIST if entry.get("name") == "ludex" else "") for entry in entries}
+        if any(not isinstance(name, str) or not _NAME.fullmatch(name) for name in exposed):
+            raise _manual_switch()
+        return command + _uv_switch(tool, installed_channel, target, sorted(exposed))
+    refresh = ["--reinstall-package", _DIST, "--reinstall-package", _GUI] if target == "beta" else []
+    return command + ["tool", "upgrade", _DIST, *refresh]
 
-        return bool(json.loads(distribution(_DIST).read_text("direct_url.json") or "{}").get("dir_info", {}).get("editable"))
-    except (PackageNotFoundError, ValueError, AttributeError):
-        return False
 
-
-def _installed(name: str) -> bool:
+def _pipx_update(prefix: Path, receipt: Path, installed_channel: str, target: str) -> list[str]:
+    if target != installed_channel:
+        raise _manual_switch()  # pipx has no reinstall command that replaces only selected recorded sources.
     try:
-        version(name)
-    except PackageNotFoundError:
-        return False
-    return True
+        record = json.loads(receipt.read_bytes())
+        main = record["main_package"]
+        injected = record["injected_packages"]
+        if prefix.parent.name != "venvs" or main["package"] != _DIST or not all(
+            isinstance(pkg.get("package_or_url"), str) and pkg["package_or_url"] for pkg in (main, *injected.values())
+        ):
+            raise ValueError
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        raise _unknown_install() from None
+    pipx = shutil.which("pipx")
+    if pipx is None:
+        raise LudexError("installer_missing", "pipx was not found on PATH")
+    # pipx upgrade can loosen recorded pins; reinstall uses the original specs and injection options.
+    refresh = ["PIP_NO_CACHE_DIR=1", "UV_NO_CACHE=1"] if target == "beta" else []
+    return ["env", f"PIPX_HOME={prefix.parent.parent}", *refresh, pipx, "reinstall", prefix.name, "--python", sys._base_executable]
 
 
 def update_core(channel: str | None, dry_run: bool) -> dict[str, Any]:
-    """Reinstall ludex-games from PyPI or beta, keeping the GUI and its controller support if installed."""
+    """Update Ludex using the installer's recorded requirements; never infer extras from installed dependencies."""
     try:
-        current = version(_DIST)
+        installed = distribution(_DIST)
     except PackageNotFoundError:
         raise LudexError("not_installed", "self-update requires ludex-games; upgrade ludex-cli with your installer") from None
-    if _is_editable():
+    try:
+        direct = json.loads(installed.read_text("direct_url.json") or "{}")
+        source = direct.get("url")
+        editable = direct.get("dir_info", {}).get("editable")
+    except (OSError, ValueError, AttributeError):
+        raise _unknown_install() from None
+    if editable:
         raise LudexError("development_install", "this is a development install; update it with git instead")
-    if channel is None:
-        channel = "beta" if ".dev" in current else "stable"
-    core, gui = (_BETA + "ludex.tar.gz", _BETA + "ludex-gui.tar.gz") if channel == "beta" else (_DIST, _GUI)
-    with_gui = _installed(_GUI)
-    # Check the binding's metadata without importing SDL or needing a connected controller.
-    if with_gui and _installed("PySDL2"):
-        gamepad = f"{_GUI}[gamepad]"
-        gui = f"{gamepad} @ {gui}" if channel == "beta" else gamepad
-    prefix = Path(sys.prefix).as_posix()
-    if "/uv/tools/" in prefix and shutil.which("uv"):
-        uv = shutil.which("uv") or "uv"
-        commands = [[uv, "tool", "install", "--force", "--reinstall", *(["--with", gui] if with_gui else []), core]]
-    elif "/pipx/venvs/" in prefix and shutil.which("pipx"):
-        pipx = shutil.which("pipx") or "pipx"
-        commands = [[pipx, "install", "--force", core], *([[pipx, "inject", "--force", _DIST, gui]] if with_gui else [])]
+    installed_channel = "stable" if source is None else "beta" if source == _BETA_SOURCES[_DIST] else "installed"
+    channel = channel or installed_channel
+    prefix = Path(sys.prefix)
+    uv_receipt = prefix / "uv-receipt.toml"
+    pipx_receipt = prefix / "pipx_metadata.json"
+    if uv_receipt.is_file():
+        commands = [_uv_update(prefix, uv_receipt, installed_channel, channel)]
+    elif pipx_receipt.is_file():
+        commands = [_pipx_update(prefix, pipx_receipt, installed_channel, channel)]
     else:
-        commands = [[*_tool_for_core(), "install", "--upgrade", "--force-reinstall", "--no-input", core, *([gui] if with_gui else [])]]
-    result: dict[str, Any] = {"channel": channel, "from": current, "commands": commands}
+        raise _unknown_install()
+    result: dict[str, Any] = {"channel": channel, "from": installed.version, "commands": commands}
     if dry_run:
         return result | {"dry_run": True}
     for command in commands:
-        _run(command)
+        _run(command, show_stderr=False)
     try:
         done = subprocess.run(
-            [sys.executable, "-c", f"import importlib.metadata as m; print(m.version({_DIST!r}))"],
+            [sys.executable, "-I", "-c", f"import importlib.metadata as m; print(m.version({_DIST!r}))"],
             capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL,
         )
         result["to"] = done.stdout.strip() or None
     except (OSError, subprocess.TimeoutExpired):
         result["to"] = None
     return result
-
-
-def _tool_for_core() -> list[str]:
-    try:
-        import pip  # noqa: F401
-    except ImportError:
-        raise LudexError(
-            "installer_missing",
-            "cannot tell how ludex was installed; reinstall it the way you first did (uv tool, pipx or pip)",
-        ) from None
-    return [sys.executable, "-m", "pip"]

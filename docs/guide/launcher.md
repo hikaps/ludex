@@ -35,7 +35,7 @@ With the `gamepad` extra a controller drives the launcher, only while its window
 
 On a text field, A opens an on-screen keyboard (Shift, 123 for symbols, Left/Right to move the cursor, Delete, Clear; Done submits, B closes it). Keyboard equivalents: `Ctrl+P`, `Ctrl+PgUp`, `Ctrl+PgDown`.
 
-`ludex update` preserves an installed `gamepad` extra. If an older updater removed it, reinstall from the same release channel with `ludex-gui[gamepad]`.
+`ludex update` keeps the `gamepad` extra if it is in the installer's record. If an older updater removed it, repeat the install command with `ludex-gui[gamepad]` on the same channel.
 
 ## Console mode
 

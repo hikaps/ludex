@@ -23,7 +23,7 @@ Status: early development.
 - **Play time**: `show` and `ls --sort played|recent` report how long you played, from what Steam and Heroic (Epic and sideloads) recorded on this machine, plus the games ludex started itself.
 - **GUI**: `ludex gui` opens a game launcher, with a controller-friendly console mode; see [Launcher (GUI)](#launcher-gui) below. It is a separate install because it brings Qt.
 - **Scripting**: `ludex --json <command>` prints `{"ok": ..., "data": ...}` (errors go to stderr).
-- **Plugins**: `plugin add/ls/view/rm/enable/disable/update` (`plugin view` lists the tables and panels plugins contribute, which the GUI shows as sidebar pages); `update` updates ludex from its release channel.
+- **Plugins**: `plugin add/ls/view/rm/enable/disable/update` (`plugin view` lists the tables and panels plugins contribute, which the GUI shows as sidebar pages); `update` updates Ludex through uv or pipx, keeping recorded extras and add-ons. See [install and update](https://hikaps.github.io/ludex/#install) for channel switches.
 
 ## Launcher (GUI)
 

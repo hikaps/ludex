@@ -6,7 +6,7 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ### Fixed
 
-- **update:** `ludex update` keeps controller support when reinstalling a GUI that already has it.
+- **update:** use the installer's recorded requirements instead of rebuilding from a guessed package list, preserving controller support, other extras and add-ons. Refuse channel switches or installs whose requirements cannot be replayed safely.
 
 ## [0.66.0] - 2026-11-24
 

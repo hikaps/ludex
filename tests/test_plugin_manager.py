@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -116,77 +117,119 @@ def test_removing_an_unknown_plugin_fails(managed):
     assert info.value.code == "plugin_not_found"
 
 
-@pytest.fixture
-def core(monkeypatch):
-    monkeypatch.setattr(pm, "_is_editable", lambda: False)
-    installed = {"ludex-games": "0.31.0.dev12"}
-
-    def version(name):
-        if name not in installed:
-            raise pm.PackageNotFoundError(name)
-        return installed[name]
-
-    monkeypatch.setattr(pm, "version", version)
-    monkeypatch.setattr(pm.shutil, "which", lambda name: f"/bin/{name}")
-    return installed
-
-
 BETA = "https://github.com/hikaps/ludex/releases/download/beta/"
 
 
-def test_update_core_uses_the_installers_own_command_and_the_installed_channel(core, monkeypatch):
-    monkeypatch.setattr(pm.sys, "prefix", "/home/u/.local/share/uv/tools/ludex")
+@pytest.fixture
+def core(tmp_path, monkeypatch):
+    prefix = tmp_path / "venvs" / "ludex-games"
+    prefix.mkdir(parents=True)
+
+    class Install:
+        version = "0.66.0"
+        direct = None
+
+        def read_text(self, name):
+            return self.direct
+
+    install = Install()
+    monkeypatch.setattr(pm, "distribution", lambda name: install)
+    monkeypatch.setattr(pm.shutil, "which", lambda name: f"/bin/{name}")
+    monkeypatch.setattr(pm.sys, "prefix", str(prefix))
+    monkeypatch.setattr(pm.sys, "_base_executable", "/usr/bin/python3")
+    return prefix, install
+
+
+def _uv_receipt(prefix, *, beta=False, extra=""):
+    core = f', url = "{BETA}ludex.tar.gz"' if beta else ""
+    gui = f', url = "{BETA}ludex-gui.tar.gz"' if beta else ""
+    (prefix / "uv-receipt.toml").write_text(
+        f"""[tool]
+requirements = [
+    {{ name = "ludex-games"{core} }},
+    {{ name = "ludex-gui", extras = ["gamepad"]{gui} }},
+    {{ name = "addon", extras = ["ui"], specifier = "==1.2" }},
+    {{ name = "addon" }},
+]
+entrypoints = [
+    {{ name = "ludex", install-path = "{prefix.parent / 'bin/ludex'}", from = "ludex-games" }},
+    {{ name = "addon", install-path = "{prefix.parent / 'bin/addon'}", from = "addon" }},
+]
+{extra}"""
+    )
+
+
+@pytest.mark.parametrize("beta", [False, True])
+def test_update_uses_uvs_recorded_requirements_on_the_same_channel(core, beta):
+    prefix, install = core
+    _uv_receipt(prefix, beta=beta, extra='constraints = [{ name = "addon", specifier = "==1.2" }]')
+    if beta:
+        install.direct = json.dumps({"url": BETA + "ludex.tar.gz"})
+
     result = pm.update_core(None, dry_run=True)
-    assert result["channel"] == "beta"
-    assert result["commands"] == [["/bin/uv", "tool", "install", "--force", "--reinstall", BETA + "ludex.tar.gz"]]
-    core["ludex-games"] = "0.31.0"
-    stable = pm.update_core(None, dry_run=True)
-    assert stable["channel"] == "stable"
-    assert stable["commands"] == [["/bin/uv", "tool", "install", "--force", "--reinstall", "ludex-games"]]
+
+    assert result["channel"] == ("beta" if beta else "stable")
+    (command,) = result["commands"]
+    native = command[command.index("/bin/uv"):]
+    assert native[:4] == ["/bin/uv", "tool", "upgrade", "ludex-games"]
+    assert native[4:] == (["--reinstall-package", "ludex-games", "--reinstall-package", "ludex-gui"] if beta else [])
+    assert f"UV_TOOL_DIR={prefix.parent}" in command
 
 
-def test_update_core_keeps_the_gui_the_user_installed(core, monkeypatch):
-    core["ludex-gui"] = "0.31.0.dev12"
-    monkeypatch.setattr(pm.sys, "prefix", "/home/u/.local/share/uv/tools/ludex")
-    uv = pm.update_core("beta", dry_run=True)["commands"]
-    assert uv == [["/bin/uv", "tool", "install", "--force", "--reinstall", "--with", BETA + "ludex-gui.tar.gz", BETA + "ludex.tar.gz"]]
-    assert pm.update_core("stable", dry_run=True)["commands"][0][5:] == ["--with", "ludex-gui", "ludex-games"]
-    monkeypatch.setattr(pm.sys, "prefix", "/home/u/.local/pipx/venvs/ludex")
-    assert pm.update_core("stable", dry_run=True)["commands"] == [
-        ["/bin/pipx", "install", "--force", "ludex-games"],
-        ["/bin/pipx", "inject", "--force", "ludex-games", "ludex-gui"],
-    ]
+@pytest.mark.parametrize("beta", [False, True])
+def test_uv_switches_only_ludex_sources_and_preserves_extras_and_addons(core, beta):
+    prefix, install = core
+    _uv_receipt(prefix, beta=not beta)
+    if not beta:
+        install.direct = json.dumps({"url": BETA + "ludex.tar.gz"})
+
+    (command,) = pm.update_core("beta" if beta else "stable", dry_run=True)["commands"]
+
+    assert command[-1] == (f"ludex-games @ {BETA}ludex.tar.gz" if beta else "ludex-games")
+    assert command[command.index("--with") + 1] == (
+        f"ludex-gui[gamepad] @ {BETA}ludex-gui.tar.gz" if beta else "ludex-gui[gamepad]"
+    )
+    assert command[command.index("--with", command.index("--with") + 1) + 1] == "addon[ui]==1.2"
+    assert command[command.index("--with-executables-from") + 1] == "addon"
+    assert "addon" not in [arg for flag, arg in zip(command, command[1:]) if flag == "--with"]
 
 
-@pytest.mark.parametrize(
-    ("prefix", "installer"),
-    [
-        ("/home/u/.local/share/uv/tools/ludex-games", "uv"),
-        ("/home/u/.local/pipx/venvs/ludex-games", "pipx"),
-        ("/home/u/venv", "pip"),
-    ],
-)
-@pytest.mark.parametrize("channel", ["stable", "beta"])
-def test_update_core_preserves_controller_support(core, monkeypatch, prefix, installer, channel):
-    monkeypatch.setattr(pm.sys, "prefix", prefix)
-    monkeypatch.setattr(pm, "_tool_for_core", lambda: ["python", "-m", "pip"])
-    core.update({"ludex-gui": "0.31.0.dev12", "PySDL2": "0.9.17"})
-    core_spec = BETA + "ludex.tar.gz" if channel == "beta" else "ludex-games"
-    gui_spec = "ludex-gui[gamepad]"
-    if channel == "beta":
-        gui_spec += f" @ {BETA}ludex-gui.tar.gz"
+def test_uv_does_not_switch_when_it_cannot_replay_install_constraints(core, monkeypatch):
+    prefix, _ = core
+    _uv_receipt(prefix, extra='constraints = [{ name = "addon", specifier = "==1.2" }]')
+    monkeypatch.setattr(pm, "_run", lambda *a, **kw: pytest.fail("must not change the install"))
 
-    commands = pm.update_core(channel, dry_run=True)["commands"]
-    if installer == "uv":
-        assert commands[0][-3:] == ["--with", gui_spec, core_spec]
-    elif installer == "pipx":
-        assert commands[-1][-3:] == ["--force", "ludex-games", gui_spec]
-    else:
-        assert commands[0][-2:] == [core_spec, gui_spec]
+    with pytest.raises(LudexError) as info:
+        pm.update_core("beta", dry_run=False)
+    assert info.value.code == "channel_switch_unsupported"
 
 
-def test_update_core_refuses_a_development_install(core, monkeypatch):
-    monkeypatch.setattr(pm, "_is_editable", lambda: True)
+def test_pipx_reuses_the_original_install_and_injection_specs(core):
+    prefix, install = core
+    install.direct = json.dumps({"url": BETA + "ludex.tar.gz"})
+    (prefix / "pipx_metadata.json").write_text(json.dumps({
+        "main_package": {"package": "ludex-games", "package_or_url": BETA + "ludex.tar.gz"},
+        "injected_packages": {"addon": {"package": "addon", "package_or_url": "addon[ui]==1.2"}},
+    }))
+    (command,) = pm.update_core(None, dry_run=True)["commands"]
+    assert command[command.index("/bin/pipx"):] == ["/bin/pipx", "reinstall", "ludex-games", "--python", "/usr/bin/python3"]
+    assert "UV_NO_CACHE=1" in command and "PIP_NO_CACHE_DIR=1" in command
+
+    with pytest.raises(LudexError) as info:
+        pm.update_core("stable", dry_run=True)
+    assert info.value.code == "channel_switch_unsupported"
+
+
+def test_update_refuses_to_guess_an_unrecorded_install_spec(core, monkeypatch):
+    monkeypatch.setattr(pm, "_run", lambda *a, **kw: pytest.fail("must not change the install"))
+    with pytest.raises(LudexError) as info:
+        pm.update_core(None, dry_run=False)
+    assert info.value.code == "install_spec_unknown"
+
+
+def test_update_core_refuses_a_development_install(core):
+    _, install = core
+    install.direct = '{"url": "file:///dev/ludex", "dir_info": {"editable": true}}'
     with pytest.raises(LudexError) as info:
         pm.update_core("beta", dry_run=True)
     assert info.value.code == "development_install"
