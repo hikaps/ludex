@@ -6,7 +6,11 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ### Fixed
 
-- **update:** use the installer's recorded requirements instead of rebuilding from a guessed package list, preserving controller support, other extras and add-ons. Refuse channel switches or installs whose requirements cannot be replayed safely.
+- **update:** use the installer's recorded requirements instead of rebuilding from a guessed package list, preserving controller support, other extras and add-ons.
+
+### Changed
+
+- **BREAKING, update:** `ludex update` no longer updates plain-pip installs (`install_spec_unknown`; upgrade them with pip). Stable/beta switching works only for uv tool installs whose recorded requirements can be replayed; for pipx or other uv installs it stops with `channel_switch_unsupported` and changes nothing, so reinstall with the target sources yourself.
 
 ## [0.66.0] - 2026-11-24
 

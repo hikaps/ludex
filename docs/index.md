@@ -24,7 +24,7 @@ ludex --version
 
 Run `ludex update` for a uv tool or pipx install. It uses the installer's recorded requirements, so GUI extras, add-ons, and version pins stay in place. Beta updates refresh the rolling release archives. Use `ludex update --dry-run` to see the installer command.
 
-`ludex update --channel stable|beta` can switch a uv tool install between PyPI and the rolling release when its recorded requirements can be carried over. If Ludex cannot replay the install safely (for example, a pipx channel switch, a uv install with custom constraints, or a plain pip install), rerun the original installer command with the desired source and keep its extras, add-ons, and options. For a beta GUI install with controller support:
+`ludex update --channel stable|beta` can switch a uv tool install between PyPI and the rolling release when its recorded requirements can be carried over. Two errors change nothing: `install_spec_unknown` means ludex found no uv or pipx install record (a plain-pip install: upgrade it with pip, using your original requirements and extras), and `channel_switch_unsupported` means the switch cannot be replayed (pipx can update in place but not switch, and uv installs with custom constraints or other options must be reinstalled). To switch by hand, reinstall with the target Ludex sources and keep your extras, add-ons, and options. For a beta GUI install with controller support:
 
 ```sh
 base=https://github.com/hikaps/ludex/releases/download/beta

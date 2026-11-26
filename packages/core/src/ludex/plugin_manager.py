@@ -269,7 +269,7 @@ def _uv_switch(tool: dict[str, Any], installed_channel: str, target: str, expose
         if name in _BETA_SOURCES:
             has_gui |= name == _GUI
             expected = _BETA_SOURCES[name] if installed_channel == "beta" else None
-            if req.get("url") != expected or specifier:
+            if req.get("url") != expected or specifier or marker:
                 raise _manual_switch()
             if target == "beta":
                 spec += f" @ {_BETA_SOURCES[name]}"
@@ -311,9 +311,10 @@ def _uv_update(prefix: Path, receipt: Path, installed_channel: str, target: str)
         raise LudexError("installer_missing", "uv was not found on PATH")
     command = ["env", f"UV_TOOL_DIR={prefix.parent}", f"UV_TOOL_BIN_DIR={bin_dir}", uv]
     if target != installed_channel:
-        exposed = {entry.get("from", _DIST if entry.get("name") == "ludex" else "") for entry in entries}
-        if any(not isinstance(name, str) or not _NAME.fullmatch(name) for name in exposed):
+        origins = [entry.get("from", _DIST if entry.get("name") == "ludex" else "") for entry in entries]
+        if any(not isinstance(name, str) or not _NAME.fullmatch(name) for name in origins):
             raise _manual_switch()
+        exposed = set(origins)
         return command + _uv_switch(tool, installed_channel, target, sorted(exposed))
     refresh = ["--reinstall-package", _DIST, "--reinstall-package", _GUI] if target == "beta" else []
     return command + ["tool", "upgrade", _DIST, *refresh]

@@ -80,8 +80,8 @@ def _parser() -> argparse.ArgumentParser:
     plugin_view.add_argument("provider", nargs="?", help="a provider (default: all)")
     plugin_view.add_argument("view", nargs="?", help="print this view's table or details")
 
-    update = commands.add_parser("update", help="update ludex itself using the installer's recorded requirements")
-    update.add_argument("--channel", choices=CHANNELS, help="default: the channel this install came from")
+    update = commands.add_parser("update", help="update ludex itself using the installer's recorded requirements (uv tool or pipx installs)")
+    update.add_argument("--channel", choices=CHANNELS, help="stable (PyPI) or beta (rolling release); default: the installed source. Switching needs a uv tool install")
     update.add_argument("--dry-run", action="store_true", help="show the command without running it")
 
     setup = commands.add_parser("setup", help="guided: add an account for a source and import it")

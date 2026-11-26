@@ -204,6 +204,23 @@ def test_uv_does_not_switch_when_it_cannot_replay_install_constraints(core, monk
     assert info.value.code == "channel_switch_unsupported"
 
 
+@pytest.mark.parametrize("change", [
+    ('{ name = "ludex-gui", extras = ["gamepad"] }', '{ name = "ludex-gui", extras = ["gamepad"], marker = "sys_platform == \'win32\'" }'),
+    ('from = "addon"', 'from = ["addon"]'),
+])
+def test_uv_refuses_a_switch_it_cannot_express_instead_of_crashing_or_dropping_the_gui_source(core, monkeypatch, change):
+    prefix, _ = core
+    _uv_receipt(prefix)
+    receipt = prefix / "uv-receipt.toml"
+    assert change[0] in receipt.read_text()
+    receipt.write_text(receipt.read_text().replace(*change))
+    monkeypatch.setattr(pm, "_run", lambda *a, **kw: pytest.fail("must not change the install"))
+
+    with pytest.raises(LudexError) as info:
+        pm.update_core("beta", dry_run=False)
+    assert info.value.code == "channel_switch_unsupported"
+
+
 def test_pipx_reuses_the_original_install_and_injection_specs(core):
     prefix, install = core
     install.direct = json.dumps({"url": BETA + "ludex.tar.gz"})
