@@ -152,3 +152,16 @@ def test_a_location_that_fails_leaves_the_folder_unknown_and_a_runner_gets_the_c
     list_actions(conn, sources, 1, lambda store, account: {}, Path("/state/prefixes"))
     context = next(c for s, c in seen if s == "steam")
     assert context.folder is None and context.prefix is not None and context.prefix.parent == Path("/state/prefixes")
+
+
+def test_context_is_injected_only_into_an_explicit_parameter_after_store_and_id_and_env_is_read_only(conn):
+    seen = []
+    legacy = plugin("legacy", actions=lambda context, store_id: [GameAction("old", "Old", ["/bin/true"])] if context == "steam" else [])
+    modern = plugin("modern", actions=lambda store, store_id, *, context: seen.append(context) or [])
+    variadic = plugin("var", actions=lambda store, store_id, **kw: seen.append(kw) or [])
+    sources = {"legacy": legacy, "modern": modern, "var": variadic}
+    assert [i.plugin for i in list_actions(conn, sources, 1, lambda s, a: {}, Path("/state/prefixes"))] == ["legacy"]
+    contexts = [c for c in seen if not isinstance(c, dict)]
+    assert contexts and {} in seen  # keyword-only gets a context; **kwargs got nothing
+    with pytest.raises(TypeError):
+        contexts[0].env["X"] = "1"
