@@ -106,21 +106,24 @@ def installed(config: Mapping[str, str]) -> list[str]:
 
 def heroic_prefix(directory: Path, app_name: str) -> Path | None:
     """The Wine prefix Heroic's per-game settings (``GamesConfig/<app>.json``) name; ``None`` when the game has none of its own."""
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", app_name):
+        return None  # an id that is not one path component must not reach the filesystem
     path = directory / "GamesConfig" / f"{app_name}.json"
     try:
         data = json.loads(path.read_text(encoding="utf-8")) if path.stat().st_size <= _MAX_BYTES else {}
-    except (OSError, ValueError):
+        entry = data.get(app_name) if isinstance(data, dict) else None
+        prefix = entry.get("winePrefix") if isinstance(entry, dict) else None
+        return Path(prefix).expanduser() if isinstance(prefix, str) and prefix else None
+    except (OSError, ValueError, RuntimeError):  # RuntimeError: a ~user that cannot be expanded
         return None
-    entry = data.get(app_name) if isinstance(data, dict) else None
-    prefix = entry.get("winePrefix") if isinstance(entry, dict) else None
-    return Path(prefix).expanduser() if isinstance(prefix, str) and prefix else None
 
 
 def game_location(config: Mapping[str, str], store_id: str) -> GameLocation:
     directory = _heroic_dir(config)
     for game in _entries(config):
         if game["app_name"] == store_id and isinstance(game.get("folder_name"), str) and Path(game["folder_name"]).is_absolute():
-            return GameLocation(Path(game["folder_name"]), heroic_prefix(directory, store_id))
+            folder = Path(game["folder_name"]) if game.get("is_installed") is True else None  # Heroic keeps the path of an uninstalled entry
+            return GameLocation(folder, heroic_prefix(directory, store_id))
     raise SourceError("not_launchable", "Heroic has no folder for this game")
 
 

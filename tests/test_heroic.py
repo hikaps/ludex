@@ -4,7 +4,9 @@ import json
 
 import pytest
 
-from ludex.plugins import SourceError
+from pathlib import Path
+
+from ludex.plugins import GameLocation, SourceError
 from ludex.sources.heroic import PLUGIN, fetch, installed
 
 
@@ -40,7 +42,7 @@ def test_missing_or_malformed_library_raises_instead_of_returning_nothing(tmp_pa
 
 def test_game_location_is_the_sideload_folder_and_the_prefix_heroic_set_for_the_game(tmp_path):
     games = [
-        {"app_name": "a1", "title": "A", "runner": "sideload", "folder_name": "/games/a"},
+        {"app_name": "a1", "title": "A", "runner": "sideload", "folder_name": "/games/a", "is_installed": True},
         {"app_name": "b2", "title": "B", "runner": "sideload", "folder_name": "relative"},
     ]
     config = _library(tmp_path, games)
@@ -52,3 +54,16 @@ def test_game_location_is_the_sideload_folder_and_the_prefix_heroic_set_for_the_
         PLUGIN.game_location(config, "b2")
     (tmp_path / "GamesConfig" / "a1.json").write_text("not json")
     assert PLUGIN.game_location(config, "a1").prefix is None
+
+
+def test_game_location_ignores_uninstalled_entries_and_ids_that_are_not_one_file_name(tmp_path):
+    games = [
+        {"app_name": "a1", "title": "A", "runner": "sideload", "folder_name": "/games/a", "is_installed": False},
+        {"app_name": "../x", "title": "X", "runner": "sideload", "folder_name": "/games/x", "is_installed": True},
+    ]
+    config = _library(tmp_path, games)
+    (tmp_path / "GamesConfig").mkdir()
+    (tmp_path / "GamesConfig" / "a1.json").write_text(json.dumps({"a1": {"winePrefix": "~nosuchuser_zz/pfx"}}))
+    (tmp_path / "x.json").write_text(json.dumps({"../x": {"winePrefix": "/leak"}}))
+    assert PLUGIN.game_location(config, "a1") == GameLocation(None, None)  # uninstalled, and an unexpandable prefix is unknown
+    assert PLUGIN.game_location(config, "../x") == GameLocation(Path("/games/x"), None)

@@ -426,17 +426,23 @@ def running(config: Mapping[str, str]) -> set[str]:
 
 def game_location(config: Mapping[str, str], store_id: str) -> GameLocation:
     """The game's folder under its library's ``steamapps/common`` (the manifest's ``installdir``) and the Proton prefix Steam keeps in ``compatdata`` (present once the game has run through Proton)."""
-    if not store_id.isdigit():
+    if not (store_id.isascii() and store_id.isdigit() and len(store_id) <= 12):
         raise SourceError("not_launchable", "this Steam game id is not valid")
     app_id = str(int(store_id))
+    fallback: GameLocation | None = None
     for library in _libraries(_steam_dir(config)):
         steamapps = library / "steamapps"
         state = _load_vdf(steamapps / f"appmanifest_{app_id}.acf").get("AppState")
         name = state.get("installdir") if isinstance(state, dict) else None
         if isinstance(name, str) and name and name not in (".", "..") and "/" not in name and "\\" not in name:
             folder, prefix = steamapps / "common" / name, steamapps / "compatdata" / app_id / "pfx"
-            return GameLocation(folder if folder.is_dir() else None, prefix if prefix.is_dir() else None)
-    raise SourceError("not_launchable", "Steam has no install record for this game")
+            found = GameLocation(folder if folder.is_dir() else None, prefix if prefix.is_dir() else None)
+            if found.folder is not None:
+                return found
+            fallback = fallback or found  # a stale manifest in one library must not hide a live install in another
+    if fallback is None:
+        raise SourceError("not_launchable", "Steam has no install record for this game")
+    return fallback
 
 
 PLUGIN = Provider(

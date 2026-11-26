@@ -386,7 +386,6 @@ class Provider:
     launch_url: Callable[[str], str] | None = None
     launch_command: Callable[[Mapping[str, str], str], Sequence[str]] | None = None
     game_folder: Callable[[Mapping[str, str], str], Path] | None = None
-    game_location: Callable[[Mapping[str, str], str], GameLocation] | None = None
     install_url: Callable[[str], str] | None = None
     acquire: Callable[[AcquireRequest, Report], AcquireResult] | None = None
     installed: Callable[[Mapping[str, str]], Iterable[str]] | None = None
@@ -402,6 +401,7 @@ class Provider:
     cover: Callable[..., bytes | None] | None = None
     actions: Callable[..., Sequence[GameAction]] | None = None
     cover_by_title: Callable[..., bytes | None] | None = None
+    game_location: Callable[[Mapping[str, str], str], GameLocation] | None = None
 
     @property
     def capabilities(self) -> tuple[str, ...]:

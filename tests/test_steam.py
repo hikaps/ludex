@@ -219,3 +219,17 @@ def test_game_location_finds_the_folder_in_its_own_library_and_the_proton_prefix
     for store_id in ("30", "99", "x"):  # an installdir that climbs out, no manifest, a bad id
         with pytest.raises(SourceError):
             PLUGIN.game_location(config, store_id)
+
+
+def test_game_location_skips_a_stale_manifest_for_a_live_install_in_another_library(tmp_path):
+    steam, lib2 = tmp_path / "Steam", tmp_path / "lib2"
+    for root in (steam, lib2):
+        (root / "steamapps").mkdir(parents=True)
+    (steam / "steamapps" / "libraryfolders.vdf").write_text(f'"libraryfolders"\n{{\n"1"\n{{\n"path" "{lib2}"\n}}\n}}\n')
+    for root in (steam, lib2):
+        (root / "steamapps" / "appmanifest_20.acf").write_text('"AppState"\n{\n"appid" "20"\n"installdir" "TF"\n}\n')
+    (lib2 / "steamapps" / "common" / "TF").mkdir(parents=True)
+    assert PLUGIN.game_location({"steam_dir": str(steam)}, "20").folder == lib2 / "steamapps" / "common" / "TF"
+    for bad in ("²", "9" * 40):
+        with pytest.raises(SourceError):
+            PLUGIN.game_location({"steam_dir": str(steam)}, bad)

@@ -7,6 +7,7 @@ import re
 import sqlite3
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
+from types import MappingProxyType
 from pathlib import Path
 
 from .errors import LudexError
@@ -37,10 +38,15 @@ def _valid(action: object) -> bool:
 
 
 def _wants_context(provider: Provider) -> bool:
+    """Whether ``actions`` declares an explicit ``context`` parameter after the two positional ones (``store``, ``store_id``)."""
     try:
-        return "context" in inspect.signature(provider.actions).parameters
+        parameters = list(inspect.signature(provider.actions).parameters.values())
     except (TypeError, ValueError):
         return False
+    return any(
+        p.name == "context" and i >= 2 and p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)
+        for i, p in enumerate(parameters)
+    )
 
 
 def _context(
@@ -66,7 +72,7 @@ def _context(
         prefix = Path(settings.prefix)
     elif prefix is None and settings.runner and prefix_root is not None:
         prefix = _prefix_for(store, store_id, prefix_root)
-    return GameContext(title, folder, prefix, settings.executable, settings.args, dict(settings.env), settings.runner)
+    return GameContext(title, folder, prefix, settings.executable, settings.args, MappingProxyType(dict(settings.env)), settings.runner)
 
 
 def _offered(
