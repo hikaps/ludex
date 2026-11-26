@@ -1,6 +1,7 @@
 """Discovery of providers through Python entry points."""
 from __future__ import annotations
 
+import functools
 import inspect
 import re
 import sys
@@ -102,6 +103,14 @@ def _valid_settings(plugin: Provider) -> bool:
     )
 
 
+def _with_settings(function, name: str):
+    @functools.wraps(function)  # keeps the signature visible, so the core still sees which optional parameters it declares
+    def call(*args, **kwargs):
+        return function(*args, settings=get_values(state_paths(), name), **kwargs)
+
+    return call
+
+
 def _bind_settings(provider: Provider) -> Provider:
     """Give ``search``/``metadata``/``match``/``cover``/``cover_by_title``/``actions`` functions that declare ``settings`` the plugin's settings, read per call."""
     bound = {}
@@ -112,7 +121,7 @@ def _bind_settings(provider: Provider) -> Provider:
         except (TypeError, ValueError):
             wants = False
         if wants:
-            bound[attr] = lambda *args, _f=function, _n=provider.name: _f(*args, settings=get_values(state_paths(), _n))
+            bound[attr] = _with_settings(function, provider.name)
     return replace(provider, **bound) if bound else provider
 
 

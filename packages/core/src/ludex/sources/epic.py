@@ -17,8 +17,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from ..plugins import ConfigField, FetchResult, OwnedGame, PlayRecord, SourceError, Provider
-from .heroic import heroic_playtime
+from ..plugins import ConfigField, FetchResult, GameLocation, OwnedGame, PlayRecord, SourceError, Provider
+from .heroic import heroic_playtime, heroic_prefix
 
 _DIRS = (
     "~/.config/legendary",
@@ -71,6 +71,21 @@ def installed(config: Mapping[str, str]) -> set[str]:
     return {key for key in data if isinstance(key, str)} if isinstance(data, dict) else set()
 
 
+def game_location(config: Mapping[str, str], store_id: str) -> GameLocation:
+    """Where Legendary installed the game (``install_path``), and the prefix Heroic keeps for it when Heroic manages this folder."""
+    directory = _legendary_dir(config)
+    try:
+        data: Any = json.loads((directory / "installed.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise SourceError("not_launchable", "Legendary has no install record for this game") from None
+    entry = data.get(store_id) if isinstance(data, dict) else None
+    path = entry.get("install_path") if isinstance(entry, dict) else None
+    if not isinstance(path, str) or not Path(path).is_absolute():
+        raise SourceError("not_launchable", "Legendary has no install folder for this game")
+    heroic = directory.parent.parent if directory.name == "legendary" and directory.parent.name == "legendaryConfig" else None
+    return GameLocation(Path(path), heroic_prefix(heroic, store_id) if heroic else None)
+
+
 def playtime(config: Mapping[str, str]) -> dict[str, PlayRecord]:
     """Heroic's play record for the Legendary folder it manages (``<heroic>/legendaryConfig/legendary``); none for a plain Legendary."""
     directory = _legendary_dir(config)
@@ -118,5 +133,6 @@ PLUGIN = Provider(
     installed=installed,
     playtime=playtime,
     launch_url=lambda store_id: f"heroic://launch?appName={quote(store_id, safe='')}&runner=legendary",
+    game_location=game_location,
     install_command=install_command,
 )

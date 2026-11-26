@@ -4,6 +4,10 @@ All notable changes to ludex are documented here. The format follows [Keep a Cha
 
 ## [Unreleased]
 
+### Added
+
+- **plugins:** an `actions` function that declares a `context` parameter receives a `GameContext`: the game's installed `folder`, its Wine `prefix` and the user's launch options. Store plugins supply them through the new optional `game_location(config, store_id)`, which `steam` (library folder and Proton prefix), `epic` and `heroic` now implement; a prefix set with `ludex game set` wins. `API_VERSION` stays 3.
+
 ### Fixed
 
 - **update:** use the installer's recorded requirements instead of rebuilding from a guessed package list, preserving controller support, other extras and add-ons.

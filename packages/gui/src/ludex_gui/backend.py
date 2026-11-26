@@ -434,7 +434,7 @@ class Backend(QObject):
             "ownership": [{"store": o["store"], "storeId": str(o["store_id"]), "account": str(o["account"]), "removed": bool(o["removed"])} for o in game["ownership"]],
             "stores": ", ".join(sorted({o["store"] for o in live})),
             "installed": any(c in self._keys for c in copies),
-            "actions": [{"plugin": a.plugin, "id": a.id, "label": a.label, "store": a.store} for a in list_actions(self._conn, self._sources, game_id)],
+            "actions": [{"plugin": a.plugin, "id": a.id, "label": a.label, "store": a.store} for a in list_actions(self._conn, self._sources, game_id, self._config_for, get_prefix_root(self._conn, self._prefix_root))],
             "playStores": self._play_stores(game_id, any(c in self._keys for c in copies), game["ownership"]),
             "played": describe_played(self._played.get(game_id)),
             "coverUrl": self._covers.get(game_id, ""),
@@ -625,7 +625,10 @@ class Backend(QObject):
     def runAction(self, game_id: int, plugin: str, action_id: str, store: str) -> None:  # noqa: N802 (Qt)
         """Run an action a plugin offers for the game (a button on its page); the job log keeps its output."""
         try:
-            info, _, job = run_action(self._conn, self._sources, game_id, plugin, action_id, store or None, self._paths.database.parent / "logs")
+            info, _, job = run_action(
+                self._conn, self._sources, game_id, plugin, action_id, store or None, self._paths.database.parent / "logs",
+                config_for=self._config_for, prefix_root=get_prefix_root(self._conn, self._prefix_root),
+            )
         except LudexError as exc:
             self.notify(exc.message, True)
             return

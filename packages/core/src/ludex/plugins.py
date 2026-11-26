@@ -147,6 +147,15 @@ an action or a call that is invalid or raises is skipped, never shown. The core 
 as a background job of kind ``action`` (see ``ludex.jobs``), with output in the job log, and never adds
 the game's credentials to it. The user starts it by hand: it is not run during import or refresh.
 
+Game context (optional): declare a ``context`` parameter on ``actions`` to receive a ``GameContext`` for the copy:
+its ``title``, the ``folder`` the game is installed in, the Wine ``prefix`` it runs in (each ``None`` when unknown)
+and the user's launch options (``executable``, ``args``, ``env``, ``runner``; see ``ludex game set``). The folder
+and prefix come from the owning store's plugin through ``game_location(config, store_id)``, which returns a
+``GameLocation`` (either field may be ``None``) or raises ``SourceError``; a store plugin that declares only
+``game_folder`` supplies the folder. A prefix the user set wins; otherwise the store's own; otherwise, when a
+Proton runner is set, the one ludex creates for the game. ``game_location`` is read live, never stored, and is
+not a capability by itself.
+
 Acquiring (optional): ``acquire(request, report)`` gets a ``AcquireRequest`` (store id, title, and a
 ``destination`` directory the core created) and does the whole job itself: download, unpack, or
 drive an official client. It calls ``report(message, done=None, total=None)`` with short progress lines
@@ -338,6 +347,23 @@ class GameAction:
 
 
 @dataclass(frozen=True, slots=True)
+class GameLocation:
+    folder: Path | None = None  # where the store installed the game
+    prefix: Path | None = None  # the Wine prefix the store's own client runs it in
+
+
+@dataclass(frozen=True, slots=True)
+class GameContext:
+    title: str
+    folder: Path | None = None
+    prefix: Path | None = None
+    executable: str | None = None
+    args: tuple[str, ...] = ()
+    env: Mapping[str, str] = field(default_factory=dict)
+    runner: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class PlayRecord:
     minutes: int
     last_played: str | None = None  # ISO 8601 UTC, for example 2026-11-08T19:38:29Z
@@ -375,6 +401,7 @@ class Provider:
     cover: Callable[..., bytes | None] | None = None
     actions: Callable[..., Sequence[GameAction]] | None = None
     cover_by_title: Callable[..., bytes | None] | None = None
+    game_location: Callable[[Mapping[str, str], str], GameLocation] | None = None
 
     @property
     def capabilities(self) -> tuple[str, ...]:

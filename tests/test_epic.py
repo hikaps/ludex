@@ -55,3 +55,20 @@ def test_install_command_uses_the_heroic_flatpak_on_heroics_config_or_a_native_l
     monkeypatch.setattr(epic.shutil, "which", lambda name: None)
     with pytest.raises(SourceError, match="not installed"):
         epic.install_command({"legendary_dir": str(native)}, "Quail")
+
+
+def test_game_location_is_legendarys_install_path_with_the_prefix_heroic_keeps(tmp_path):
+    legendary = tmp_path / "heroic" / "legendaryConfig" / "legendary"
+    (legendary / "metadata").mkdir(parents=True)
+    (legendary / "installed.json").write_text(json.dumps({"Quail": {"install_path": "/games/quail"}, "Bad": {"install_path": "rel"}}))
+    (tmp_path / "heroic" / "GamesConfig").mkdir()
+    (tmp_path / "heroic" / "GamesConfig" / "Quail.json").write_text(json.dumps({"Quail": {"winePrefix": "/prefixes/quail"}}))
+    location = PLUGIN.game_location({"legendary_dir": str(legendary)}, "Quail")
+    assert (str(location.folder), str(location.prefix)) == ("/games/quail", "/prefixes/quail")
+    for store_id in ("Bad", "Other"):
+        with pytest.raises(SourceError):
+            PLUGIN.game_location({"legendary_dir": str(legendary)}, store_id)
+    plain = tmp_path / "plain"
+    (plain / "metadata").mkdir(parents=True)
+    (plain / "installed.json").write_text(json.dumps({"Quail": {"install_path": "/games/quail"}}))
+    assert PLUGIN.game_location({"legendary_dir": str(plain)}, "Quail").prefix is None
