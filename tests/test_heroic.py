@@ -36,3 +36,19 @@ def test_missing_or_malformed_library_raises_instead_of_returning_nothing(tmp_pa
     with pytest.raises(SourceError) as info:
         fetch({"heroic_dir": str(tmp_path)})
     assert info.value.code in ("heroic_not_found", "heroic_unreadable")
+
+
+def test_game_location_is_the_sideload_folder_and_the_prefix_heroic_set_for_the_game(tmp_path):
+    games = [
+        {"app_name": "a1", "title": "A", "runner": "sideload", "folder_name": "/games/a"},
+        {"app_name": "b2", "title": "B", "runner": "sideload", "folder_name": "relative"},
+    ]
+    config = _library(tmp_path, games)
+    (tmp_path / "GamesConfig").mkdir()
+    (tmp_path / "GamesConfig" / "a1.json").write_text(json.dumps({"a1": {"winePrefix": "/prefixes/a"}}))
+    location = PLUGIN.game_location(config, "a1")
+    assert (str(location.folder), str(location.prefix)) == ("/games/a", "/prefixes/a")
+    with pytest.raises(SourceError):
+        PLUGIN.game_location(config, "b2")
+    (tmp_path / "GamesConfig" / "a1.json").write_text("not json")
+    assert PLUGIN.game_location(config, "a1").prefix is None

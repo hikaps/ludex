@@ -70,6 +70,8 @@ def actions(store, store_id):
 
 `GameAction(id, label, argv)`: `id` is lowercase `[a-z][a-z0-9-]*`, unique within the plugin; `label` is one line; `argv` is an absolute executable and its arguments, run without a shell. The GUI lists them under "More" next to Play; `ludex action GAME [PLUGIN:ID]` lists and runs them as background `action` jobs with output in the job log, and the game's credentials are never added. It runs when a game is shown, so keep it cheap, local and free of network. Return an empty sequence when nothing applies; an invalid action, or a call that raises, is skipped. Declare a `settings` parameter to receive the plugin's settings.
 
+Declare a `context` parameter to learn where the game is. It receives a `GameContext` with `title`, `folder` (where the game is installed), `prefix` (the Wine prefix it runs in), and the user's launch options `executable`, `args`, `env` and `runner`. The folder and prefix come from the store's own plugin: Steam, Epic and Heroic read them from the store's files, and any plugin can provide them with `game_location(config, store_id) -> GameLocation(folder, prefix)` (either may be `None`; raise `SourceError` when unknown). A prefix the user set wins, then the store's own, then, when a Proton runner is set, the one ludex creates. Each field is `None` when unknown, so check before using it. `game_location` is not a capability by itself.
+
 ## Acquire: `acquire(request, report) -> AcquireResult`
 
 Does a whole download itself: fetch, unpack or drive an official client. `request` has `store_id`, `title` and a `destination` directory the core created.

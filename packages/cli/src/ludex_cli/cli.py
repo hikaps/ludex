@@ -923,11 +923,13 @@ def _cmd_action(args: argparse.Namespace) -> tuple[object, str]:
     conn = connect(paths.database)
     try:
         game_id = resolve_game(conn, args.game)
+        config_for = lambda store, account: get_account(paths, f"{store}:{account}").config
+        prefix_root = get_prefix_root(conn, paths.root / "prefixes")
         if args.action is None:
-            items = [{"action": f"{i.plugin}:{i.id}", "label": i.label, "store": i.store} for i in list_actions(conn, sources, game_id)]
+            items = [{"action": f"{i.plugin}:{i.id}", "label": i.label, "store": i.store} for i in list_actions(conn, sources, game_id, config_for, prefix_root)]
             return {"id": game_id, "actions": items}, "\n".join(f"{i['action']}  {i['label']}" for i in items) or "no actions for this game"
         plugin, _, action_id = args.action.partition(":")
-        info, argv, job = run_action(conn, sources, game_id, plugin, action_id, args.store, paths.root / "logs", args.dry_run)
+        info, argv, job = run_action(conn, sources, game_id, plugin, action_id, args.store, paths.root / "logs", args.dry_run, config_for, prefix_root)
     finally:
         conn.close()
     data = {"id": game_id, "action": f"{info.plugin}:{info.id}", "store": info.store, "argv": argv, "job": None if job is None else _job_data(job)}

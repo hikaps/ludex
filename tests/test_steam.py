@@ -200,3 +200,22 @@ def test_api_mode_explicit_steam_id_skips_detection(monkeypatch):
     monkeypatch.setattr("ludex.sources.steam.fetch_owned", lambda config: seen.update(config) or [])
     PLUGIN.fetch({"api_key": "a" * 32, "steam_id": "76561198000000009"})
     assert seen["steam_id"] == "76561198000000009"
+
+
+def test_game_location_finds_the_folder_in_its_own_library_and_the_proton_prefix(tmp_path):
+    steam, lib2 = tmp_path / "Steam", tmp_path / "lib2"
+    for root in (steam, lib2):
+        (root / "steamapps").mkdir(parents=True)
+    (steam / "steamapps" / "libraryfolders.vdf").write_text(f'"libraryfolders"\n{{\n"1"\n{{\n"path" "{lib2}"\n}}\n}}\n')
+    (lib2 / "steamapps" / "appmanifest_20.acf").write_text('"AppState"\n{\n"appid" "20"\n"installdir" "Team Fortress"\n}\n')
+    (lib2 / "steamapps" / "common" / "Team Fortress").mkdir(parents=True)
+    (lib2 / "steamapps" / "compatdata" / "20" / "pfx").mkdir(parents=True)
+    (steam / "steamapps" / "appmanifest_30.acf").write_text('"AppState"\n{\n"appid" "30"\n"installdir" "../escape"\n}\n')
+    config = {"steam_dir": str(steam)}
+    location = PLUGIN.game_location(config, "20")
+    assert (location.folder, location.prefix) == (lib2 / "steamapps" / "common" / "Team Fortress", lib2 / "steamapps" / "compatdata" / "20" / "pfx")
+    (lib2 / "steamapps" / "compatdata" / "20" / "pfx").rmdir()
+    assert PLUGIN.game_location(config, "20").prefix is None  # the game never ran through Proton
+    for store_id in ("30", "99", "x"):  # an installdir that climbs out, no manifest, a bad id
+        with pytest.raises(SourceError):
+            PLUGIN.game_location(config, store_id)

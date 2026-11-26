@@ -27,7 +27,7 @@ import httpx
 import vdf
 
 from .. import __version__
-from ..plugins import MAX_COVER_BYTES, ConfigField, FetchResult, Metadata, OwnedGame, PlayRecord, Provider, SearchHit, SourceError
+from ..plugins import MAX_COVER_BYTES, ConfigField, FetchResult, GameLocation, Metadata, OwnedGame, PlayRecord, Provider, SearchHit, SourceError
 from .procs import command_lines
 from .steam_cache import cached_games
 
@@ -424,6 +424,21 @@ def running(config: Mapping[str, str]) -> set[str]:
     return found
 
 
+def game_location(config: Mapping[str, str], store_id: str) -> GameLocation:
+    """The game's folder under its library's ``steamapps/common`` (the manifest's ``installdir``) and the Proton prefix Steam keeps in ``compatdata`` (present once the game has run through Proton)."""
+    if not store_id.isdigit():
+        raise SourceError("not_launchable", "this Steam game id is not valid")
+    app_id = str(int(store_id))
+    for library in _libraries(_steam_dir(config)):
+        steamapps = library / "steamapps"
+        state = _load_vdf(steamapps / f"appmanifest_{app_id}.acf").get("AppState")
+        name = state.get("installdir") if isinstance(state, dict) else None
+        if isinstance(name, str) and name and name not in (".", "..") and "/" not in name and "\\" not in name:
+            folder, prefix = steamapps / "common" / name, steamapps / "compatdata" / app_id / "pfx"
+            return GameLocation(folder if folder.is_dir() else None, prefix if prefix.is_dir() else None)
+    raise SourceError("not_launchable", "Steam has no install record for this game")
+
+
 PLUGIN = Provider(
     name="steam",
     help="Steam library: Web API with a key (full, needs public game details), otherwise the local Steam folder (installed and cached licensed games)",
@@ -442,4 +457,5 @@ PLUGIN = Provider(
     match=search,
     install_url=lambda store_id: f"steam://install/{quote(store_id, safe='')}",
     launch_url=lambda store_id: f"steam://rungameid/{quote(store_id, safe='')}",
+    game_location=game_location,
 )

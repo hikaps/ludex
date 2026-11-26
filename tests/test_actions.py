@@ -92,10 +92,63 @@ def test_an_actions_function_declaring_settings_gets_the_plugins_settings(monkey
     from importlib.metadata import EntryPoint
 
     seen = []
-    provider = plugin("couch", actions=lambda store, store_id, settings: seen.append(dict(settings)) or [], settings=())
+    provider = plugin("couch", actions=lambda store, store_id, settings, context=None: seen.append((dict(settings), context)) or [], settings=())
     module = type(sys)("couchmod")
     module.PLUGIN = provider
     monkeypatch.setitem(sys.modules, "couchmod", module)
     monkeypatch.setenv("LUDEX_HOME", str(tmp_path))
     loaded, problems = load_providers([EntryPoint("couch", "couchmod:PLUGIN", "ludex.providers")])
-    assert problems == {} and loaded["couch"].actions("steam", "1") == [] and seen == [{}]
+    assert problems == {} and loaded["couch"].actions("steam", "1", context="ctx") == [] and seen == [({}, "ctx")]
+    from ludex.actions import _wants_context
+
+    assert _wants_context(loaded["couch"])  # binding settings keeps the declared parameters visible
+
+
+def runner(tmp_path):
+    folder = tmp_path / "GE-Proton"
+    folder.mkdir()
+    (folder / "proton").write_text("")
+    return str(folder)
+
+
+def test_an_action_plugin_that_declares_context_learns_where_the_game_is_and_others_are_unaffected(conn, tmp_path):
+    from ludex.game_settings import update_settings
+    from ludex.plugins import GameLocation
+
+    store = Provider("steam", "t", (), game_location=lambda config, store_id: GameLocation(Path("/games/hl2"), Path("/steam/pfx")))
+    seen = []
+
+    def with_context(store, store_id, context):
+        seen.append((store, context))
+        return [GameAction("open", "Open", ["/bin/true"])]
+
+    sources = {"steam": store, "ctx": plugin("ctx", actions=with_context), "old": plugin("old", actions=lambda s, i: [GameAction("open", "Old", ["/bin/true"])])}
+    config_for = lambda store, account: {"account": account}
+    list_actions(conn, sources, 1, config_for, Path("/state/prefixes"))
+    context = next(c for s, c in seen if s == "steam")
+    assert (context.title, context.folder, context.prefix, context.runner) == ("HL2", Path("/games/hl2"), Path("/steam/pfx"), None)
+    seen.clear()
+    assert {i.plugin for i in list_actions(conn, sources, 1)} == {"ctx", "old"}
+    assert next(c for s, c in seen if s == "steam").folder is None  # without account access the location stays unknown
+    update_settings(conn, "steam", "220", runner=runner(tmp_path), prefix="/mine")
+    seen.clear()
+    list_actions(conn, sources, 1, config_for, Path("/state/prefixes"))
+    assert next(c for s, c in seen if s == "steam").prefix == Path("/mine")  # the user's prefix wins over the store's
+
+
+def test_a_location_that_fails_leaves_the_folder_unknown_and_a_runner_gets_the_cores_prefix(conn, tmp_path):
+    from ludex.game_settings import update_settings
+    from ludex.plugins import SourceError
+
+    def broken(config, store_id):
+        raise SourceError("gone", "nothing")
+
+    seen = []
+    sources = {
+        "steam": Provider("steam", "t", (), game_location=broken),
+        "ctx": plugin("ctx", actions=lambda store, store_id, context: seen.append((store, context)) or []),
+    }
+    update_settings(conn, "steam", "220", runner=runner(tmp_path))
+    list_actions(conn, sources, 1, lambda store, account: {}, Path("/state/prefixes"))
+    context = next(c for s, c in seen if s == "steam")
+    assert context.folder is None and context.prefix is not None and context.prefix.parent == Path("/state/prefixes")

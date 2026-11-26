@@ -17,7 +17,7 @@ from typing import Any
 from urllib.parse import quote
 
 from .procs import command_lines
-from ..plugins import ConfigField, FetchResult, OwnedGame, PlayRecord, Provider, SourceError
+from ..plugins import ConfigField, FetchResult, GameLocation, OwnedGame, PlayRecord, Provider, SourceError
 
 _DIRS = (
     "~/.config/heroic",
@@ -104,6 +104,26 @@ def installed(config: Mapping[str, str]) -> list[str]:
     return [g["app_name"] for g in _entries(config) if g.get("is_installed") is True]
 
 
+def heroic_prefix(directory: Path, app_name: str) -> Path | None:
+    """The Wine prefix Heroic's per-game settings (``GamesConfig/<app>.json``) name; ``None`` when the game has none of its own."""
+    path = directory / "GamesConfig" / f"{app_name}.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8")) if path.stat().st_size <= _MAX_BYTES else {}
+    except (OSError, ValueError):
+        return None
+    entry = data.get(app_name) if isinstance(data, dict) else None
+    prefix = entry.get("winePrefix") if isinstance(entry, dict) else None
+    return Path(prefix).expanduser() if isinstance(prefix, str) and prefix else None
+
+
+def game_location(config: Mapping[str, str], store_id: str) -> GameLocation:
+    directory = _heroic_dir(config)
+    for game in _entries(config):
+        if game["app_name"] == store_id and isinstance(game.get("folder_name"), str) and Path(game["folder_name"]).is_absolute():
+            return GameLocation(Path(game["folder_name"]), heroic_prefix(directory, store_id))
+    raise SourceError("not_launchable", "Heroic has no folder for this game")
+
+
 def _unixy(arg: str) -> str:
     """A Windows path as Wine shows it (``Z:\\mnt\\games\\x.exe``) as the Linux path it points at."""
     return _DRIVE.sub("", arg.replace("\\", "/"))
@@ -136,4 +156,5 @@ PLUGIN = Provider(
     playtime=playtime,
     running=running,
     launch_url=lambda store_id: f"heroic://launch?appName={quote(store_id, safe='')}&runner=sideload",
+    game_location=game_location,
 )
